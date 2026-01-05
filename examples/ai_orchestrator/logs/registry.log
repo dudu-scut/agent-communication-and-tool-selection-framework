@@ -2,6 +2,4 @@ Agent Registry Server
 端口: 8500
 心跳超时: 30 秒
 [Registry] 启动在端口 8500
-HTTP Server listening on port 8500
-[Registry] 注册 Agent: math-1 (Math Agent)
-[Registry] 注册 Agent: orch-1 (AI Orchestrator)
+terminate called without an active exception

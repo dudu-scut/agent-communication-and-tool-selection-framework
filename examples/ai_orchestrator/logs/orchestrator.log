@@ -1,40 +1,7 @@
 [RedisTaskStore] 连接到 Redis 127.0.0.1:6379
 [RedisTaskStore] 连接成功
-[2025-12-14 16:54:04.719] [INFO ] MCP client connected to server (STDIO): /home/ubuntu/beifen-agent-com/mcp_server_integrated/build/mcp_server
-[2025-12-14 16:54:04.724] [INFO ] Refreshed 12 MCP tools
-[2025-12-14 16:54:04.726] [INFO ] MCP tool manager initialized with 12 tools
-[2025-12-14 16:54:04.726] [INFO ] Connected to MCP Server: /home/ubuntu/beifen-agent-com/mcp_server_integrated/build/mcp_server
-[2025-12-14 16:54:04.726] [INFO ] Updated tool cache: 12 tools
-[2025-12-14 16:54:04.726] [INFO ] ToolRetriever initialized successfully
-[2025-12-14 16:54:04.726] [INFO ] Indexing 12 tools
-[2025-12-14 16:54:05.019] [INFO ] Added tool to index: progress_test
-[2025-12-14 16:54:05.292] [INFO ] Added tool to index: logging_test
-[2025-12-14 16:54:05.576] [INFO ] Added tool to index: get_weather
-[2025-12-14 16:54:05.881] [INFO ] Added tool to index: calculator
-[2025-12-14 16:54:06.146] [INFO ] Added tool to index: add
-[2025-12-14 16:54:06.439] [INFO ] Added tool to index: subtract
-[2025-12-14 16:54:06.685] [INFO ] Added tool to index: multiply
-[2025-12-14 16:54:06.982] [INFO ] Added tool to index: divide
-[2025-12-14 16:54:07.230] [INFO ] Added tool to index: power
-[2025-12-14 16:54:07.499] [INFO ] Added tool to index: sqrt
-[2025-12-14 16:54:07.806] [INFO ] Added tool to index: factorial
-[2025-12-14 16:54:08.075] [INFO ] Added tool to index: sleep
-[2025-12-14 16:54:08.075] [INFO ] Indexed 12 tools
-[2025-12-14 16:54:08.075] [INFO ] RAG-MCP initialized successfully
-[2025-12-14 16:54:08.075] [INFO ] MCPAgentIntegration initialized successfully with 12 tools available
-[Orchestrator] MCP 已启用，可用工具: progress_test logging_test get_weather calculator add subtract multiply divide power sqrt factorial sleep 
+[2026-01-05 22:40:38.163] [INFO ] MCP is disabled, skipping initialization
 [Orchestrator] 初始化完成
 [Orchestrator] 启动在端口 5000
-HTTP Server listening on port 5000
-[Orchestrator] 已注册到服务中心
-[Orchestrator] 收到消息: 8+9
-[RedisTaskStore] 添加历史消息到: default (角色: User)
-[Orchestrator] 识别意图: math
-[Orchestrator] 调用 math Agent: http://localhost:5001
-[RedisTaskStore] 添加历史消息到: default (角色: Agent)
-[Orchestrator] 收到消息: 9+15
-[RedisTaskStore] 添加历史消息到: default (角色: User)
-[Orchestrator] 识别意图: math
-[Orchestrator] 调用 math Agent: http://localhost:5001
-[RedisTaskStore] 添加历史消息到: default (角色: Agent)
-terminate called without an active exception
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  Failed to bind to port 5000

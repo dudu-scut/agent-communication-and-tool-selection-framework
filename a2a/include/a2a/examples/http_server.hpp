@@ -14,10 +14,13 @@
 /**
  * @brief 简单的 HTTP 服务器
  * 用于接收 A2A 协议的 HTTP 请求
+ * 支持普通请求和 SSE 流式响应
  */
 class HttpServer {
 public:
     using RequestHandler = std::function<std::string(const std::string&)>;
+    // 流式处理器: 接收请求体和写入回调函数
+    using StreamHandler = std::function<void(const std::string&, std::function<bool(const std::string&)>)>;
     
     explicit HttpServer(int port) : port_(port), running_(false) {}
     
@@ -29,6 +32,15 @@ public:
         handlers_[path] = handler;
     }
     
+    /**
+     * @brief 注册流式处理器
+     * @param path 请求路径
+     * @param handler 流式处理函数，接收请求体和写入回调
+     */
+    void register_stream_handler(const std::string& path, StreamHandler handler) {
+        stream_handlers_[path] = handler;
+    }
+
     void start() {
         running_ = true;
         
@@ -108,7 +120,21 @@ private:
             body = request.substr(body_pos + 4);
         }
         
-        // 查找处理器
+        // 检查是否需要流式响应（通过检查请求体中的 method）
+        bool is_stream_request = false;
+        if (!body.empty()) {
+            // 简单检查是否包含 message/stream 方法
+            is_stream_request = (body.find("\"message/stream\"") != std::string::npos);
+        }
+        
+        // 优先检查流式处理器
+        auto stream_it = stream_handlers_.find(path);
+        if (is_stream_request && stream_it != stream_handlers_.end()) {
+            handle_stream_request(client_fd, body, stream_it->second);
+            return;
+        }
+
+        // 查找普通处理器
         std::string response_body;
         int status_code = 200;
         
@@ -140,7 +166,44 @@ private:
         close(client_fd);
     }
     
+    /**
+     * @brief 处理流式请求 (SSE - Server-Sent Events)
+     */
+    void handle_stream_request(int client_fd, const std::string& body, StreamHandler& handler) {
+        // 发送 SSE 响应头
+        std::ostringstream header;
+        header << "HTTP/1.1 200 OK\r\n";
+        header << "Content-Type: text/event-stream\r\n";
+        header << "Cache-Control: no-cache\r\n";
+        header << "Connection: keep-alive\r\n";
+        header << "Access-Control-Allow-Origin: *\r\n";
+        header << "\r\n";
+        
+        std::string header_str = header.str();
+        if (write(client_fd, header_str.c_str(), header_str.length()) < 0) {
+            close(client_fd);
+            return;
+        }
+        
+        // 调用流式处理器，传入写入回调
+        try {
+            handler(body, [client_fd](const std::string& event_data) -> bool {
+                // 格式化为 SSE 事件
+                std::string sse_event = "data: " + event_data + "\n\n";
+                ssize_t written = write(client_fd, sse_event.c_str(), sse_event.length());
+                return written > 0;
+            });
+        } catch (const std::exception& e) {
+            // 发送错误事件
+            std::string error_event = "data: {\"error\":\"" + std::string(e.what()) + "\"}\n\n";
+            write(client_fd, error_event.c_str(), error_event.length());
+        }
+        
+        close(client_fd);
+    }
+
     int port_;
     bool running_;
     std::map<std::string, RequestHandler> handlers_;
+    std::map<std::string, StreamHandler> stream_handlers_;
 };

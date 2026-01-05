@@ -84,6 +84,12 @@ public:
             return this->handle_request(body);
         });
         
+        // 注册流式处理器
+        server.register_stream_handler("/", [this](const std::string& body,
+            std::function<bool(const std::string&)> write_callback) {
+            this->handle_stream_request(body, write_callback);
+        });
+
         server.register_handler("/.well-known/agent-card.json", [this](const std::string&) {
             return this->get_agent_card();
         });
@@ -156,6 +162,113 @@ private:
         } catch (const std::exception& e) {
             std::cerr << "[MathAgent] 错误: " << e.what() << std::endl;
             return JsonRpcResponse::create_error("1", ErrorCode::InternalError, e.what()).to_json();
+        }
+    }
+
+    /**
+     * @brief 处理流式请求 (message/stream)
+     */
+    void handle_stream_request(const std::string& body,
+                               std::function<bool(const std::string&)> write_callback) {
+        try {
+            auto request_json = json::parse(body);
+            auto request = JsonRpcRequest::from_json(body);
+            
+            if (request.method() != "message/stream") {
+                json error_response = {
+                    {"jsonrpc", "2.0"},
+                    {"id", request.id()},
+                    {"error", {
+                        {"code", -32601},
+                        {"message", "Method not found for streaming"}
+                    }}
+                };
+                write_callback(error_response.dump());
+                return;
+            }
+            
+            auto params_json = request_json["params"];
+            auto message = AgentMessage::from_json(params_json["message"].dump());
+            
+            std::string user_text;
+            if (!message.parts().empty()) {
+                auto text_part = dynamic_cast<TextPart*>(message.parts()[0].get());
+                if (text_part) {
+                    user_text = text_part->text();
+                }
+            }
+            
+            std::string context_id = message.context_id().value_or("default");
+            
+            std::cout << "[MathAgent] 收到流式数学问题: " << user_text << std::endl;
+            
+            // 保存用户消息
+            save_message(context_id, message);
+            
+            // 发送开始事件
+            json start_event = {
+                {"jsonrpc", "2.0"},
+                {"id", request.id()},
+                {"result", {
+                    {"type", "stream_start"},
+                    {"contextId", context_id}
+                }}
+            };
+            write_callback(start_event.dump());
+            
+            // 解决数学问题
+            std::string response_text = solve_math(user_text, context_id);
+            
+            // 流式输出响应
+            const size_t chunk_size = 50;
+            for (size_t i = 0; i < response_text.length(); i += chunk_size) {
+                std::string chunk = response_text.substr(i, chunk_size);
+                
+                json chunk_event = {
+                    {"jsonrpc", "2.0"},
+                    {"id", request.id()},
+                    {"result", {
+                        {"type", "chunk"},
+                        {"content", chunk}
+                    }}
+                };
+                
+                if (!write_callback(chunk_event.dump())) {
+                    return;
+                }
+                
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            
+            // 保存响应
+            auto response_msg = AgentMessage::create()
+                .with_role(MessageRole::Agent)
+                .with_context_id(context_id);
+            response_msg.add_text_part(response_text);
+            save_message(context_id, response_msg);
+            
+            // 发送完成事件
+            json complete_event = {
+                {"jsonrpc", "2.0"},
+                {"id", request.id()},
+                {"result", {
+                    {"type", "stream_end"},
+                    {"message", response_msg.to_json()}
+                }}
+            };
+            write_callback(complete_event.dump());
+            
+        } catch (const std::exception& e) {
+            std::cerr << "[MathAgent] 流式处理错误: " << e.what() << std::endl;
+            json error_event = {
+                {"jsonrpc", "2.0"},
+                {"id", "1"},
+                {"error", {
+                    {"code", -32603},
+                    {"message", e.what()}
+                }}
+            };
+            write_callback(error_event.dump());
         }
     }
     

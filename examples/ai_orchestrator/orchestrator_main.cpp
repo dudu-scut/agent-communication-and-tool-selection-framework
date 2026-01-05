@@ -119,9 +119,15 @@ public:
         // 启动 HTTP 服务器
         HttpServer server(port);
         
-        // A2A 协议端点
+        // A2A 协议端点 - 普通请求
         server.register_handler("/", [this](const std::string& body) {
             return this->handle_request(body);
+        });
+
+        // A2A 协议端点 - 流式请求
+        server.register_stream_handler("/", [this](const std::string& body, 
+            std::function<bool(const std::string&)> write_callback) {
+            this->handle_stream_request(body, write_callback);
         });
         
         // Agent Card 端点 (A2A 协议标准)
@@ -218,6 +224,145 @@ private:
         }
     }
     
+    /**
+     * @brief 处理流式请求 (message/stream)
+     * 
+     * 支持 A2A 协议的流式消息传输
+    */
+    void handle_stream_request(const std::string& body, 
+                               std::function<bool(const std::string&)> write_callback) {
+        try {
+            auto request_json = json::parse(body);
+            auto request = JsonRpcRequest::from_json(body);
+            
+            if (request.method() != "message/stream") {
+                // 非流式方法，返回错误
+                json error_response = {
+                    {"jsonrpc", "2.0"},
+                    {"id", request.id()},
+                    {"error", {
+                        {"code", -32601},
+                        {"message", "Method not found for streaming"}
+                    }}
+                };
+                write_callback(error_response.dump());
+                return;
+            }
+            
+            auto params_json = request_json["params"];
+            auto message = AgentMessage::from_json(params_json["message"].dump());
+            
+            // 获取文本内容
+            std::string user_text;
+            if (!message.parts().empty()) {
+                auto text_part = dynamic_cast<TextPart*>(message.parts()[0].get());
+                if (text_part) {
+                    user_text = text_part->text();
+                }
+            }
+            
+            std::string context_id = message.context_id().value_or("default");
+            
+            std::cout << "[Orchestrator] 收到流式消息: " << user_text << std::endl;
+            
+            // 保存用户消息
+            save_message(context_id, message);
+            
+            // 发送开始事件
+            json start_event = {
+                {"jsonrpc", "2.0"},
+                {"id", request.id()},
+                {"result", {
+                    {"type", "stream_start"},
+                    {"contextId", context_id}
+                }}
+            };
+            write_callback(start_event.dump());
+            
+            // 识别意图
+            std::string intent = analyze_intent(user_text);
+            std::cout << "[Orchestrator] 识别意图: " << intent << std::endl;
+            
+            // 发送意图识别事件
+            json intent_event = {
+                {"jsonrpc", "2.0"},
+                {"id", request.id()},
+                {"result", {
+                    {"type", "intent"},
+                    {"intent", intent}
+                }}
+            };
+            write_callback(intent_event.dump());
+            
+            // 处理查询并流式返回
+            std::string response_text;
+            
+            if (intent == "math") {
+                response_text = call_math_agent(user_text, context_id);
+            } else if (intent == "code") {
+                response_text = call_code_agent(user_text, context_id);
+            } else {
+                response_text = handle_general_query(user_text, context_id);
+            }
+            
+            // 模拟流式输出：将响应分块发送
+            // 实际生产环境中，应该从 AI 模型获取真正的流式输出
+            const size_t chunk_size = 50;  // 每块大约 50 个字符
+            for (size_t i = 0; i < response_text.length(); i += chunk_size) {
+                std::string chunk = response_text.substr(i, chunk_size);
+                
+                json chunk_event = {
+                    {"jsonrpc", "2.0"},
+                    {"id", request.id()},
+                    {"result", {
+                        {"type", "chunk"},
+                        {"content", chunk}
+                    }}
+                };
+                
+                if (!write_callback(chunk_event.dump())) {
+                    std::cerr << "[Orchestrator] 流式写入失败" << std::endl;
+                    return;
+                }
+                
+                // 小延迟模拟流式效果
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            
+            // 保存 Agent 响应
+            auto response_msg = AgentMessage::create()
+                .with_role(MessageRole::Agent)
+                .with_context_id(context_id);
+            response_msg.add_text_part(response_text);
+            save_message(context_id, response_msg);
+            
+            // 发送完成事件
+            json complete_event = {
+                {"jsonrpc", "2.0"},
+                {"id", request.id()},
+                {"result", {
+                    {"type", "stream_end"},
+                    {"message", response_msg.to_json()}
+                }}
+            };
+            write_callback(complete_event.dump());
+            
+            std::cout << "[Orchestrator] 流式响应完成" << std::endl;
+            
+        } catch (const std::exception& e) {
+            std::cerr << "[Orchestrator] 流式处理错误: " << e.what() << std::endl;
+            json error_event = {
+                {"jsonrpc", "2.0"},
+                {"id", "1"},
+                {"error", {
+                    {"code", -32603},
+                    {"message", e.what()}
+                }}
+            };
+            write_callback(error_event.dump());
+        }
+    }
+
     std::string analyze_intent(const std::string& text) {
         std::string prompt = "判断以下用户输入属于哪个类别，只回答类别名称：\n"
                             "- math: 数学计算、方程求解\n"
@@ -373,7 +518,7 @@ private:
             {"description", "智能协调器，负责意图识别和任务分发"},
             {"version", "1.0.0"},
             {"capabilities", {
-                {"streaming", false},
+                {"streaming", true},
                 {"push_notifications", false},
                 {"task_management", true}
             }},

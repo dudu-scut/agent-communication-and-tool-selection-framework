@@ -1,76 +1,15 @@
 [RedisTaskStore] 连接到 Redis 127.0.0.1:6379
 [RedisTaskStore] 连接成功
-[2025-12-14 16:54:03.716] [INFO ] MCP client connected to server (STDIO): /home/ubuntu/beifen-agent-com/mcp_server_integrated/build/mcp_server
-[2025-12-14 16:54:03.720] [INFO ] Refreshed 12 MCP tools
-[2025-12-14 16:54:03.720] [INFO ] MCP tool manager initialized with 12 tools
-[2025-12-14 16:54:03.720] [INFO ] Connected to MCP Server: /home/ubuntu/beifen-agent-com/mcp_server_integrated/build/mcp_server
-[2025-12-14 16:54:03.720] [INFO ] Updated tool cache: 12 tools
-[2025-12-14 16:54:03.720] [INFO ] ToolRetriever initialized successfully
-[2025-12-14 16:54:03.720] [INFO ] Indexing 12 tools
-[2025-12-14 16:54:03.999] [INFO ] Added tool to index: progress_test
-[2025-12-14 16:54:04.196] [INFO ] Added tool to index: logging_test
-[2025-12-14 16:54:04.427] [INFO ] Added tool to index: get_weather
-[2025-12-14 16:54:04.636] [INFO ] Added tool to index: calculator
-[2025-12-14 16:54:04.848] [INFO ] Added tool to index: add
-[2025-12-14 16:54:05.097] [INFO ] Added tool to index: subtract
-[2025-12-14 16:54:05.355] [INFO ] Added tool to index: multiply
-[2025-12-14 16:54:05.612] [INFO ] Added tool to index: divide
-[2025-12-14 16:54:05.910] [INFO ] Added tool to index: power
-[2025-12-14 16:54:06.228] [INFO ] Added tool to index: sqrt
-[2025-12-14 16:54:06.520] [INFO ] Added tool to index: factorial
-[2025-12-14 16:54:06.776] [INFO ] Added tool to index: sleep
-[2025-12-14 16:54:06.776] [INFO ] Indexed 12 tools
-[2025-12-14 16:54:06.776] [INFO ] RAG-MCP initialized successfully
-[2025-12-14 16:54:06.776] [INFO ] MCPAgentIntegration initialized successfully with 12 tools available
-[MathAgent] MCP 已启用，可用工具: progress_test logging_test get_weather calculator add subtract multiply divide power sqrt factorial sleep 
+[2026-01-05 22:40:37.161] [INFO ] MCP is disabled, skipping initialization
 [MathAgent] 初始化完成
 [MathAgent] 启动在端口 5001
 HTTP Server listening on port 5001
 [MathAgent] 已注册到服务中心
-[MathAgent] 收到数学问题: 8+9
+[MathAgent] 收到数学问题: 3+2
 [RedisTaskStore] 添加历史消息到: default (角色: User)
 [RedisTaskStore] 获取历史: default (数量: 5)
-[MathAgent] 使用 RAG 检索相关工具...
-[2025-12-14 16:54:54.636] [INFO ] Retrieved 1 tools for query: 8+9...
-[MathAgent] RAG 检索到 1 个相关工具: add 
-[MathAgent] 回退使用 calculator 工具
-[2025-12-14 16:54:54.637] [INFO ] Calling MCP tool: calculator
-[2025-12-14 16:54:54.637] [INFO ] Executing MCP tool: calculator
-[2025-12-14 16:54:54.643] [INFO ] Successfully called tool: calculator
-[2025-12-14 16:54:54.643] [INFO ] Tool call succeeded: calculator in 5ms
-[MathAgent] MCP 工具返回: {
-	"content" : 
-	[
-		{
-			"text" : "8+9 = 17",
-			"type" : "text"
-		}
-	],
-	"isError" : false
-}
-
 [RedisTaskStore] 添加历史消息到: default (角色: Agent)
-[MathAgent] 收到数学问题: 9+15
+[MathAgent] 收到数学问题: 3+1
 [RedisTaskStore] 添加历史消息到: default (角色: User)
 [RedisTaskStore] 获取历史: default (数量: 5)
-[MathAgent] 使用 RAG 检索相关工具...
-[2025-12-14 16:55:13.478] [INFO ] Retrieved 1 tools for query: 9+15...
-[MathAgent] RAG 检索到 1 个相关工具: add 
-[MathAgent] 回退使用 calculator 工具
-[2025-12-14 16:55:13.479] [INFO ] Calling MCP tool: calculator
-[2025-12-14 16:55:13.479] [INFO ] Executing MCP tool: calculator
-[2025-12-14 16:55:13.480] [INFO ] Successfully called tool: calculator
-[2025-12-14 16:55:13.480] [INFO ] Tool call succeeded: calculator in 1ms
-[MathAgent] MCP 工具返回: {
-	"content" : 
-	[
-		{
-			"text" : "9+15 = 24",
-			"type" : "text"
-		}
-	],
-	"isError" : false
-}
-
 [RedisTaskStore] 添加历史消息到: default (角色: Agent)
-terminate called without an active exception
