@@ -123,6 +123,7 @@ Agent Communication RPC Framework 是一个专为多 Agent 协作场景设计的
 | CMake | 3.15+ |
 | C++ 编译器 | GCC 9+ (支持 C++17) |
 | Redis | 6.0+ (任务状态存储) |
+| grpc | 1.51.1 |
 
 ### 安装依赖
 
