@@ -305,11 +305,34 @@ private:
                 response_text = handle_general_query(user_text, context_id);
             }
             
-            // 模拟流式输出：将响应分块发送
-            // 实际生产环境中，应该从 AI 模型获取真正的流式输出
-            const size_t chunk_size = 50;  // 每块大约 50 个字符
-            for (size_t i = 0; i < response_text.length(); i += chunk_size) {
-                std::string chunk = response_text.substr(i, chunk_size);
+            // UTF-8 安全的分块函数
+            auto utf8_safe_chunk = [](const std::string& text, size_t start, size_t max_len) -> std::string {
+                if (start >= text.length()) return "";
+                
+                size_t end = std::min(start + max_len, text.length());
+                
+                // 确保不在 UTF-8 多字节字符中间切断
+                while (end > start && end < text.length()) {
+                    unsigned char c = static_cast<unsigned char>(text[end]);
+                    // 如果是 UTF-8 后续字节 (10xxxxxx)，向前移动
+                    if ((c & 0xC0) == 0x80) {
+                        end--;
+                    } else {
+                        break;
+                    }
+                }
+                
+                return text.substr(start, end - start);
+            };
+            
+            // 流式输出：UTF-8 安全分块
+            const size_t chunk_size = 50;
+            size_t pos = 0;
+            while (pos < response_text.length()) {
+                std::string chunk = utf8_safe_chunk(response_text, pos, chunk_size);
+                if (chunk.empty()) break;
+                
+                pos += chunk.length();
                 
                 json chunk_event = {
                     {"jsonrpc", "2.0"},

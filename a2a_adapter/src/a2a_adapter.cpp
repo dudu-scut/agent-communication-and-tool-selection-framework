@@ -8,10 +8,14 @@
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "ai_query.pb.h"
 #include <a2a/core/exception.hpp>
+#include <nlohmann/json.hpp>
 #include <chrono>
 
 namespace agent_rpc {
 namespace a2a_adapter {
+
+// 使用 nlohmann/json
+using json = nlohmann::json;
 
 A2AAdapter::A2AAdapter()
     : request_adapter_(std::make_unique<RequestAdapter>())
@@ -150,12 +154,87 @@ void A2AAdapter::processQueryStreaming(
         std::string context_id = params.context_id().value_or("");
         
         // Use streaming API
+        // 注意：http_client按双换行符切分数据，每次回调收到完整的SSE事件
         a2a_client_->send_message_streaming(params, 
-            [this, &callback, &context_id](const std::string& event_data) {
-                agent_communication::AIStreamEvent event;
-                response_adapter_->buildStreamEvent(
-                    event_data, context_id, "partial", &event);
-                callback(event);
+            [this, &callback, &context_id](const std::string& event_line) {
+                // 跳过空行
+                if (event_line.empty() || event_line == "\n" || event_line == "\r\n") {
+                    return;
+                }
+                
+                // 解析SSE格式: "data: {...}\n" 或 "data: {...}"
+                std::string event_data = event_line;
+                
+                // 移除行尾换行符
+                while (!event_data.empty() && 
+                       (event_data.back() == '\n' || event_data.back() == '\r')) {
+                    event_data.pop_back();
+                }
+                
+                // 提取data:后面的内容
+                const std::string data_prefix = "data: ";
+                if (event_data.find(data_prefix) == 0) {
+                    event_data = event_data.substr(data_prefix.length());
+                }
+                
+                // 跳过空数据
+                if (event_data.empty()) {
+                    return;
+                }
+                
+                // 解析 JSON 响应，捕获所有 JSON 异常（包括 UTF-8 错误）
+                json j;
+                try {
+                    j = json::parse(event_data);
+                } catch (const json::exception& e) {
+                    // JSON 解析失败（包括 UTF-8 错误），跳过这个事件
+                    return;
+                }
+                
+                try {
+                    // 检查是否有错误
+                    if (j.contains("error")) {
+                        agent_communication::AIStreamEvent event;
+                        std::string error_msg = j["error"].value("message", "Unknown error");
+                        response_adapter_->buildStreamEvent(
+                            error_msg, context_id, "error", &event);
+                        callback(event);
+                        return;
+                    }
+                    
+                    // 检查是否有结果
+                    if (j.contains("result")) {
+                        auto& result = j["result"];
+                        std::string type = result.value("type", "");
+                        
+                        if (type == "chunk") {
+                            // 流式内容块
+                            std::string content = result.value("content", "");
+                            agent_communication::AIStreamEvent event;
+                            response_adapter_->buildStreamEvent(
+                                content, context_id, "partial", &event);
+                            callback(event);
+                        } else if (type == "stream_start") {
+                            // 流开始事件
+                            agent_communication::AIStreamEvent event;
+                            response_adapter_->buildStreamEvent(
+                                "", context_id, "status", &event);
+                            event.set_task_state("processing");
+                            callback(event);
+                        } else if (type == "stream_end") {
+                            // 流结束事件 - 不在这里发送 complete，让外层处理
+                        } else if (type == "intent") {
+                            // 意图识别事件
+                            agent_communication::AIStreamEvent event;
+                            std::string intent = result.value("intent", "");
+                            response_adapter_->buildStreamEvent(
+                                "Intent: " + intent, context_id, "status", &event);
+                            callback(event);
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    // 处理结果时出错，跳过
+                }
             });
         
         // Send completion event
