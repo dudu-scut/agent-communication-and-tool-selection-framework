@@ -216,7 +216,9 @@ namespace vx::mcp {
     }
 
     void Server::Stop() {
-        if (isStopping_) return; // Avoid redundant stopping
+        LOG(INFO) << "Stopping server..." << std::endl;
+
+        isStopping_ = true;
 
         // Stop transport (SSE shuts server down; stdio can no-op)
         if (transport_) {
@@ -224,10 +226,7 @@ namespace vx::mcp {
             transport_->Stop();
             transport_.reset();
             LOG(INFO) << "Transport stopped." << std::endl;
-         }
-
-        isStopping_ = true;
-        LOG(INFO) << "Stopping server..." << std::endl;
+        }
 
         // Signal and join writer thread
         writer_running_ = false;
@@ -236,6 +235,14 @@ namespace vx::mcp {
             writer_thread_.join();
             LOG(INFO) << "Writer thread joined." << std::endl;
         }
+
+        // Join reader thread if async
+        reader_running_ = false;
+        if (reader_thread_.joinable()) {
+            reader_thread_.join();
+            LOG(INFO) << "Reader thread joined." << std::endl;
+        }
+
         LOG(INFO) << "Server stopped." << std::endl;
     }
 

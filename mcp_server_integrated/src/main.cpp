@@ -215,6 +215,13 @@ int main(int argc, char **argv) {
             }
         }
 
+        // 未找到匹配的工具，返回错误
+        response["result"]["isError"] = true;
+        response["result"]["content"] = json::array();
+        response["result"]["content"].push_back({
+            {"type", "text"},
+            {"text", "Tool not found: " + request["params"]["name"].get<std::string>()}
+        });
         return response;
     });
     server->OverrideCallback("prompts/list", [&loader](const json& request) {
