@@ -42,12 +42,15 @@ void printUsage(const char* program) {
     std::cout << "选项:" << std::endl;
     std::cout << "  -p, --port PORT           gRPC 监听端口 (默认: 50051)" << std::endl;
     std::cout << "  -o, --orchestrator URL    Orchestrator 地址 (默认: http://localhost:5000)" << std::endl;
+    std::cout << "  -r, --registry ADDR       注册中心地址，例如 consul://127.0.0.1:8500" << std::endl;
+    std::cout << "      --enable-registry     显式启用服务注册" << std::endl;
     std::cout << "  -t, --timeout SECONDS     请求超时时间 (默认: 60)" << std::endl;
     std::cout << "  -h, --help                显示帮助信息" << std::endl;
     std::cout << std::endl;
     std::cout << "环境变量:" << std::endl;
     std::cout << "  RPC_SERVER_PORT           gRPC 监听端口" << std::endl;
     std::cout << "  ORCHESTRATOR_URL          Orchestrator 地址" << std::endl;
+    std::cout << "  RPC_REGISTRY_ADDRESS      注册中心地址" << std::endl;
     std::cout << std::endl;
     std::cout << "示例:" << std::endl;
     std::cout << "  " << program << std::endl;
@@ -63,6 +66,8 @@ int main(int argc, char* argv[]) {
     // 默认配置
     std::string port = "50051";
     std::string orchestrator_url = "http://localhost:5000";
+    std::string registry_address = "localhost:8500";
+    bool enable_registry = false;
     int timeout_seconds = 60;
     
     // 从环境变量读取
@@ -71,6 +76,10 @@ int main(int argc, char* argv[]) {
     }
     if (const char* env_url = std::getenv("ORCHESTRATOR_URL")) {
         orchestrator_url = env_url;
+    }
+    if (const char* env_registry = std::getenv("RPC_REGISTRY_ADDRESS")) {
+        registry_address = env_registry;
+        enable_registry = true;
     }
     
     // 解析命令行参数
@@ -84,6 +93,11 @@ int main(int argc, char* argv[]) {
             port = argv[++i];
         } else if ((arg == "-o" || arg == "--orchestrator") && i + 1 < argc) {
             orchestrator_url = argv[++i];
+        } else if ((arg == "-r" || arg == "--registry") && i + 1 < argc) {
+            registry_address = argv[++i];
+            enable_registry = true;
+        } else if (arg == "--enable-registry") {
+            enable_registry = true;
         } else if ((arg == "-t" || arg == "--timeout") && i + 1 < argc) {
             timeout_seconds = std::atoi(argv[++i]);
         } else {
@@ -96,6 +110,12 @@ int main(int argc, char* argv[]) {
     // 设置信号处理
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
+
+    LogConfig log_config;
+    log_config.level = LogLevel::Level_INFO;
+    log_config.async_logging = true;
+    log_config.color_output = true;
+    initializeAdvancedLogger(log_config);
     
     // 配置 RPC Server
     RpcConfig config;
@@ -104,6 +124,10 @@ int main(int argc, char* argv[]) {
     config.max_receive_message_size = 64 * 1024 * 1024;
     config.timeout_seconds = timeout_seconds;
     config.log_level = "INFO";
+    config.enable_service_registry = enable_registry;
+    if (enable_registry) {
+        config.registry_address = registry_address;
+    }
     
     // 配置 A2A 适配器
     agent_rpc::a2a_adapter::A2AConfig a2a_config;
@@ -141,6 +165,9 @@ int main(int argc, char* argv[]) {
     std::cout << "==========================================" << std::endl;
     std::cout << "gRPC 地址:      " << config.server_address << std::endl;
     std::cout << "Orchestrator:   " << orchestrator_url << std::endl;
+    if (enable_registry) {
+        std::cout << "Registry:       " << registry_address << std::endl;
+    }
     std::cout << "AI 服务状态:    " << (ai_available ? "可用" : "不可用") << std::endl;
     std::cout << "超时时间:       " << timeout_seconds << " 秒" << std::endl;
     std::cout << std::endl;

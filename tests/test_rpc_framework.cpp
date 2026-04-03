@@ -1,330 +1,190 @@
-#include "agent_rpc/rpc_framework.h"
+#include "agent_rpc/common/circuit_breaker.h"
+#include "agent_rpc/common/load_balancer.h"
+#include "agent_rpc/common/metrics.h"
+
 #include <gtest/gtest.h>
-#include <thread>
+
 #include <chrono>
+#include <thread>
 #include <vector>
 
-using namespace agent_rpc;
+namespace agent_rpc::tests {
 
-class RpcFrameworkTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        // 配置测试环境
-        config_.server_address = "127.0.0.1:50052";
-        config_.log_level = "ERROR";  // 减少测试时的日志输出
-        config_.timeout_seconds = 5;
-        config_.heartbeat_interval = 10;
-        
-        // 初始化框架
-        framework_ = &RpcFramework::getInstance();
-        ASSERT_TRUE(framework_->initialize(config_));
-    }
-    
-    void TearDown() override {
-        if (framework_->isRunning()) {
-            framework_->stopServer();
+namespace {
+
+common::ServiceEndpoint makeEndpoint(const std::string& host,
+                                     int port,
+                                     const std::string& service_name = "rpc",
+                                     bool healthy = true,
+                                     const std::map<std::string, std::string>& metadata = {}) {
+    common::ServiceEndpoint endpoint;
+    endpoint.host = host;
+    endpoint.port = port;
+    endpoint.service_name = service_name;
+    endpoint.version = "1.0.0";
+    endpoint.is_healthy = healthy;
+    endpoint.metadata = metadata;
+    return endpoint;
+}
+
+std::string endpointId(const common::ServiceEndpoint& endpoint) {
+    return endpoint.host + ":" + std::to_string(endpoint.port);
+}
+
+}  // namespace
+
+TEST(CircuitBreakerTest, TransitionsFromOpenToHalfOpenToClosed) {
+    common::CircuitBreakerConfig config;
+    config.failure_threshold = 2;
+    config.success_threshold = 1;
+    config.timeout = std::chrono::milliseconds(20);
+    config.min_request_count = 1000;
+
+    common::CircuitBreaker breaker(config);
+
+    breaker.recordFailure();
+    breaker.recordFailure();
+    EXPECT_EQ(breaker.getState(), common::CircuitState::OPEN);
+    EXPECT_FALSE(breaker.isRequestAllowed());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    EXPECT_TRUE(breaker.isRequestAllowed());
+    EXPECT_EQ(breaker.getState(), common::CircuitState::HALF_OPEN);
+
+    breaker.recordSuccess();
+    EXPECT_EQ(breaker.getState(), common::CircuitState::CLOSED);
+}
+
+TEST(CircuitBreakerManagerTest, ReusesBreakerPerServiceName) {
+    auto& manager = common::CircuitBreakerManager::getInstance();
+    manager.resetAll();
+
+    auto first = manager.getCircuitBreaker("service-a");
+    auto second = manager.getCircuitBreaker("service-a");
+    auto third = manager.getCircuitBreaker("service-b");
+
+    EXPECT_EQ(first.get(), second.get());
+    EXPECT_NE(first.get(), third.get());
+}
+
+TEST(LoadBalancerTest, RoundRobinAlternatesAcrossHealthyEndpoints) {
+    common::RoundRobinLoadBalancer load_balancer;
+    std::vector<common::ServiceEndpoint> endpoints = {
+        makeEndpoint("127.0.0.1", 5001),
+        makeEndpoint("127.0.0.1", 5002)
+    };
+
+    auto first = load_balancer.selectEndpoint(endpoints);
+    auto second = load_balancer.selectEndpoint(endpoints);
+    auto third = load_balancer.selectEndpoint(endpoints);
+
+    EXPECT_EQ(endpointId(first), "127.0.0.1:5001");
+    EXPECT_EQ(endpointId(second), "127.0.0.1:5002");
+    EXPECT_EQ(endpointId(third), "127.0.0.1:5001");
+}
+
+TEST(LoadBalancerTest, RandomReturnsOneOfAvailableEndpoints) {
+    common::RandomLoadBalancer load_balancer;
+    std::vector<common::ServiceEndpoint> endpoints = {
+        makeEndpoint("127.0.0.1", 5001),
+        makeEndpoint("127.0.0.1", 5002)
+    };
+
+    auto selected = load_balancer.selectEndpoint(endpoints);
+    EXPECT_TRUE(endpointId(selected) == "127.0.0.1:5001" ||
+                endpointId(selected) == "127.0.0.1:5002");
+}
+
+TEST(LoadBalancerTest, LeastConnectionsPrefersLessBusyEndpoint) {
+    common::LeastConnectionsLoadBalancer load_balancer;
+    std::vector<common::ServiceEndpoint> endpoints = {
+        makeEndpoint("127.0.0.1", 5001),
+        makeEndpoint("127.0.0.1", 5002)
+    };
+
+    load_balancer.updateEndpoints(endpoints);
+    load_balancer.incrementConnections("127.0.0.1:5001");
+    load_balancer.incrementConnections("127.0.0.1:5001");
+    load_balancer.incrementConnections("127.0.0.1:5002");
+
+    auto selected = load_balancer.selectEndpoint(endpoints);
+    EXPECT_EQ(endpointId(selected), "127.0.0.1:5002");
+}
+
+TEST(LoadBalancerTest, WeightedRoundRobinHonorsMetadataWeights) {
+    common::WeightedRoundRobinLoadBalancer load_balancer;
+    std::vector<common::ServiceEndpoint> endpoints = {
+        makeEndpoint("127.0.0.1", 5001, "rpc", true, {{"weight", "3"}}),
+        makeEndpoint("127.0.0.1", 5002, "rpc", true, {{"weight", "1"}})
+    };
+
+    load_balancer.updateEndpoints(endpoints);
+
+    int first_count = 0;
+    int second_count = 0;
+    for (int i = 0; i < 8; ++i) {
+        auto selected = load_balancer.selectEndpoint(endpoints);
+        if (selected.port == 5001) {
+            first_count++;
+        } else if (selected.port == 5002) {
+            second_count++;
         }
     }
-    
-    RpcConfig config_;
-    RpcFramework* framework_;
-};
 
-// 测试框架初始化
-TEST_F(RpcFrameworkTest, TestInitialization) {
-    EXPECT_TRUE(framework_->isRunning() == false);
-    EXPECT_NE(framework_->getServer(), nullptr);
-    EXPECT_NE(framework_->getClient(), nullptr);
-    EXPECT_NE(framework_->getRegistry(), nullptr);
-    EXPECT_NE(framework_->getLoadBalancer(), nullptr);
-    EXPECT_NE(framework_->getLogger(), nullptr);
-    EXPECT_NE(framework_->getMetrics(), nullptr);
+    EXPECT_EQ(first_count, 6);
+    EXPECT_EQ(second_count, 2);
 }
 
-// 测试服务器启动和停止
-TEST_F(RpcFrameworkTest, TestServerStartStop) {
-    // 启动服务器
-    EXPECT_TRUE(framework_->startServer());
-    EXPECT_TRUE(framework_->isRunning());
-    
-    // 停止服务器
-    framework_->stopServer();
-    EXPECT_FALSE(framework_->isRunning());
+TEST(LoadBalancerTest, ConsistentHashReturnsSameEndpointForSameKey) {
+    common::ConsistentHashLoadBalancer load_balancer;
+    std::vector<common::ServiceEndpoint> endpoints = {
+        makeEndpoint("127.0.0.1", 5001),
+        makeEndpoint("127.0.0.1", 5002)
+    };
+
+    load_balancer.updateEndpoints(endpoints);
+
+    auto first = load_balancer.selectEndpointByKey("user-42", endpoints);
+    auto second = load_balancer.selectEndpointByKey("user-42", endpoints);
+
+    EXPECT_EQ(endpointId(first), endpointId(second));
 }
 
-// 测试客户端连接
-TEST_F(RpcFrameworkTest, TestClientConnection) {
-    // 启动服务器
-    ASSERT_TRUE(framework_->startServer());
-    
-    auto client = framework_->getClient();
-    ASSERT_NE(client, nullptr);
-    
-    // 连接到服务器
-    EXPECT_TRUE(client->connect(config_.server_address));
-    EXPECT_TRUE(client->isConnected());
-    
-    // 断开连接
-    client->disconnect();
-    EXPECT_FALSE(client->isConnected());
+TEST(LoadBalancerTest, LeastResponseTimePrefersFastEndpoint) {
+    common::LeastResponseTimeLoadBalancer load_balancer;
+    std::vector<common::ServiceEndpoint> endpoints = {
+        makeEndpoint("127.0.0.1", 5001),
+        makeEndpoint("127.0.0.1", 5002)
+    };
+
+    load_balancer.updateResponseTime("127.0.0.1:5001", std::chrono::milliseconds(50));
+    load_balancer.updateResponseTime("127.0.0.1:5002", std::chrono::milliseconds(10));
+
+    auto selected = load_balancer.selectEndpoint(endpoints);
+    EXPECT_EQ(endpointId(selected), "127.0.0.1:5002");
 }
 
-// 测试消息发送和接收
-TEST_F(RpcFrameworkTest, TestMessageSendReceive) {
-    // 启动服务器
-    ASSERT_TRUE(framework_->startServer());
-    
-    auto client = framework_->getClient();
-    ASSERT_NE(client, nullptr);
-    
-    // 连接到服务器
-    ASSERT_TRUE(client->connect(config_.server_address));
-    
-    // 注册代理
-    ServiceEndpoint agent_info;
-    agent_info.host = "127.0.0.1";
-    agent_info.port = 8080;
-    agent_info.service_name = "test_agent";
-    agent_info.version = "1.0.0";
-    
-    std::string agent_id = client->registerAgent(agent_info);
-    EXPECT_FALSE(agent_id.empty());
-    
-    // 创建测试消息
-    agent_communication::Message message;
-    message.set_id("test_msg_1");
-    message.set_type("test");
-    message.set_content("Hello, RPC!");
-    message.set_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
-    
-    // 发送消息
-    EXPECT_TRUE(client->sendMessage(message, agent_id));
-    
-    // 接收消息
-    auto received_messages = client->receiveMessages(agent_id, 10, 5);
-    EXPECT_GE(received_messages.size(), 0);
-    
-    // 注销代理
-    EXPECT_TRUE(client->unregisterAgent(agent_id));
-    
-    // 断开连接
-    client->disconnect();
+TEST(MetricsTest, HistogramTracksSumAndCount) {
+    common::HistogramMetric histogram("rpc_duration_ms", "RPC duration");
+
+    histogram.observe(12.0);
+    histogram.observe(8.0);
+
+    EXPECT_EQ(histogram.getCount(), 2u);
+    EXPECT_DOUBLE_EQ(histogram.getSum(), 20.0);
 }
 
-// 测试广播消息
-TEST_F(RpcFrameworkTest, TestBroadcastMessage) {
-    // 启动服务器
-    ASSERT_TRUE(framework_->startServer());
-    
-    auto client = framework_->getClient();
-    ASSERT_NE(client, nullptr);
-    
-    // 连接到服务器
-    ASSERT_TRUE(client->connect(config_.server_address));
-    
-    // 注册代理
-    ServiceEndpoint agent_info;
-    agent_info.host = "127.0.0.1";
-    agent_info.port = 8080;
-    agent_info.service_name = "test_agent";
-    agent_info.version = "1.0.0";
-    
-    std::string agent_id = client->registerAgent(agent_info);
-    EXPECT_FALSE(agent_id.empty());
-    
-    // 创建测试消息
-    agent_communication::Message message;
-    message.set_id("broadcast_msg_1");
-    message.set_type("broadcast");
-    message.set_content("Broadcast message");
-    message.set_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
-    
-    // 广播消息
-    int success_count = client->broadcastMessage(message);
-    EXPECT_GE(success_count, 0);
-    
-    // 注销代理
-    EXPECT_TRUE(client->unregisterAgent(agent_id));
-    
-    // 断开连接
-    client->disconnect();
+TEST(MetricsTest, CollectorExportsPrometheusMetadata) {
+    auto& collector = common::MetricsCollector::getInstance();
+    collector.removeMetric("test_counter_total");
+
+    auto counter = collector.createCounter("test_counter_total", "Test counter");
+    counter->increment();
+
+    const auto exported = collector.exportPrometheus();
+    EXPECT_NE(exported.find("# HELP test_counter_total"), std::string::npos);
+    EXPECT_NE(exported.find("# TYPE test_counter_total counter"), std::string::npos);
+    EXPECT_NE(exported.find("test_counter_total 1"), std::string::npos);
 }
 
-// 测试获取代理列表
-TEST_F(RpcFrameworkTest, TestGetAgents) {
-    // 启动服务器
-    ASSERT_TRUE(framework_->startServer());
-    
-    auto client = framework_->getClient();
-    ASSERT_NE(client, nullptr);
-    
-    // 连接到服务器
-    ASSERT_TRUE(client->connect(config_.server_address));
-    
-    // 注册代理
-    ServiceEndpoint agent_info;
-    agent_info.host = "127.0.0.1";
-    agent_info.port = 8080;
-    agent_info.service_name = "test_agent";
-    agent_info.version = "1.0.0";
-    
-    std::string agent_id = client->registerAgent(agent_info);
-    EXPECT_FALSE(agent_id.empty());
-    
-    // 获取代理列表
-    auto agents = client->getAgents();
-    EXPECT_GE(agents.size(), 1);
-    
-    // 查找注册的代理
-    bool found = false;
-    for (const auto& agent : agents) {
-        if (agent.service_name == "test_agent") {
-            found = true;
-            EXPECT_EQ(agent.host, "127.0.0.1");
-            EXPECT_EQ(agent.port, 8080);
-            EXPECT_EQ(agent.version, "1.0.0");
-            break;
-        }
-    }
-    EXPECT_TRUE(found);
-    
-    // 注销代理
-    EXPECT_TRUE(client->unregisterAgent(agent_id));
-    
-    // 断开连接
-    client->disconnect();
-}
-
-// 测试心跳
-TEST_F(RpcFrameworkTest, TestHeartbeat) {
-    // 启动服务器
-    ASSERT_TRUE(framework_->startServer());
-    
-    auto client = framework_->getClient();
-    ASSERT_NE(client, nullptr);
-    
-    // 连接到服务器
-    ASSERT_TRUE(client->connect(config_.server_address));
-    
-    // 注册代理
-    ServiceEndpoint agent_info;
-    agent_info.host = "127.0.0.1";
-    agent_info.port = 8080;
-    agent_info.service_name = "test_agent";
-    agent_info.version = "1.0.0";
-    
-    std::string agent_id = client->registerAgent(agent_info);
-    EXPECT_FALSE(agent_id.empty());
-    
-    // 发送心跳
-    EXPECT_TRUE(client->sendHeartbeat(agent_id, agent_info));
-    
-    // 注销代理
-    EXPECT_TRUE(client->unregisterAgent(agent_id));
-    
-    // 断开连接
-    client->disconnect();
-}
-
-// 测试负载均衡器
-TEST_F(RpcFrameworkTest, TestLoadBalancer) {
-    auto load_balancer = framework_->getLoadBalancer();
-    ASSERT_NE(load_balancer, nullptr);
-    
-    // 创建测试端点
-    std::vector<ServiceEndpoint> endpoints;
-    for (int i = 0; i < 3; ++i) {
-        ServiceEndpoint endpoint;
-        endpoint.host = "127.0.0.1";
-        endpoint.port = 8080 + i;
-        endpoint.service_name = "test_service";
-        endpoint.version = "1.0.0";
-        endpoint.is_healthy = true;
-        endpoints.push_back(endpoint);
-    }
-    
-    // 更新端点
-    load_balancer->updateEndpoints(endpoints);
-    
-    // 测试选择端点
-    for (int i = 0; i < 10; ++i) {
-        ServiceEndpoint selected = load_balancer->selectEndpoint(endpoints);
-        EXPECT_TRUE(selected.is_healthy);
-        EXPECT_EQ(selected.service_name, "test_service");
-    }
-}
-
-// 测试熔断器
-TEST_F(RpcFrameworkTest, TestCircuitBreaker) {
-    auto& manager = CircuitBreakerManager::getInstance();
-    
-    // 创建熔断器
-    auto circuit_breaker = manager.getCircuitBreaker("test_service");
-    ASSERT_NE(circuit_breaker, nullptr);
-    
-    // 初始状态应该是关闭的
-    EXPECT_EQ(circuit_breaker->getState(), CircuitState::CLOSED);
-    
-    // 记录一些失败
-    for (int i = 0; i < 10; ++i) {
-        circuit_breaker->recordFailure();
-    }
-    
-    // 检查状态
-    auto stats = circuit_breaker->getStats();
-    EXPECT_EQ(stats.failed_requests, 10);
-    
-    // 重置熔断器
-    circuit_breaker->reset();
-    EXPECT_EQ(circuit_breaker->getState(), CircuitState::CLOSED);
-}
-
-// 测试日志系统
-TEST_F(RpcFrameworkTest, TestLogger) {
-    auto logger = framework_->getLogger();
-    ASSERT_NE(logger, nullptr);
-    
-    // 测试不同级别的日志
-    LOG_TRACE("This is a trace message");
-    LOG_DEBUG("This is a debug message");
-    LOG_INFO("This is an info message");
-    LOG_WARN("This is a warning message");
-    LOG_ERROR("This is an error message");
-    LOG_FATAL("This is a fatal message");
-    
-    // 测试带字段的日志
-    std::map<std::string, std::string> fields;
-    fields["key1"] = "value1";
-    fields["key2"] = "value2";
-    LOG_INFO_FIELDS("This is a message with fields", fields);
-}
-
-// 测试监控指标
-TEST_F(RpcFrameworkTest, TestMetrics) {
-    auto metrics = framework_->getMetrics();
-    ASSERT_NE(metrics, nullptr);
-    
-    // 记录一些指标
-    metrics->recordRpcRequest("test_service", "test_method", 100.5);
-    metrics->recordRpcResponse("test_service", "test_method", 0);
-    metrics->recordRpcError("test_service", "test_method", "timeout");
-    metrics->recordConnection("test_service", true);
-    metrics->recordMessageSent("test", 1024);
-    metrics->recordMemoryUsage(1024 * 1024);
-    metrics->recordCpuUsage(50.0);
-    
-    // 导出指标
-    std::string prometheus_output = metrics->exportPrometheus();
-    EXPECT_FALSE(prometheus_output.empty());
-    
-    std::string json_output = metrics->exportJson();
-    EXPECT_FALSE(json_output.empty());
-}
-
-// 主函数
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+}  // namespace agent_rpc::tests

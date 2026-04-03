@@ -4,6 +4,7 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
+#include "agent_rpc/registry/service_registry.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -67,6 +68,8 @@ private:
     void setupServer();
     void setupSslCredentials();
     void initializeMCPClient();
+    void initializeServiceRegistry();
+    void unregisterService();
     
     common::RpcConfig config_;
     std::string address_;
@@ -84,6 +87,9 @@ private:
     // MCP配置 (预留接口，待实现MCP client)
     std::string mcp_server_path_;
     std::vector<std::string> mcp_server_args_;
+
+    std::shared_ptr<registry::ServiceRegistry> service_registry_;
+    std::string registered_service_id_;
     
     std::shared_ptr<grpc::ServerCredentials> server_credentials_;
     std::vector<std::unique_ptr<grpc::ServerBuilder>> builders_;

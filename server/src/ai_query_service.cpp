@@ -41,7 +41,11 @@ bool AIQueryServiceImpl::initialize(
         LOG_ERROR("Failed to initialize A2A adapter");
         return false;
     }
-    
+
+    // Initialize circuit breaker for A2A backend
+    circuit_breaker_ = common::CircuitBreakerManager::getInstance()
+        .getCircuitBreaker("a2a_backend");
+
     initialized_ = true;
     LOG_INFO("AIQueryService initialized successfully");
     return true;
@@ -94,8 +98,23 @@ grpc::Status AIQueryServiceImpl::Query(
         return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
     }
     
+    // Check circuit breaker before calling A2A backend
+    if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
+        LOG_WARN("A2A backend circuit breaker open, rejecting query: " + request_id);
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message("A2A backend temporarily unavailable (circuit breaker open)");
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE, "A2A backend circuit breaker open");
+    }
+
     // Process query via A2A adapter
     bool success = a2a_adapter_->processQuery(*request, response);
+
+    // Record circuit breaker result
+    if (circuit_breaker_) {
+        if (success) circuit_breaker_->recordSuccess();
+        else circuit_breaker_->recordFailure();
+    }
     
     // Ensure request_id is set in response
     response->set_request_id(request_id);
@@ -142,7 +161,13 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     }
     
     LOG_INFO("Processing streaming AI query: " + request_id);
-    
+
+    // Check circuit breaker before calling A2A backend
+    if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
+        LOG_WARN("A2A backend circuit breaker open, rejecting streaming query: " + request_id);
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE, "A2A backend circuit breaker open");
+    }
+
     bool success = true;
     std::string error_message;
     
@@ -172,7 +197,13 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     
     // Record metrics
     recordMetrics("QueryStream", duration.count(), success);
-    
+
+    // Record circuit breaker result
+    if (circuit_breaker_) {
+        if (success) circuit_breaker_->recordSuccess();
+        else circuit_breaker_->recordFailure();
+    }
+
     if (success) {
         LOG_INFO("Streaming AI query completed: " + request_id +
                 " in " + std::to_string(duration.count()) + "ms");
@@ -204,15 +235,20 @@ grpc::Status AIQueryServiceImpl::GetQueryStatus(
         return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
     }
     
+    if (request->task_id().empty() && request->context_id().empty()) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "task_id or context_id is required");
+    }
+
     LOG_INFO("Getting query status for task: " + request->task_id());
-    
-    // TODO: Implement task status query via TaskManager
-    // For now, return a basic response
+
+    // 当前 A2AAdapter 仅透传同步/流式查询，不维护可查询的任务状态仓库。
+    // 显式返回“未实现”比返回 unknown stub 更清晰，也避免误导调用方。
     auto* status = response->mutable_status();
-    status->set_code(0);
-    status->set_message("OK");
-    response->set_task_state("unknown");
-    
+    status->set_code(static_cast<int>(grpc::StatusCode::UNIMPLEMENTED));
+    status->set_message("Query status is not tracked by the current A2A adapter implementation");
+    response->set_task_state("unavailable");
+
     return grpc::Status::OK;
 }
 

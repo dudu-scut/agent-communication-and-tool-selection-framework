@@ -117,5 +117,28 @@ private:
     std::map<std::string, std::shared_ptr<CircuitBreaker>> circuit_breakers_;
 };
 
+// 熔断器装饰器
+template<typename T>
+class CircuitBreakerDecorator {
+public:
+    CircuitBreakerDecorator(const std::string& service_name,
+                           const CircuitBreakerConfig& config = CircuitBreakerConfig{})
+        : circuit_breaker_(CircuitBreakerManager::getInstance().getCircuitBreaker(service_name)) {
+        if (circuit_breaker_) {
+            circuit_breaker_->updateConfig(config);
+        }
+    }
+
+    template<typename Func>
+    auto call(Func&& func) -> decltype(func()) {
+        return circuit_breaker_->execute(std::forward<Func>(func));
+    }
+
+    std::shared_ptr<CircuitBreaker> getCircuitBreaker() const { return circuit_breaker_; }
+
+private:
+    std::shared_ptr<CircuitBreaker> circuit_breaker_;
+};
+
 } // namespace common
 } // namespace agent_rpc

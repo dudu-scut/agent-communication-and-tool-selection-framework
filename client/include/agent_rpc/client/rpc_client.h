@@ -3,7 +3,11 @@
 #include "agent_rpc/common/types.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/common/circuit_breaker.h"
+#include "agent_rpc/common/load_balancer.h"
+#include "agent_rpc/registry/service_registry.h"
 #include "agent_rpc/client/ai_query_client.h"
+#include "agent_service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/generic/generic_stub.h>
 #include <memory>
@@ -28,6 +32,12 @@ public:
     
     // 连接到服务器
     bool connect(const std::string& server_address);
+    bool connect(const std::vector<std::string>& server_addresses,
+                 common::LoadBalanceStrategy strategy = common::LoadBalanceStrategy::ROUND_ROBIN);
+    bool connectViaRegistry(const std::string& registry_address,
+                            const std::string& service_name,
+                            common::LoadBalanceStrategy strategy = common::LoadBalanceStrategy::ROUND_ROBIN);
+    void setServiceRegistry(std::shared_ptr<registry::ServiceRegistry> service_registry);
     
     // 断开连接
     void disconnect();
@@ -123,6 +133,9 @@ private:
     void setupChannel();
     void setupSslCredentials();
     bool reconnect();
+    bool connectToEndpoint(const common::ServiceEndpoint& endpoint);
+    bool handleTransportFailure(const grpc::Status& status);
+    common::ServiceEndpoint parseEndpoint(const std::string& server_address) const;
     void startHeartbeat();
     void stopHeartbeat();
     void heartbeatLoop();
@@ -134,6 +147,7 @@ private:
     
     std::shared_ptr<grpc::Channel> channel_;
     std::unique_ptr<grpc::TemplatedGenericStub<grpc::ByteBuffer, grpc::ByteBuffer>> stub_;
+    std::unique_ptr<agent_communication::AgentCommunicationService::Stub> agent_stub_;
     
     common::MessageHandler message_handler_;
     common::ErrorHandler error_handler_;
@@ -153,6 +167,15 @@ private:
     
     // AI Query Client (Requirements: 2.1)
     std::unique_ptr<AIQueryClient> ai_query_client_;
+
+    // Circuit breaker for RPC calls
+    std::shared_ptr<common::CircuitBreaker> circuit_breaker_;
+    std::unique_ptr<common::LoadBalancer> load_balancer_;
+    std::vector<common::ServiceEndpoint> server_endpoints_;
+    std::shared_ptr<registry::ServiceRegistry> service_registry_;
+    std::string current_endpoint_id_;
+    std::string discovered_service_name_;
+    std::shared_ptr<std::atomic<bool>> registry_watch_active_;
 };
 
 } // namespace client

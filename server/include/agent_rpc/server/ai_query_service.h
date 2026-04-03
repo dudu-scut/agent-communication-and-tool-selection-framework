@@ -11,6 +11,7 @@
 #include "agent_rpc/common/types.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/common/circuit_breaker.h"
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 
@@ -109,6 +110,7 @@ private:
     void recordMetrics(const std::string& method, int64_t duration_ms, bool success);
     
     std::unique_ptr<a2a_adapter::A2AAdapter> a2a_adapter_;
+    std::shared_ptr<common::CircuitBreaker> circuit_breaker_;
     common::RpcConfig rpc_config_;
     std::atomic<bool> initialized_{false};
     std::atomic<uint64_t> request_counter_{0};

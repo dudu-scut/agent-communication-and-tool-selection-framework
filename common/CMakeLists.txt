@@ -7,6 +7,8 @@ set(COMMON_SOURCES
     src/serializer.cpp
     src/message_converter.cpp
     src/metrics.cpp
+    src/circuit_breaker.cpp
+    src/load_balancer.cpp
 )
 
 # 创建静态库

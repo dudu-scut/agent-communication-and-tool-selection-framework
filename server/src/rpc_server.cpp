@@ -9,9 +9,48 @@
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <fstream>
+#include <sstream>
 
 namespace agent_rpc {
 namespace server {
+
+namespace {
+
+std::string stripScheme(const std::string& address, const std::string& scheme) {
+    const auto prefix = scheme + "://";
+    if (address.rfind(prefix, 0) == 0) {
+        return address.substr(prefix.size());
+    }
+    return address;
+}
+
+common::ServiceEndpoint buildSelfEndpoint(const std::string& address) {
+    common::ServiceEndpoint endpoint;
+    const auto separator = address.rfind(':');
+    endpoint.host = separator == std::string::npos ? address : address.substr(0, separator);
+    endpoint.port = separator == std::string::npos ? 0 : std::stoi(address.substr(separator + 1));
+    if (endpoint.host.empty() || endpoint.host == "0.0.0.0") {
+        endpoint.host = "127.0.0.1";
+    }
+    endpoint.service_name = "rpc_server";
+    endpoint.version = "1.0.0";
+    endpoint.is_healthy = true;
+    endpoint.last_heartbeat = std::chrono::steady_clock::now();
+    return endpoint;
+}
+
+std::string buildRegisteredServiceId(const std::shared_ptr<registry::ServiceRegistry>& registry_service,
+                                     const common::ServiceEndpoint& endpoint) {
+    if (auto consul = std::dynamic_pointer_cast<registry::ConsulServiceRegistry>(registry_service)) {
+        return consul->getServiceId(endpoint);
+    }
+    if (std::dynamic_pointer_cast<registry::EtcdServiceRegistry>(registry_service)) {
+        return endpoint.service_name + "/" + endpoint.host + ":" + std::to_string(endpoint.port);
+    }
+    return endpoint.host + ":" + std::to_string(endpoint.port);
+}
+
+}  // namespace
 
 // RpcServer 实现
 RpcServer::RpcServer() {
@@ -50,6 +89,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     }
     
     setupServer();
+    initializeServiceRegistry();
     
     LOG_INFO("RPC server initialized on " + address_);
     return true;
@@ -103,6 +143,8 @@ void RpcServer::stop() {
     if (ai_query_service_impl_) {
         ai_query_service_impl_->shutdown();
     }
+
+    unregisterService();
     
     LOG_INFO("RPC server stopped");
 }
@@ -137,6 +179,46 @@ void RpcServer::setMCPServerArgs(const std::vector<std::string>& args) {
     mcp_server_args_ = args;
 }
 
+void RpcServer::initializeServiceRegistry() {
+    if (!config_.enable_service_registry || config_.registry_address.empty()) {
+        return;
+    }
+
+    if (config_.registry_address == "memory" || config_.registry_address.rfind("memory://", 0) == 0) {
+        service_registry_ = std::make_shared<registry::MemoryServiceRegistry>();
+    } else if (config_.registry_address.rfind("consul://", 0) == 0) {
+        auto consul = std::make_shared<registry::ConsulServiceRegistry>();
+        consul->initialize(stripScheme(config_.registry_address, "consul"));
+        service_registry_ = consul;
+    } else if (config_.registry_address.rfind("etcd://", 0) == 0) {
+        auto etcd = std::make_shared<registry::EtcdServiceRegistry>();
+        etcd->initialize(stripScheme(config_.registry_address, "etcd"));
+        service_registry_ = etcd;
+    } else {
+        auto consul = std::make_shared<registry::ConsulServiceRegistry>();
+        consul->initialize(config_.registry_address);
+        service_registry_ = consul;
+    }
+
+    const auto endpoint = buildSelfEndpoint(address_);
+    if (service_registry_->registerService(endpoint)) {
+        registered_service_id_ = buildRegisteredServiceId(service_registry_, endpoint);
+        LOG_INFO("RPC server registered in service registry as: " + registered_service_id_);
+    } else {
+        LOG_WARN("Failed to register RPC server in service registry");
+    }
+}
+
+void RpcServer::unregisterService() {
+    if (!service_registry_ || registered_service_id_.empty()) {
+        return;
+    }
+
+    service_registry_->unregisterService(registered_service_id_);
+    LOG_INFO("RPC server unregistered from service registry: " + registered_service_id_);
+    registered_service_id_.clear();
+}
+
 void RpcServer::setupServer() {
     grpc::ServerBuilder builder;
     
@@ -147,10 +229,22 @@ void RpcServer::setupServer() {
     builder.SetMaxReceiveMessageSize(config_.max_receive_message_size);
     builder.SetMaxSendMessageSize(config_.max_message_size);
     
-    // 注册AI查询服务 (这是唯一的gRPC服务实现)
+    // 注册AI查询服务
     if (ai_query_service_impl_ && ai_query_service_impl_->isAvailable()) {
         builder.RegisterService(ai_query_service_impl_.get());
         LOG_INFO("AI Query Service registered");
+    }
+
+    // 注册Agent通信服务
+    if (service_impl_) {
+        builder.RegisterService(service_impl_.get());
+        LOG_INFO("Agent Communication Service registered");
+    }
+
+    // 注册健康检查服务
+    if (health_service_impl_) {
+        builder.RegisterService(health_service_impl_.get());
+        LOG_INFO("Health Service registered");
     }
     
     // 启用健康检查服务

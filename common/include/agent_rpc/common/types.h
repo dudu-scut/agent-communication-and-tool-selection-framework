@@ -32,6 +32,7 @@ struct RpcConfig {
     std::string ssl_cert_path;
     std::string ssl_key_path;
     std::string log_level = "INFO";
+    bool enable_service_registry = false;
     std::string registry_address = "localhost:8500";
     
     // A2A配置 (Requirements: 9.1)

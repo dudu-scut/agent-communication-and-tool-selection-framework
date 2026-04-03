@@ -1,11 +1,16 @@
 # 查找Google Test
 find_package(GTest REQUIRED)
 
-# 注意: test_rpc_framework 暂时禁用，需要更新以匹配新的模块结构
-# TODO: 修复 test_rpc_framework.cpp 中的类型引用问题
-# add_executable(test_rpc_framework test_rpc_framework.cpp)
-# target_link_libraries(test_rpc_framework ...)
-# target_include_directories(test_rpc_framework ...)
+add_executable(test_rpc_framework test_rpc_framework.cpp)
+target_link_libraries(test_rpc_framework
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_rpc_framework PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
 
 # 序列化测试
 add_executable(test_serialization test_serialization.cpp)
@@ -46,7 +51,7 @@ target_include_directories(test_a2a_integration PRIVATE
 
 # 添加测试
 enable_testing()
-# 注意: RpcFrameworkTest 已禁用，不再注册
+add_test(NAME RpcFrameworkTest COMMAND test_rpc_framework)
 add_test(NAME SerializationTest COMMAND test_serialization)
 add_test(NAME A2AIntegrationTest COMMAND test_a2a_integration)
 
@@ -237,3 +242,38 @@ target_include_directories(test_rag_mcp_properties PRIVATE
 )
 
 add_test(NAME RAGMCPPropertiesTest COMMAND test_rag_mcp_properties)
+
+add_executable(test_service_registry test_service_registry.cpp)
+target_link_libraries(test_service_registry
+    agent_rpc_registry
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_service_registry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../registry/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME ServiceRegistryTest COMMAND test_service_registry)
+
+add_executable(test_agent_communication test_agent_communication.cpp)
+target_link_libraries(test_agent_communication
+    agent_rpc_server
+    agent_rpc_client
+    agent_rpc_registry
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    uuid
+    CURL::libcurl
+)
+target_include_directories(test_agent_communication PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../client/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../registry/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+add_test(NAME AgentCommunicationIntegrationTest COMMAND test_agent_communication)

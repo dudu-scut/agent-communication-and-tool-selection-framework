@@ -17,6 +17,7 @@ add_executable(rpc_client src/main.cpp)
 target_link_libraries(rpc_client
     agent_rpc_client
     agent_rpc_common
+    agent_rpc_registry
     proto_lib
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
@@ -27,6 +28,7 @@ target_link_libraries(rpc_client
 # 链接依赖
 target_link_libraries(agent_rpc_client 
     agent_rpc_common
+    agent_rpc_registry
     proto_lib
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}

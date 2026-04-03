@@ -18,6 +18,7 @@ add_executable(rpc_server src/main.cpp)
 target_link_libraries(rpc_server
     agent_rpc_server
     agent_rpc_common
+    agent_rpc_registry
     a2a_adapter
     a2a
     proto_lib
@@ -31,6 +32,7 @@ target_link_libraries(rpc_server
 # 链接依赖
 target_link_libraries(agent_rpc_server 
     agent_rpc_common
+    agent_rpc_registry
     a2a_adapter
     a2a
     proto_lib

@@ -11,14 +11,17 @@
  *   rpc_client ──gRPC──> rpc_server ──A2A/HTTP──> Orchestrator ──> Agents
  */
 
-#include "agent_rpc/client/ai_query_client.h"
+#include "agent_rpc/client/rpc_client.h"
 #include "agent_rpc/common/logger.h"
 #include <iostream>
 #include <signal.h>
 #include <string>
 #include <cstdlib>
+#include <cctype>
+#include <vector>
 
 using namespace agent_rpc::client;
+using namespace agent_rpc::common;
 
 // 全局变量用于优雅关闭
 std::atomic<bool> g_running{true};
@@ -51,21 +54,50 @@ void printUsage(const char* program) {
     std::cout << "选项:" << std::endl;
     std::cout << "  -s, --stream      启用流式模式" << std::endl;
     std::cout << "  -c, --context ID  设置上下文 ID" << std::endl;
+    std::cout << "  -r, --registry ADDR  通过注册中心发现服务" << std::endl;
+    std::cout << "      --service NAME   注册中心中的服务名 (默认: rpc_server)" << std::endl;
     std::cout << "  -t, --timeout SEC 超时时间 (默认: 60)" << std::endl;
     std::cout << "  -h, --help        显示帮助信息" << std::endl;
     std::cout << std::endl;
     std::cout << "环境变量:" << std::endl;
     std::cout << "  RPC_SERVER_ADDRESS  RPC Server 地址" << std::endl;
+    std::cout << "  RPC_REGISTRY_ADDRESS 注册中心地址" << std::endl;
+    std::cout << "  RPC_SERVICE_NAME    服务名" << std::endl;
     std::cout << std::endl;
     std::cout << "示例:" << std::endl;
     std::cout << "  " << program << std::endl;
     std::cout << "  " << program << " localhost:50051" << std::endl;
     std::cout << "  " << program << " -s localhost:50051  # 流式模式" << std::endl;
+    std::cout << "  " << program << " --registry memory --service rpc_server" << std::endl;
+}
+
+std::vector<std::string> splitAddresses(const std::string& addresses) {
+    std::vector<std::string> result;
+    std::string current;
+
+    for (char ch : addresses) {
+        if (ch == ',') {
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+        } else if (!std::isspace(static_cast<unsigned char>(ch))) {
+            current.push_back(ch);
+        }
+    }
+
+    if (!current.empty()) {
+        result.push_back(current);
+    }
+
+    return result;
 }
 
 int main(int argc, char* argv[]) {
     // 默认配置
     std::string server_address = "localhost:50051";
+    std::string registry_address;
+    std::string service_name = "rpc_server";
     std::string context_id = "default";
     bool stream_mode = false;
     int timeout_seconds = 60;
@@ -73,6 +105,12 @@ int main(int argc, char* argv[]) {
     // 从环境变量读取
     if (const char* env_addr = std::getenv("RPC_SERVER_ADDRESS")) {
         server_address = env_addr;
+    }
+    if (const char* env_registry = std::getenv("RPC_REGISTRY_ADDRESS")) {
+        registry_address = env_registry;
+    }
+    if (const char* env_service = std::getenv("RPC_SERVICE_NAME")) {
+        service_name = env_service;
     }
     
     // 解析命令行参数
@@ -86,6 +124,10 @@ int main(int argc, char* argv[]) {
             stream_mode = true;
         } else if ((arg == "-c" || arg == "--context") && i + 1 < argc) {
             context_id = argv[++i];
+        } else if ((arg == "-r" || arg == "--registry") && i + 1 < argc) {
+            registry_address = argv[++i];
+        } else if (arg == "--service" && i + 1 < argc) {
+            service_name = argv[++i];
         } else if ((arg == "-t" || arg == "--timeout") && i + 1 < argc) {
             timeout_seconds = std::atoi(argv[++i]);
         } else if (arg[0] != '-') {
@@ -100,17 +142,52 @@ int main(int argc, char* argv[]) {
     // 设置信号处理
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
+
+    LogConfig log_config;
+    log_config.level = LogLevel::Level_INFO;
+    log_config.async_logging = true;
+    log_config.color_output = true;
+    initializeAdvancedLogger(log_config);
     
     std::cout << "==========================================" << std::endl;
     std::cout << "RPC Client - AI 查询客户端" << std::endl;
     std::cout << "==========================================" << std::endl;
-    std::cout << "连接到: " << server_address << std::endl;
+    if (!registry_address.empty()) {
+        std::cout << "注册中心: " << registry_address << std::endl;
+        std::cout << "服务名:   " << service_name << std::endl;
+    } else {
+        std::cout << "连接到: " << server_address << std::endl;
+    }
     
-    // 创建 AI 查询客户端
-    AIQueryClient client;
-    
-    if (!client.connect(server_address)) {
-        std::cerr << "错误: 无法连接到服务器 " << server_address << std::endl;
+    RpcClient client;
+    RpcConfig config;
+    config.timeout_seconds = timeout_seconds;
+    config.max_message_size = 64 * 1024 * 1024;
+    config.max_receive_message_size = 64 * 1024 * 1024;
+    if (!client.initialize(config)) {
+        std::cerr << "错误: 无法初始化 RPC 客户端" << std::endl;
+        return 1;
+    }
+
+    bool connected = false;
+    if (!registry_address.empty()) {
+        connected = client.connectViaRegistry(
+            registry_address, service_name, LoadBalanceStrategy::ROUND_ROBIN);
+    } else {
+        const auto addresses = splitAddresses(server_address);
+        connected = addresses.size() <= 1
+            ? client.connect(server_address)
+            : client.connect(addresses, LoadBalanceStrategy::ROUND_ROBIN);
+    }
+
+    if (!connected) {
+        std::cerr << "错误: 无法连接到服务器";
+        if (!registry_address.empty()) {
+            std::cerr << " (registry=" << registry_address << ", service=" << service_name << ")";
+        } else {
+            std::cerr << " " << server_address;
+        }
+        std::cerr << std::endl;
         std::cerr << "请确保 rpc_server 已启动" << std::endl;
         return 1;
     }
@@ -160,7 +237,7 @@ int main(int argc, char* argv[]) {
         
         if (line == "/status") {
             std::cout << "连接状态: " << (client.isConnected() ? "已连接" : "未连接") << std::endl;
-            std::cout << "服务器: " << server_address << std::endl;
+            std::cout << "服务器: " << client.getServerAddress() << std::endl;
             std::cout << "上下文: " << context_id << std::endl;
             continue;
         }
@@ -182,7 +259,7 @@ int main(int argc, char* argv[]) {
             std::cout << "\nAI: ";
             std::cout.flush();
             
-            bool success = client.queryStream(line, 
+            bool success = client.aiQueryStream(line, 
                 [](const agent_communication::AIStreamEvent& event) {
                     if (event.event_type() == "partial") {
                         std::cout << event.content();
@@ -199,7 +276,7 @@ int main(int argc, char* argv[]) {
             }
         } else {
             // 同步查询
-            auto response = client.query(line, context_id, timeout_seconds);
+            auto response = client.aiQuery(line, context_id, timeout_seconds);
             
             if (response.status().code() == 0) {
                 std::cout << "\nAI: " << response.answer() << std::endl;
