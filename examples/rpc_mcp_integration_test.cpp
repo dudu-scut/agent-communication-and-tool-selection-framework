@@ -38,11 +38,11 @@ int main() {
     config.log_level = "INFO";
     
     // 设置MCP服务器路径和参数
-    rpc_server.setMCPServerPath("/root/agent-communication/mcp_server_integrated/build/mcp_server");
+    rpc_server.setMCPServerPath("/root/multi-agent-communication-and-tool-selection-framework/mcp_server_integrated/build/mcp_server");
     rpc_server.setMCPServerArgs({
         "-n", "rpc-integrated-server",
         "-l", "/tmp/mcp_logs",
-        "-p", "/root/agent-communication/mcp_server_integrated/plugins"
+        "-p", "/root/multi-agent-communication-and-tool-selection-framework/mcp_server_integrated/build/plugins"
     });
     
     // 初始化RPC服务器

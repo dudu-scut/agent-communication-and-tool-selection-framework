@@ -1,4 +1,4 @@
-# Agent Communication RPC Framework
+# Multi Agent Communication and Tool Selection Framework
 
 基于 C++ 和 gRPC 的高性能 AI Agent 通信框架，支持多 Agent 协作、MCP 工具调用和 RAG 智能工具选择。
 
@@ -165,7 +165,7 @@ sudo apt-get install -y \
 ```bash
 # 克隆项目
 git clone <repository-url>
-cd agent-communication
+cd multi-agent-communication-and-tool-selection-framework
 
 # 创建构建目录
 mkdir -p build && cd build
@@ -1103,7 +1103,7 @@ tail -f examples/ai_orchestrator/logs/math_agent.log
 ## 项目结构
 
 ```
-agent-communication/
+multi-agent-communication-and-tool-selection-framework/
 ├── common/                      # 公共组件 (日志、类型、指标)
 ├── server/                      # RPC 服务端
 ├── client/                      # RPC 客户端

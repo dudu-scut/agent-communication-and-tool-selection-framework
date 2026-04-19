@@ -102,7 +102,7 @@ sudo mv consul /usr/local/bin/
 ```bash
 # 克隆代码
 git clone <repository-url>
-cd agent-communication
+cd multi-agent-communication-and-tool-selection-framework
 
 # 创建构建目录
 mkdir build && cd build
