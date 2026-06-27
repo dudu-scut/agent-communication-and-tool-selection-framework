@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test Commands
 
+### Linux
+
+**Prerequisites (Ubuntu):** cmake, build-essential, pkg-config, libgrpc++-dev, libprotobuf-dev, protobuf-compiler, protobuf-compiler-grpc, libcurl4-openssl-dev, libjsoncpp-dev, uuid-dev, libgtest-dev, libhiredis-dev, nlohmann-json3-dev, librapidcheck-dev.
+
 ```bash
 # Configure and build (from repo root)
 mkdir -p build && cd build
-cmake .. && make -j$(nproc)
-
-# Build the integrated MCP server (optional, for tool-calling)
-cd mcp_server_integrated && mkdir -p build && cd build
 cmake .. && make -j$(nproc)
 
 # Run all tests
@@ -19,15 +19,31 @@ cd build && ctest --output-on-failure
 # Run a single test suite
 ./build/tests/test_mcp_integration
 ./build/tests/test_rag_mcp_properties
-./build/tests/test_adapter_properties
-./build/tests/test_proto_roundtrip
-
-# Build a single target
-cd build && make rpc_server
-cd build && make test_rag_mcp_properties
 ```
 
-**Build prerequisites (Ubuntu):** cmake, build-essential, pkg-config, libgrpc++-dev, libprotobuf-dev, protobuf-compiler, protobuf-compiler-grpc, libcurl4-openssl-dev, libjsoncpp-dev, uuid-dev, libgtest-dev, libhiredis-dev, nlohmann-json3-dev, librapidcheck-dev.
+### Windows (PowerShell)
+
+**Prerequisites:** [MSYS2](https://www.msys2.org/) (installed at `C:\msys64`).
+
+```powershell
+# 一键环境检测
+.\run.ps1 setup
+
+# 安装依赖 + 编译 + 启动
+.\run.ps1 build          # 编译项目 (MinGW-w64)
+.\run.ps1 orchestrator   # 启动多智能体系统 (自动启动 Redis)
+.\run.ps1 grpc           # 启动 gRPC AI Server
+.\run.ps1 client         # 交互式客户端
+.\run.ps1 stop           # 停止所有服务
+.\run.ps1 redis          # 管理 Redis
+```
+
+First-time setup (if MSYS2 not installed):
+```powershell
+winget install MSYS2.MSYS2                          # 安装 MSYS2
+C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm --disable-download-timeout mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-make mingw-w64-x86_64-grpc mingw-w64-x86_64-protobuf mingw-w64-x86_64-curl mingw-w64-x86_64-jsoncpp mingw-w64-x86_64-hiredis mingw-w64-x86_64-nlohmann-json mingw-w64-x86_64-gtest mingw-w64-x86_64-pkgconf mingw-w64-x86_64-redis git'
+.\run.ps1 build                                      # 编译项目
+```
 
 ## Architecture Overview
 

@@ -30,6 +30,18 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -DDEBUG")
 endif()
 
+# Windows/MinGW 兼容性设置
+if(WIN32)
+    set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lws2_32 -lpsapi -lrpcrt4")
+    add_definitions(-DWIN32_LEAN_AND_MEAN)
+    set(UUID_LIB "rpcrt4")
+    # rapidcheck 自定义安装路径
+    include_directories("C:/msys64/mingw64/local/include")
+    link_directories("C:/msys64/mingw64/local/lib")
+else()
+    set(UUID_LIB "uuid")
+endif()
+
 # 查找CURL依赖 (A2A模块需要)
 find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)

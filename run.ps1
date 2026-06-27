@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # AI Agent 系统启动脚本 (Windows PowerShell)
 # 支持多种模式:
 #   ./run.ps1 orchestrator   - 启动完整多智能体系统 (Registry + Math Agent + Orchestrator)
@@ -10,7 +10,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("orchestrator", "grpc", "stop", "build", "client")]
+    [ValidateSet("orchestrator", "grpc", "stop", "build", "client", "redis", "setup")]
     [string]$Command = "orchestrator",
 
     # gRPC 模式参数
@@ -96,7 +96,7 @@ function Write-Err {
 
 function Test-Binary {
     param([string]$Path)
-    $exePath = if ($Path.EndsWith(".exe")) { $Path } else { "$Path.exe" }
+    $exePath = if ($Path.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)) { $Path } else { "$Path.exe" }
     return (Test-Path $exePath)
 }
 
@@ -109,7 +109,7 @@ function Start-AgentProcess {
         [string]$DisplayName
     )
 
-    $exePath = if ($Binary.EndsWith(".exe")) { $Binary } else { "$Binary.exe" }
+    $exePath = if ($Binary.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)) { $Binary } else { "$Binary.exe" }
 
     if (-not (Test-Path $exePath)) {
         Write-Err "找不到可执行文件: $exePath"
@@ -176,6 +176,107 @@ function Stop-AllProcesses {
 }
 
 # ============================================================================
+# 环境初始化
+# ============================================================================
+
+function Invoke-InitEnvironment {
+    <#
+    .SYNOPSIS
+    自动检测并初始化运行环境 (MSYS2 MinGW、Redis 等)
+    #>
+    Write-Step "正在初始化运行环境..."
+
+    # 检测 MSYS2 MinGW-w64 工具链
+    $msys2Mingw = "C:\msys64\mingw64\bin"
+    if (Test-Path "$msys2Mingw\g++.exe") {
+        $env:PATH = "$msys2Mingw;$env:PATH"
+        Write-Step "  MSYS2 MinGW-w64 运行时库已加入 PATH"
+    } else {
+        Write-Warn "  未检测到 MSYS2 MinGW，运行时可能缺少 DLL"
+    }
+
+    # 检查 protobuf / gRPC DLL 是否可访问
+    $msys2Bin = "C:\msys64\mingw64\bin"
+    $dlls = @("libprotobuf.dll", "libgrpc.dll", "libgrpc++.dll")
+    $missingDlls = $dlls | Where-Object { -not (Test-Path (Join-Path $msys2Bin $_)) }
+    if ($missingDlls) {
+        Write-Warn "  缺少以下 DLL，程序可能无法运行: $($missingDlls -join ', ')"
+        Write-Warn "  请运行: C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm mingw-w64-x86_64-protobuf mingw-w64-x86_64-grpc'"
+    }
+}
+
+function Test-RedisRunning {
+    <#
+    .SYNOPSIS
+    检测 Redis 是否在指定地址运行
+    #>
+    param([string]$HostAddr = "127.0.0.1", [int]$Port = 6379)
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $result = $tcp.BeginConnect($HostAddr, $Port, $null, $null)
+        $connected = $result.AsyncWaitHandle.WaitOne(2000)
+        $tcp.Close()
+        return $connected
+    } catch {
+        return $false
+    }
+}
+
+function Start-Redis {
+    <#
+    .SYNOPSIS
+    尝试启动本地 Redis 服务
+    #>
+    param([string]$HostAddr = "127.0.0.1", [int]$Port = 6379)
+
+    # 已在运行？
+    if (Test-RedisRunning -HostAddr $HostAddr -Port $Port) {
+        Write-Step "  Redis 已运行在 ${HostAddr}:${Port}"
+        return $true
+    }
+
+    # 查找 redis-server
+    $redisPaths = @(
+        "C:\msys64\mingw64\bin\redis-server.exe",
+        "C:\msys64\usr\bin\redis-server.exe",
+        (Get-Command redis-server -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    )
+
+    $redisBin = $null
+    foreach ($p in $redisPaths) {
+        if ($p -and (Test-Path $p)) { $redisBin = $p; break }
+    }
+
+    if (-not $redisBin) {
+        Write-Warn "  未找到 Redis，请通过 MSYS2 安装:"
+        Write-Warn "    C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm mingw-w64-x86_64-redis'"
+        return $false
+    }
+
+    Write-Step "  启动 Redis ($redisBin)..."
+    $redisLog = Join-Path $LogsDir "redis.log"
+    if (-not (Test-Path $LogsDir)) { New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null }
+
+    $redisProc = Start-Process -FilePath $redisBin -ArgumentList "--port $Port" `
+        -NoNewWindow -PassThru `
+        -RedirectStandardOutput $redisLog -RedirectStandardError "$redisLog.err"
+
+    Start-Sleep -Seconds 2
+
+    if ($redisProc.HasExited) {
+        Write-Err "  Redis 启动失败 (退出码: $($redisProc.ExitCode))"
+        Write-Err "  查看日志: $redisLog"
+        return $false
+    }
+
+    # 保存 PID
+    $redisPidFile = Join-Path $PidsDir "redis.pid"
+    $redisProc.Id | Out-File -FilePath $redisPidFile -NoNewline
+    Write-Step "  Redis 已启动 (PID: $($redisProc.Id), 端口: $Port)"
+    return $true
+}
+
+# ============================================================================
 # Build 命令
 # ============================================================================
 
@@ -190,6 +291,24 @@ function Invoke-Build {
         return
     }
 
+    # 自动检测生成器
+    $generator = ""
+    $msys2Mingw = "C:\msys64\mingw64\bin"
+    if (Test-Path "$msys2Mingw\g++.exe") {
+        $generator = "MinGW Makefiles"
+        Write-Step "检测到 MSYS2 MinGW-w64 工具链"
+        $env:PATH = "$msys2Mingw;$env:PATH"
+    } elseif (Get-Command cl -ErrorAction SilentlyContinue) {
+        $generator = "Visual Studio 17 2022"
+        Write-Step "检测到 Visual Studio 工具链"
+    } else {
+        Write-Err "未找到可用的 C++ 编译器!"
+        Write-Err "请安装 MSYS2 (推荐) 或 Visual Studio 2022"
+        Write-Err "MSYS2: https://www.msys2.org/"
+        return
+    }
+
+    Write-Step "生成器: $generator"
     Write-Step "构建类型: $BuildType"
     Write-Step "并行任务数: $BuildJobs"
 
@@ -199,8 +318,17 @@ function Invoke-Build {
 
     Push-Location $BuildDir
     try {
+        $cmakeArgs = @(
+            "..",
+            "-G", $generator,
+            "-DCMAKE_BUILD_TYPE=$BuildType",
+            "-DCMAKE_PREFIX_PATH=C:/msys64/mingw64/local",
+            "-DCMAKE_CXX_FLAGS=-DPROTOBUF_USE_DLLS",
+            "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-multiple-definition"
+        )
+
         Write-Step "运行 CMake 配置..."
-        cmake .. -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=$BuildType
+        & cmake $cmakeArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Err "CMake 配置失败"
             return
@@ -227,6 +355,16 @@ function Invoke-Build {
 
 function Start-OrchestratorSystem {
     Write-Banner "AI Agent 多智能体系统启动"
+
+    # === 环境初始化 ===
+    Invoke-InitEnvironment
+
+    # === Redis ===
+    if (-not (Start-Redis -HostAddr $RedisHost -Port $RedisPort)) {
+        Write-Err "Redis 不可用，多智能体系统无法启动"
+        Write-Err "请安装并启动 Redis 后重试: .\run.ps1 redis"
+        return
+    }
 
     # 检查可执行文件
     $requiredBins = @(
@@ -338,6 +476,9 @@ function Start-OrchestratorSystem {
 function Start-GrpcServer {
     Write-Banner "启动 gRPC AI Server"
 
+    # 初始化 MSYS2 运行时环境
+    Invoke-InitEnvironment
+
     $grpcBinary = Join-Path $GrpcBinDir "grpc_server"
 
     if (-not (Test-Binary $grpcBinary)) {
@@ -363,6 +504,9 @@ function Start-GrpcServer {
 
 function Start-Client {
     param([string]$ServerUrl = "http://localhost:5000")
+
+    # 初始化 MSYS2 运行时环境
+    Invoke-InitEnvironment
 
     $clientBinary = Join-Path $OrchBinDir "ai_client"
 
@@ -400,23 +544,56 @@ switch ($Command) {
     "client" {
         Start-Client
     }
+    "redis" {
+        Write-Banner "Redis 管理"
+        Invoke-InitEnvironment
+        if (Test-RedisRunning -HostAddr $RedisHost -Port $RedisPort) {
+            Write-Step "Redis 已运行在 ${RedisHost}:${RedisPort}"
+        } else {
+            Write-Warn "Redis 未运行，尝试启动..."
+            Start-Redis -HostAddr $RedisHost -Port $RedisPort
+        }
+    }
+    "setup" {
+        Write-Banner "环境检测"
+        Write-Host "MSYS2 MinGW: $(
+            if (Test-Path 'C:\msys64\mingw64\bin\g++.exe') { '✅ 已安装' } else { '❌ 未安装 - 请用 winget install MSYS2.MSYS2' }
+        )"
+        Write-Host "Redis:       $(
+            if (Test-RedisRunning -HostAddr $RedisHost -Port $RedisPort) { '✅ 运行中' } else { '⚠️  未运行 - 请用 .\run.ps1 redis 启动' }
+        )"
+        Write-Host "CMake:       $(
+            if (Get-Command cmake -ErrorAction SilentlyContinue) { '✅ 已安装' } else { '❌ 未安装' }
+        )"
+        Write-Host "LLM_API_KEY: $(
+            if ($ApiKey) { '✅ 已配置' } else { '⚠️  未配置 (使用内置 Key)' }
+        )"
+        Write-Host "二进制文件:  $(
+            if ((Test-Binary (Join-Path $OrchBinDir 'ai_registry_server')) -and
+                (Test-Binary (Join-Path $GrpcBinDir 'grpc_server'))) { '✅ 已编译' } else { '⚠️  未编译 - 请用 .\run.ps1 build' }
+        )"
+        Write-Host ""
+    }
     default {
         Write-Host "用法: .\run.ps1 [command] [options]"
         Write-Host ""
         Write-Host "命令:"
-        Write-Host "  orchestrator  启动完整多智能体系统 (默认)"
+        Write-Host "  orchestrator  启动完整多智能体系统 (默认，自动启动 Redis)"
         Write-Host "  grpc          启动 gRPC AI Server"
         Write-Host "  client        启动交互式 AI 客户端"
         Write-Host "  stop          停止所有已启动的服务"
         Write-Host "  build         编译项目"
+        Write-Host "  redis         启动 / 检查 Redis 服务"
+        Write-Host "  setup         检测开发环境是否就绪"
         Write-Host ""
         Write-Host "示例:"
-        Write-Host "  .\run.ps1 build                              # 编译项目"
-        Write-Host "  .\run.ps1 orchestrator                       # 启动多智能体系统（使用内置 Key）"
-        Write-Host "  .\run.ps1 orchestrator -EnableMcp -EnableRag # 启用 MCP + RAG"
-        Write-Host "  .\run.ps1 grpc -GrpcPort 50052              # 启动 gRPC 服务"
-        Write-Host "  .\run.ps1 client                             # 启动客户端"
-        Write-Host "  .\run.ps1 stop                               # 停止所有服务"
+        Write-Host "  .\run.ps1 setup                               # 检测环境状态"
+        Write-Host "  .\run.ps1 build                               # 编译项目"
+        Write-Host "  .\run.ps1 orchestrator                        # 一键启动多智能体系统"
+        Write-Host "  .\run.ps1 orchestrator -EnableMcp -EnableRag  # 启用 MCP + RAG"
+        Write-Host "  .\run.ps1 grpc -GrpcPort 50052               # 启动 gRPC 服务"
+        Write-Host "  .\run.ps1 client                              # 启动客户端"
+        Write-Host "  .\run.ps1 stop                                # 停止所有服务"
         Write-Host ""
         Write-Host "环境变量:"
         Write-Host "  `$env:LLM_API_KEY   LLM API Key（可选，默认使用内置 Key）"

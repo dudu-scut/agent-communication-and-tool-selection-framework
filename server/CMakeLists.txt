@@ -25,7 +25,7 @@ target_link_libraries(rpc_server
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
     pthread
-    uuid
+    ${UUID_LIB}
     CURL::libcurl
 )
 

@@ -1,8 +1,10 @@
 #include "agent_rpc/mcp/mcp_client.h"
 #include "agent_rpc/common/logger.h"
+#ifndef _WIN32
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#endif
 #include <sstream>
 #include <fstream>
 #include <json/json.h>
@@ -390,21 +392,26 @@ bool MCPClient::sendRequest(const MCPRequest& request) {
 }
 
 bool MCPClient::sendRequestStdio(const MCPRequest& request) {
+#ifndef _WIN32
     if (stdin_pipe_ == -1) {
         LOG_ERROR("MCP server stdin pipe not available");
         return false;
     }
-    
+
     std::string json_request = buildJSONRPCRequest(request);
     json_request += "\n";  // MCP协议使用换行符分隔消息
-    
+
     ssize_t written = write(stdin_pipe_, json_request.c_str(), json_request.length());
     if (written != static_cast<ssize_t>(json_request.length())) {
         LOG_ERROR("Failed to write request to MCP server");
         return false;
     }
-    
+
     return true;
+#else
+    LOG_ERROR("STDIO transport not supported on Windows");
+    return false;
+#endif
 }
 
 MCPResponse MCPClient::receiveResponse() {
@@ -432,29 +439,30 @@ void MCPClient::processNotifications() {
 }
 
 void MCPClient::processNotificationsStdio() {
+#ifndef _WIN32
     if (stdout_pipe_ == -1) {
         LOG_ERROR("MCP server stdout pipe not available");
         return;
     }
-    
+
     char buffer[4096];
     std::string line;
-    
+
     while (running_) {
         ssize_t bytes_read = read(stdout_pipe_, buffer, sizeof(buffer) - 1);
         if (bytes_read > 0) {
             buffer[bytes_read] = '\0';
             line += buffer;
-            
+
             // 处理完整的行
             size_t pos = 0;
             while ((pos = line.find('\n')) != std::string::npos) {
                 std::string message = line.substr(0, pos);
                 line.erase(0, pos + 1);
-                
+
                 if (!message.empty()) {
                     MCPResponse response = parseJSONRPCResponse(message);
-                    
+
                     // 检查是否是通知
                     if (response.id.empty() && !response.error.empty()) {
                         // 这是一个通知
@@ -495,46 +503,48 @@ void MCPClient::processNotificationsStdio() {
             }
         }
     }
+#endif
 }
 
 bool MCPClient::startMCPServer() {
+#ifndef _WIN32
     // 创建管道
     int stdin_pipe_fd[2];
     int stdout_pipe_fd[2];
-    
+
     if (pipe(stdin_pipe_fd) == -1 || pipe(stdout_pipe_fd) == -1) {
         LOG_ERROR("Failed to create pipes for MCP server");
         return false;
     }
-    
+
     // 创建子进程
     server_pid_ = fork();
     if (server_pid_ == -1) {
         LOG_ERROR("Failed to fork process for MCP server");
         return false;
     }
-    
+
     if (server_pid_ == 0) {
         // 子进程：运行MCP服务器
         close(stdin_pipe_fd[1]);  // 关闭写端
         close(stdout_pipe_fd[0]); // 关闭读端
-        
+
         // 重定向stdin和stdout
         dup2(stdin_pipe_fd[0], STDIN_FILENO);
         dup2(stdout_pipe_fd[1], STDOUT_FILENO);
-        
+
         // 准备参数
         std::vector<char*> argv;
         argv.push_back(const_cast<char*>(server_path_.c_str()));
-        
+
         for (const auto& arg : server_args_) {
             argv.push_back(const_cast<char*>(arg.c_str()));
         }
         argv.push_back(nullptr);
-        
+
         // 执行MCP服务器
         execv(server_path_.c_str(), argv.data());
-        
+
         // 如果execv失败
         LOG_ERROR("Failed to execute MCP server: " + server_path_);
         exit(1);
@@ -542,36 +552,42 @@ bool MCPClient::startMCPServer() {
         // 父进程
         close(stdin_pipe_fd[0]);  // 关闭读端
         close(stdout_pipe_fd[1]); // 关闭写端
-        
+
         stdin_pipe_ = stdin_pipe_fd[1];
         stdout_pipe_ = stdout_pipe_fd[0];
-        
+
         // 设置非阻塞模式
         fcntl(stdout_pipe_, F_SETFL, O_NONBLOCK);
-        
+
         // 等待服务器启动
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
+
         return true;
     }
+#else
+    LOG_ERROR("STDIO transport not supported on Windows. Use SSE transport instead.");
+    return false;
+#endif
 }
 
 void MCPClient::stopMCPServer() {
+#ifndef _WIN32
     if (server_pid_ > 0) {
         kill(server_pid_, SIGTERM);
         waitpid(server_pid_, nullptr, 0);
         server_pid_ = -1;
     }
-    
+
     if (stdin_pipe_ != -1) {
         close(stdin_pipe_);
         stdin_pipe_ = -1;
     }
-    
+
     if (stdout_pipe_ != -1) {
         close(stdout_pipe_);
         stdout_pipe_ = -1;
     }
+#endif
 }
 
 std::string MCPClient::buildJSONRPCRequest(const MCPRequest& request) {

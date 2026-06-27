@@ -5,9 +5,20 @@
 #include <map>
 #include <thread>
 #include <iostream>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#define close closesocket
+#define read(sock, buf, len) recv((sock), (buf), (int)(len), 0)
+#define write(sock, buf, len) send((sock), (buf), (int)(len), 0)
+#ifndef ssize_t
+typedef SSIZE_T ssize_t;
+#endif
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#endif
 #include <cstring>
 #include <sstream>
 
@@ -43,7 +54,15 @@ public:
 
     void start() {
         running_ = true;
-        
+
+#ifdef _WIN32
+        // Windows 需要初始化 Winsock
+        WSADATA wsa_data;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+            throw std::runtime_error("Failed to initialize Winsock");
+        }
+#endif
+
         // 创建 socket
         int server_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd < 0) {
@@ -52,7 +71,7 @@ public:
         
         // 设置 socket 选项
         int opt = 1;
-        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
         
         // 绑定地址
         struct sockaddr_in address;

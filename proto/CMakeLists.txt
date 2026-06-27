@@ -21,12 +21,26 @@ foreach(PROTO_FILE ${PROTO_FILES})
     )
     
     # 生成gRPC代码
+    # 查找 grpc_cpp_plugin (支持 Linux / MSYS2 MinGW / 自定义路径)
+    find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin
+        PATHS
+            /usr/bin
+            /mingw64/bin
+            /usr/local/bin
+        HINTS
+            ${GRPC_PLUGIN_DIR}
+    )
+    if(NOT GRPC_CPP_PLUGIN)
+        message(FATAL_ERROR "grpc_cpp_plugin not found! Install gRPC or set GRPC_PLUGIN_DIR.")
+    endif()
+    message(STATUS "Found grpc_cpp_plugin: ${GRPC_CPP_PLUGIN}")
+
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${PROTO_NAME}.grpc.pb.cc
                ${CMAKE_CURRENT_BINARY_DIR}/${PROTO_NAME}.grpc.pb.h
         COMMAND protoc
         ARGS --grpc_out=${CMAKE_CURRENT_BINARY_DIR}
-             --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin
+             --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
              --proto_path=${CMAKE_CURRENT_SOURCE_DIR}
              ${CMAKE_CURRENT_SOURCE_DIR}/${PROTO_FILE}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${PROTO_FILE}

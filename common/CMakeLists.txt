@@ -19,7 +19,7 @@ target_link_libraries(agent_rpc_common
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
     pthread
-    uuid
+    ${UUID_LIB}
     curl
     jsoncpp
 )

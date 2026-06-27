@@ -11,7 +11,13 @@
 #include "agent_rpc/common/metrics.h"
 
 #include <chrono>
+#ifdef _WIN32
+#include <objbase.h>
+#include <rpc.h>
+#pragma comment(lib, "rpcrt4.lib")
+#else
 #include <uuid/uuid.h>
+#endif
 
 namespace agent_rpc {
 namespace client {
@@ -270,13 +276,23 @@ agent_communication::QueryStatusResponse AIQueryClient::getQueryStatus(
 }
 
 std::string AIQueryClient::generateRequestId() {
+#ifdef _WIN32
+    UUID uuid;
+    UuidCreate(&uuid);
+    RPC_CSTR szUuid = nullptr;
+    UuidToStringA(&uuid, &szUuid);
+    std::string uuid_str(reinterpret_cast<const char*>(szUuid));
+    RpcStringFreeA(&szUuid);
+    return uuid_str;
+#else
     uuid_t uuid;
     uuid_generate(uuid);
-    
+
     char uuid_str[37];
     uuid_unparse_lower(uuid, uuid_str);
-    
+
     return std::string(uuid_str);
+#endif
 }
 
 } // namespace client

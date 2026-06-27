@@ -27,13 +27,13 @@ bool ProtobufBinarySerializer::deserialize(const std::string& data, google::prot
 
 std::string ProtobufBinarySerializer::serializeToJson(const google::protobuf::Message& message) {
     std::string json;
-    google::protobuf::util::JsonOptions options;
+    google::protobuf::util::JsonPrintOptions options;
     options.add_whitespace = true;
     options.preserve_proto_field_names = true;
-    
+
     auto status = google::protobuf::util::MessageToJsonString(message, &json, options);
     if (!status.ok()) {
-        LOG_ERROR("Failed to serialize protobuf message to JSON: " + status.message().as_string());
+        LOG_ERROR("Failed to serialize protobuf message to JSON: " + std::string(status.message()));
         return "";
     }
     return json;
@@ -43,10 +43,10 @@ bool ProtobufBinarySerializer::deserializeFromJson(const std::string& json, goog
     google::protobuf::util::JsonParseOptions options;
     options.ignore_unknown_fields = true;
     options.case_insensitive_enum_parsing = true;
-    
+
     auto status = google::protobuf::util::JsonStringToMessage(json, &message, options);
     if (!status.ok()) {
-        LOG_ERROR("Failed to deserialize JSON to protobuf message: " + status.message().as_string());
+        LOG_ERROR("Failed to deserialize JSON to protobuf message: " + std::string(status.message()));
         return false;
     }
     return true;
@@ -65,13 +65,13 @@ bool ProtobufJsonSerializer::deserialize(const std::string& data, google::protob
 
 std::string ProtobufJsonSerializer::serializeToJson(const google::protobuf::Message& message) {
     std::string json;
-    google::protobuf::util::JsonOptions options;
+    google::protobuf::util::JsonPrintOptions options;
     options.add_whitespace = false;
     options.preserve_proto_field_names = true;
     
     auto status = google::protobuf::util::MessageToJsonString(message, &json, options);
     if (!status.ok()) {
-        LOG_ERROR("Failed to serialize protobuf message to JSON: " + status.message().as_string());
+        LOG_ERROR("Failed to serialize protobuf message to JSON: " + std::string(status.message()));
         return "";
     }
     return json;
@@ -84,7 +84,7 @@ bool ProtobufJsonSerializer::deserializeFromJson(const std::string& json, google
     
     auto status = google::protobuf::util::JsonStringToMessage(json, &message, options);
     if (!status.ok()) {
-        LOG_ERROR("Failed to deserialize JSON to protobuf message: " + status.message().as_string());
+        LOG_ERROR("Failed to deserialize JSON to protobuf message: " + std::string(status.message()));
         return false;
     }
     return true;

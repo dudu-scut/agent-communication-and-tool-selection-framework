@@ -22,7 +22,7 @@ target_link_libraries(rpc_client
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
     pthread
-    uuid
+    ${UUID_LIB}
 )
 
 # 链接依赖
@@ -33,7 +33,7 @@ target_link_libraries(agent_rpc_client
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
     pthread
-    uuid
+    ${UUID_LIB}
 )
 
 # 包含目录

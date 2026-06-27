@@ -20,6 +20,7 @@
 #include <a2a/core/exception.hpp>
 #include <a2a/models/agent_message.hpp>
 
+#include <algorithm>
 #include <unordered_set>
 #include <vector>
 #include <string>

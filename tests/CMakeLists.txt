@@ -24,7 +24,7 @@ target_link_libraries(test_serialization
     GTest::gtest
     GTest::gtest_main
     pthread
-    uuid
+    ${UUID_LIB}
 )
 
 # 包含目录
@@ -184,7 +184,7 @@ target_link_libraries(test_ai_query_integration
     GTest::gtest
     GTest::gtest_main
     pthread
-    uuid
+    ${UUID_LIB}
     CURL::libcurl
 )
 
@@ -266,7 +266,7 @@ target_link_libraries(test_agent_communication
     GTest::gtest
     GTest::gtest_main
     pthread
-    uuid
+    ${UUID_LIB}
     CURL::libcurl
 )
 target_include_directories(test_agent_communication PRIVATE
