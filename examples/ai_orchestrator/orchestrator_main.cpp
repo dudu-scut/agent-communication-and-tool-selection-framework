@@ -11,7 +11,7 @@
  */
 
 #include "redis_task_store.hpp"
-#include "qwen_client.hpp"
+#include "llm_client.hpp"
 #include "http_server.hpp"
 #include "registry_client.hpp"
 
@@ -90,7 +90,7 @@ public:
         : agent_id_(agent_id)
         , listen_address_(listen_address)
         , task_store_(std::make_shared<RedisTaskStore>(redis_host, redis_port))
-        , qwen_client_(api_key)
+        , llm_client_(api_key)
         , registry_client_(registry_url)
         , mcp_integration_(std::make_unique<MCPAgentIntegration>()) {
         
@@ -393,7 +393,7 @@ private:
                             "- general: 其他对话\n\n"
                             "用户输入: " + text;
         
-        std::string result = qwen_client_.chat("", prompt);
+        std::string result = llm_client_.chat("", prompt);
         
         if (result.find("math") != std::string::npos) {
             return "math";
@@ -475,7 +475,7 @@ private:
             history_text += "\n工具辅助信息:\n" + tool_context;
         }
         
-        return qwen_client_.chat(history_text, query);
+        return llm_client_.chat(history_text, query);
     }
     
     /**
@@ -570,7 +570,7 @@ private:
     std::string agent_id_;
     std::string listen_address_;
     std::shared_ptr<RedisTaskStore> task_store_;
-    QwenClient qwen_client_;
+    LLMClient llm_client_;
     RegistryClient registry_client_;
     std::unique_ptr<MCPAgentIntegration> mcp_integration_;
 };

@@ -134,8 +134,7 @@ make -j$(nproc)
 
 ```bash
 # API Keys
-QWEN_API_KEY=sk-your-qwen-api-key
-DASHSCOPE_API_KEY=sk-your-dashscope-api-key
+LLM_API_KEY=sk-your-api-key
 
 # 服务配置
 RPC_SERVER_PORT=50051
@@ -251,7 +250,7 @@ User=agent-rpc
 Group=agent-rpc
 EnvironmentFile=/etc/agent-rpc/env
 ExecStart=/opt/agent-rpc/bin/ai_orchestrator \
-    orchestrator-001 5000 http://localhost:8500 ${QWEN_API_KEY} \
+    orchestrator-001 5000 http://localhost:8500 ${LLM_API_KEY} \
     --enable-mcp \
     --mcp-server /opt/agent-rpc/mcp_server
 Restart=always
@@ -277,7 +276,7 @@ User=agent-rpc
 Group=agent-rpc
 EnvironmentFile=/etc/agent-rpc/env
 ExecStart=/opt/agent-rpc/bin/ai_math_agent \
-    math-agent-001 5001 http://localhost:8500 ${QWEN_API_KEY} \
+    math-agent-001 5001 http://localhost:8500 ${LLM_API_KEY} \
     --enable-mcp \
     --mcp-server /opt/agent-rpc/mcp_server
 Restart=always
@@ -519,11 +518,10 @@ iptables -A INPUT -p tcp --dport 8500 -j ACCEPT
 ```bash
 # 使用 HashiCorp Vault
 vault kv put secret/agent-rpc \
-    qwen_api_key=sk-xxx \
-    dashscope_api_key=sk-xxx
+    llm_api_key=sk-xxx
 
 # 在服务启动脚本中获取
-export QWEN_API_KEY=$(vault kv get -field=qwen_api_key secret/agent-rpc)
+export LLM_API_KEY=$(vault kv get -field=llm_api_key secret/agent-rpc)
 ```
 
 ## 健康检查

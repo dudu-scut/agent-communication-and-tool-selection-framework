@@ -1,7 +1,7 @@
 /**
  * @file embedding_service.h
- * @brief 阿里百炼 DashScope 文本向量化服务
- * 
+ * @brief 通用文本向量化服务（OpenAI 兼容接口）
+ *
  * Requirements: 1.2, 2.1, 2.2, 2.3, 2.4
  * Task 2: 实现 EmbeddingService
  */
@@ -22,20 +22,20 @@ namespace rag {
  * @brief Embedding 服务配置
  */
 struct EmbeddingConfig {
-    std::string api_key;                          ///< DashScope API Key
-    std::string model = "text-embedding-v2";      ///< 模型名称
-    int dimension = 1536;                         ///< 向量维度
+    std::string api_key;                          ///< API Key（Bearer Token 认证）
+    std::string model = "deepseek-v4-pro";        ///< 模型名称
+    int dimension = 1024;                         ///< 向量维度
     int max_retries = 3;                          ///< 最大重试次数
     int timeout_ms = 10000;                       ///< 超时时间 (毫秒)
     int initial_retry_delay_ms = 1000;            ///< 初始重试延迟 (毫秒)
-    std::string api_url = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding";
-    
+    std::string api_url = "https://api.deepseek.com/v1/embeddings";
+
     /**
      * @brief 从环境变量加载 API Key
      * @return 如果成功加载返回 true
      */
     bool loadApiKeyFromEnv();
-    
+
     /**
      * @brief 验证配置
      * @return 如果配置有效返回 true
@@ -55,8 +55,8 @@ struct RetryStats {
 
 /**
  * @brief Embedding 服务类
- * 
- * 调用阿里百炼 DashScope API 生成文本向量。
+ *
+ * 调用 OpenAI 兼容的 Embedding API 生成文本向量。
  * 支持：
  * - 单文本向量化
  * - 批量向量化
@@ -67,11 +67,11 @@ class EmbeddingService {
 public:
     explicit EmbeddingService(const EmbeddingConfig& config);
     ~EmbeddingService();
-    
+
     // 禁止拷贝
     EmbeddingService(const EmbeddingService&) = delete;
     EmbeddingService& operator=(const EmbeddingService&) = delete;
-    
+
     /**
      * @brief 生成单个文本的向量
      * @param text 输入文本
@@ -79,7 +79,7 @@ public:
      * @throws std::runtime_error 如果 API 调用失败
      */
     std::vector<float> embed(const std::string& text);
-    
+
     /**
      * @brief 批量生成向量
      * @param texts 输入文本列表
@@ -87,7 +87,7 @@ public:
      * @throws std::runtime_error 如果 API 调用失败
      */
     std::vector<std::vector<float>> embedBatch(const std::vector<std::string>& texts);
-    
+
     /**
      * @brief 计算两个向量的余弦相似度
      * @param a 向量 a
@@ -95,17 +95,17 @@ public:
      * @return 相似度 [-1, 1]
      */
     static float cosineSimilarity(const std::vector<float>& a, const std::vector<float>& b);
-    
+
     /**
      * @brief 获取配置
      */
     const EmbeddingConfig& getConfig() const { return config_; }
-    
+
     /**
      * @brief 获取最近一次调用的重试统计
      */
     const RetryStats& getLastRetryStats() const { return last_retry_stats_; }
-    
+
     /**
      * @brief 设置重试回调（用于测试）
      */
@@ -117,22 +117,22 @@ private:
      * @brief 发送 HTTP POST 请求
      */
     std::string sendPostRequest(const std::string& data);
-    
+
     /**
      * @brief 带重试的 API 调用
      */
     std::string callApiWithRetry(const std::string& request_body);
-    
+
     /**
      * @brief 计算指数退避延迟
      */
     int calculateBackoffDelay(int attempt) const;
-    
+
     /**
-     * @brief 解析 API 响应
+     * @brief 解析 API 响应（OpenAI 格式）
      */
     std::vector<std::vector<float>> parseEmbeddingResponse(const std::string& response);
-    
+
     EmbeddingConfig config_;
     RetryStats last_retry_stats_;
     RetryCallback retry_callback_;

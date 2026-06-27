@@ -29,8 +29,8 @@ RAG-MCP (Retrieval-Augmented Generation for Model Context Protocol) 是一个基
 │  │EmbeddingService│  │  VectorIndex  │  │ToolValidator │      │
 │  │               │  │               │  │   (可选)      │      │
 │  │  ┌─────────┐  │  │  ┌─────────┐  │  └───────────────┘      │
-│  │  │DashScope│  │  │  │ Cosine  │  │                         │
-│  │  │  API    │  │  │  │Similarity│  │                         │
+│  │  │ Embedding│ │  │  │ Cosine  │  │                         │
+│  │  │   API    │  │  │  │Similarity│  │                         │
 │  │  └─────────┘  │  │  └─────────┘  │                         │
 │  │       │       │  └───────────────┘                         │
 │  │       ▼       │                                             │
@@ -48,7 +48,7 @@ RAG-MCP (Retrieval-Augmented Generation for Model Context Protocol) 是一个基
 ### 1. 设置环境变量
 
 ```bash
-export DASHSCOPE_API_KEY=sk-your-api-key
+export LLM_API_KEY=sk-your-api-key
 ```
 
 ### 2. 配置 RAG-MCP
@@ -64,9 +64,9 @@ config.mcp_server_path = "/path/to/mcp_server";
 
 // RAG-MCP 配置
 config.rag_config.enabled = true;
-config.rag_config.api_key = std::getenv("DASHSCOPE_API_KEY");
-config.rag_config.model = "text-embedding-v2";
-config.rag_config.dimension = 1536;
+config.rag_config.api_key = std::getenv("LLM_API_KEY");
+config.rag_config.model = "deepseek-v4-pro";
+config.rag_config.dimension = 1024;
 config.rag_config.top_k = 5;
 config.rag_config.similarity_threshold = 0.3f;
 
@@ -107,9 +107,9 @@ std::string functions_json = mcp.getRelevantToolsAsJson(query);
 | 参数 | 类型 | 默认值 | 描述 |
 |------|------|--------|------|
 | enabled | bool | false | 是否启用 RAG-MCP |
-| api_key | string | "" | DashScope API Key |
-| model | string | "text-embedding-v2" | Embedding 模型 |
-| dimension | int | 1536 | 向量维度 |
+| api_key | string | "" | LLM API Key |
+| model | string | "deepseek-v4-pro" | Embedding 模型 |
+| dimension | int | 1024 | 向量维度 |
 | top_k | int | 5 | 返回工具数量 |
 | similarity_threshold | float | 0.3 | 相似度阈值 |
 | index_path | string | "" | 索引文件路径 |
@@ -123,12 +123,12 @@ std::string functions_json = mcp.getRelevantToolsAsJson(query);
 
 | 参数 | 类型 | 默认值 | 描述 |
 |------|------|--------|------|
-| api_key | string | 环境变量 | DashScope API Key |
-| model | string | "text-embedding-v2" | 模型名称 |
-| dimension | int | 1536 | 向量维度 |
+| api_key | string | 环境变量 | LLM API Key |
+| model | string | "deepseek-v4-pro" | 模型名称 |
+| dimension | int | 1024 | 向量维度 |
 | max_retries | int | 3 | 最大重试次数 |
 | timeout_ms | int | 30000 | 请求超时 (毫秒) |
-| base_url | string | DashScope URL | API 基础 URL |
+| base_url | string | Embedding API URL | API 基础 URL |
 
 ### CacheConfig
 
@@ -142,7 +142,7 @@ std::string functions_json = mcp.getRelevantToolsAsJson(query);
 
 ### EmbeddingService
 
-负责调用 DashScope API 进行文本向量化。
+负责调用 Embedding API 进行文本向量化。
 
 ```cpp
 #include "agent_rpc/mcp/rag/embedding_service.h"
@@ -342,7 +342,7 @@ RAG-MCP 在以下情况会自动降级：
 | 情况 | 降级行为 |
 |------|----------|
 | API Key 未设置 | 返回所有可用工具 |
-| DashScope API 不可用 | 返回所有可用工具 |
+| Embedding API 不可用 | 返回所有可用工具 |
 | 向量化失败 | 返回所有可用工具 |
 | 索引为空 | 返回所有可用工具 |
 

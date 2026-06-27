@@ -36,17 +36,9 @@ ENABLE_MCP="${ENABLE_MCP:-false}"
 ENABLE_RAG="${ENABLE_RAG:-false}"
 RAG_TOP_K="${RAG_TOP_K:-5}"
 RAG_THRESHOLD="${RAG_THRESHOLD:-0.3}"
-DASHSCOPE_API_KEY="${DASHSCOPE_API_KEY:-}"
 
-# API Key (请替换为你的 API Key)
-API_KEY="${QWEN_API_KEY:-sk-your-api-key}"
-
-# 检查 API Key
-if [ "$API_KEY" == "sk-your-api-key" ]; then
-    echo "警告: 请设置 QWEN_API_KEY 环境变量"
-    echo "export QWEN_API_KEY=sk-xxx"
-    exit 1
-fi
+# API Key
+API_KEY="${LLM_API_KEY:-sk-REDACTED}"
 
 # 创建日志和 PID 目录
 mkdir -p "$SCRIPT_DIR/logs" "$SCRIPT_DIR/pids"
@@ -54,6 +46,7 @@ mkdir -p "$SCRIPT_DIR/logs" "$SCRIPT_DIR/pids"
 echo "=========================================="
 echo "AI Agent 系统启动"
 echo "=========================================="
+echo "模型: deepseek-v4-pro"
 
 # 1. 启动 Registry Server
 echo "[1/3] 启动 Registry Server..."
@@ -75,13 +68,11 @@ fi
 
 # RAG-MCP 参数 (智能工具选择)
 RAG_ARGS=""
-if [ "$ENABLE_RAG" == "true" ] && [ -n "$DASHSCOPE_API_KEY" ]; then
+if [ "$ENABLE_RAG" == "true" ]; then
     RAG_ARGS="--enable-rag --rag-top-k $RAG_TOP_K --rag-threshold $RAG_THRESHOLD"
     echo "RAG-MCP 已启用: 智能工具选择"
     echo "  Top-K: $RAG_TOP_K"
     echo "  相似度阈值: $RAG_THRESHOLD"
-elif [ "$ENABLE_RAG" == "true" ] && [ -z "$DASHSCOPE_API_KEY" ]; then
-    echo "警告: ENABLE_RAG=true 但未设置 DASHSCOPE_API_KEY，RAG 功能将被禁用"
 fi
 
 # 2. 启动 Math Agent

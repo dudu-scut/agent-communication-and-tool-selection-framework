@@ -518,7 +518,7 @@ MCPAgentConfig parseMCPConfigFromArgs(int argc, char* argv[]) {
     
     // 如果启用了 RAG 但没有 API Key，尝试从环境变量获取
     if (config.rag_config.enabled && config.rag_config.api_key.empty()) {
-        const char* api_key = std::getenv("DASHSCOPE_API_KEY");
+        const char* api_key = std::getenv("LLM_API_KEY");
         if (api_key && api_key[0] != '\0') {
             config.rag_config.api_key = api_key;
         }
@@ -573,10 +573,10 @@ MCPAgentConfig parseMCPConfigFromEnv() {
         config.rag_config.enabled = (rag_str == "true" || rag_str == "1" || rag_str == "yes");
     }
     
-    // DASHSCOPE_API_KEY (用于 RAG Embedding)
-    const char* dashscope_key = std::getenv("DASHSCOPE_API_KEY");
-    if (dashscope_key && dashscope_key[0] != '\0') {
-        config.rag_config.api_key = dashscope_key;
+    // LLM_API_KEY (用于 RAG Embedding，与 LLM 共用同一个 Key)
+    const char* llm_key = std::getenv("LLM_API_KEY");
+    if (llm_key && llm_key[0] != '\0') {
+        config.rag_config.api_key = llm_key;
         // 如果有 API Key，自动启用 RAG（除非显式禁用）
         if (!rag_enabled) {
             config.rag_config.enabled = true;

@@ -4,7 +4,7 @@
  * 
  * 这是项目的核心示例：
  * - 使用 gRPC 提供 AI 查询服务
- * - 直接集成 Qwen 等 AI 模型
+ * - 直接集成 LLM API（OpenAI 兼容接口）
  * - 可选集成 MCP 工具
  */
 
@@ -46,12 +46,12 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
 
 /**
  * @brief AI 查询服务实现
- * 
- * 直接调用 Qwen API，不依赖 A2A 适配器
+ *
+ * 直接调用 LLM API（OpenAI 兼容接口），不依赖 A2A 适配器
  */
 class DirectAIQueryServiceImpl final : public agent_communication::AIQueryService::Service {
 public:
-    DirectAIQueryServiceImpl(const std::string& api_key, const std::string& model = "qwen-plus")
+    DirectAIQueryServiceImpl(const std::string& api_key, const std::string& model = "deepseek-v4-pro")
         : api_key_(api_key), model_(model) {
         curl_global_init(CURL_GLOBAL_DEFAULT);
         std::cout << "[AIService] 初始化完成，使用模型: " << model_ << std::endl;
@@ -73,7 +73,7 @@ public:
         // 调用 AI 模型
         std::string answer;
         std::string error;
-        bool success = callQwenAPI(request->question(), answer, error);
+        bool success = callLLMAPI(request->question(), answer, error);
         
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
@@ -116,7 +116,7 @@ public:
         // 调用 AI 模型
         std::string answer;
         std::string error;
-        bool success = callQwenAPI(request->question(), answer, error);
+        bool success = callLLMAPI(request->question(), answer, error);
         
         if (success) {
             // 模拟流式输出（将答案分块发送）
@@ -167,14 +167,14 @@ public:
     }
 
 private:
-    bool callQwenAPI(const std::string& question, std::string& answer, std::string& error) {
+    bool callLLMAPI(const std::string& question, std::string& answer, std::string& error) {
         CURL* curl = curl_easy_init();
         if (!curl) {
             error = "Failed to initialize CURL";
             return false;
         }
-        
-        // 构建请求 JSON
+
+        // 构建 OpenAI 兼容请求 JSON
         Json::Value request_json;
         request_json["model"] = model_;
         request_json["messages"] = Json::Value(Json::arrayValue);
@@ -189,7 +189,7 @@ private:
         
         // 设置 CURL 选项
         std::string response_body;
-        std::string url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+        std::string url = "https://api.deepseek.com/v1/chat/completions";
         
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -212,7 +212,7 @@ private:
             return false;
         }
         
-        // 解析响应
+        // 解析 OpenAI 兼容响应
         Json::Value response_json;
         Json::Reader reader;
         if (!reader.parse(response_body, response_json)) {
@@ -244,13 +244,13 @@ void printUsage(const char* program) {
     std::cout << "用法: " << program << " <API_KEY> [PORT] [MODEL]" << std::endl;
     std::cout << std::endl;
     std::cout << "参数:" << std::endl;
-    std::cout << "  API_KEY  - Qwen API Key (必需)" << std::endl;
+    std::cout << "  API_KEY  - LLM API Key (必需)" << std::endl;
     std::cout << "  PORT     - 监听端口 (默认: 50051)" << std::endl;
-    std::cout << "  MODEL    - AI 模型名称 (默认: qwen-plus)" << std::endl;
+    std::cout << "  MODEL    - AI 模型名称 (默认: deepseek-v4-pro)" << std::endl;
     std::cout << std::endl;
     std::cout << "示例:" << std::endl;
     std::cout << "  " << program << " sk-xxx" << std::endl;
-    std::cout << "  " << program << " sk-xxx 50051 qwen-turbo" << std::endl;
+    std::cout << "  " << program << " sk-xxx 50051 deepseek-v4-pro" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -261,7 +261,7 @@ int main(int argc, char* argv[]) {
     
     std::string api_key = argv[1];
     std::string port = argc > 2 ? argv[2] : "50051";
-    std::string model = argc > 3 ? argv[3] : "qwen-plus";
+    std::string model = argc > 3 ? argv[3] : "deepseek-v4-pro";
     
     // 设置信号处理
     signal(SIGINT, signalHandler);

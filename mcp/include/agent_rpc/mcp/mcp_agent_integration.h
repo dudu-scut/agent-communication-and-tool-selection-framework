@@ -39,8 +39,8 @@ namespace mcp {
  */
 struct RAGConfig {
     bool enabled = false;                  ///< 是否启用 RAG-MCP
-    std::string api_key;                   ///< DashScope API Key (可从环境变量读取)
-    std::string model = "text-embedding-v2"; ///< Embedding 模型
+    std::string api_key;                   ///< API Key（可从环境变量 LLM_API_KEY 读取）
+    std::string model = "deepseek-v4-pro"; ///< Embedding 模型
     int top_k = 5;                         ///< 返回工具数量
     float similarity_threshold = 0.3f;     ///< 相似度阈值
     std::string index_path;                ///< 索引文件路径

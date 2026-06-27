@@ -40,8 +40,8 @@ Agent Communication RPC Framework 是一个专为多 Agent 协作场景设计的
 - **HTTP 客户端**: libcurl
 - **JSON 处理**: nlohmann/json, jsoncpp
 - **测试框架**: Google Test + RapidCheck (属性测试)
-- **向量化服务**: 阿里百炼 DashScope API
-- **AI 模型**: 通义千问 (Qwen)
+- **向量化服务**: LLM Embedding API（OpenAI 兼容）
+- **AI 模型**: 兼容 OpenAI API 的大语言模型
 
 ---
 
@@ -78,7 +78,7 @@ Agent Communication RPC Framework 是一个专为多 Agent 协作场景设计的
 │  │                 (ai_orchestrator, 端口 5000)                         │   │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                  │   │
 │  │  │ 意图识别     │  │ Agent 路由  │  │ MCP 工具    │                  │   │
-│  │  │ (Qwen API)  │  │             │  │             │                  │   │
+│  │  │ (LLM API)   │  │             │  │             │                  │   │
 │  │  └─────────────┘  └──────┬──────┘  └─────────────┘                  │   │
 │  └──────────────────────────┼──────────────────────────────────────────┘   │
 │                             │                                               │
@@ -149,12 +149,12 @@ sudo apt-get install -y \
 
 ### 必需的 API Key
 
-| API Key | 用途 | 获取方式 |
-|---------|------|----------|
-| QWEN_API_KEY | 通义千问 AI 模型，用于对话和意图识别 | [阿里云百炼](https://bailian.console.aliyun.com/) |
-| DASHSCOPE_API_KEY | RAG 向量化服务，用于智能工具选择 | [阿里云 DashScope](https://dashscope.console.aliyun.com/) |
+| API Key | 用途 |
+|---------|------|
+| LLM_API_KEY | LLM API Key，用于 AI 对话、意图识别和 RAG 向量化 |
 
-> **注意**: 两个 API Key 都是完整功能所必需的。DASHSCOPE_API_KEY 用于 RAG-MCP 的工具向量化和检索功能。
+> 默认使用 OpenAI 兼容接口。LLM 对话和 Embedding 向量化共用同一个 API Key。
+> 脚本内置了默认 Key，也可通过环境变量 `LLM_API_KEY` 覆盖。
 
 ---
 
@@ -234,12 +234,9 @@ cd ../..
 ### 第二步：设置环境变量
 
 ```bash
-# 必需：通义千问 API Key（用于 AI 对话和意图识别）
-export QWEN_API_KEY=sk-your-qwen-api-key
-
-# 必需：DashScope API Key（用于 RAG 智能工具选择）
-# RAG 会将工具描述向量化存储，查询时动态检索相关工具
-export DASHSCOPE_API_KEY=sk-your-dashscope-api-key
+# LLM API Key（用于 AI 对话、意图识别和 RAG Embedding，共用同一个 Key）
+# 脚本已内置默认 Key，也可通过环境变量覆盖
+export LLM_API_KEY=sk-your-api-key
 ```
 
 ### 第三步：启动 Redis
@@ -379,7 +376,7 @@ grep -E "MCP|RAG" examples/ai_orchestrator/logs/orchestrator.log
 ### RAG 智能工具选择工作原理
 
 当用户发送查询时，RAG-MCP 会：
-1. 将用户查询向量化（调用 DashScope Embedding API）
+1. 将用户查询向量化（调用 Embedding API）
 2. 在工具向量索引中搜索最相似的工具
 3. 只返回 Top-K 个最相关的工具给 LLM，而非全部工具
 
@@ -388,8 +385,8 @@ grep -E "MCP|RAG" examples/ai_orchestrator/logs/orchestrator.log
         │
         ▼
 ┌───────────────────┐
-│  EmbeddingService │  ← 调用 DashScope API 向量化
-│  (text-embedding) │
+│  EmbeddingService │  ← 调用 Embedding API 向量化
+│   (embedding)     │
 └─────────┬─────────┘
           │ 向量 [0.12, 0.34, ...]
           ▼
@@ -454,8 +451,7 @@ Relevant Tools (3):
 
 ```bash
 # 设置环境变量
-export QWEN_API_KEY=sk-your-qwen-api-key
-export DASHSCOPE_API_KEY=sk-your-dashscope-api-key  # 用于 RAG 智能工具选择
+export LLM_API_KEY=sk-your-api-key
 
 # 启动 Redis
 sudo systemctl start redis-server
@@ -484,7 +480,7 @@ ls mcp_server_integrated/build/mcp_server
     math-1 \
     5001 \
     http://localhost:8500 \
-    $QWEN_API_KEY \
+    $LLM_API_KEY \
     --redis-host 127.0.0.1 \
     --redis-port 6379 \
     --enable-mcp \
@@ -514,7 +510,7 @@ ls mcp_server_integrated/build/mcp_server
     orch-1 \
     5000 \
     http://localhost:8500 \
-    $QWEN_API_KEY \
+    $LLM_API_KEY \
     --redis-host 127.0.0.1 \
     --redis-port 6379 \
     --enable-mcp \
@@ -828,8 +824,8 @@ if (client.getTransportType() == MCPTransportType::SSE) {
         │
         ▼
 ┌───────────────────┐
-│  EmbeddingService │  ← 调用 DashScope API 向量化
-│  (text-embedding) │
+│  EmbeddingService │  ← 调用 Embedding API 向量化
+│   (embedding)     │
 └─────────┬─────────┘
           │ 向量 [0.12, 0.34, ...]
           ▼
@@ -851,8 +847,8 @@ if (client.getTransportType() == MCPTransportType::SSE) {
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| api_key | 环境变量 | DashScope API Key |
-| model | text-embedding-v2 | Embedding 模型 |
+| api_key | 环境变量 | LLM API Key |
+| model | deepseek-v4-pro | Embedding 模型 |
 | top_k | 5 | 返回工具数量 |
 | similarity_threshold | 0.3 | 相似度阈值 |
 | enable_cache | true | 启用向量缓存 |
@@ -862,7 +858,7 @@ if (client.getTransportType() == MCPTransportType::SSE) {
 
 ```bash
 # 设置 API Key
-export DASHSCOPE_API_KEY=sk-your-dashscope-api-key
+export LLM_API_KEY=sk-your-api-key
 
 # 运行 RAG 示例
 ./build/examples/rag_mcp_example \
@@ -887,21 +883,19 @@ export DASHSCOPE_API_KEY=sk-your-dashscope-api-key
 
 ### 环境变量
 
-| 变量 | 必需 | 说明 | 获取方式 |
-|------|------|------|----------|
-| QWEN_API_KEY | **是** | 通义千问 API Key，用于 AI 对话和意图识别 | [阿里云百炼](https://bailian.console.aliyun.com/) |
-| DASHSCOPE_API_KEY | **是** | DashScope API Key，用于 RAG 向量化和智能工具选择 | [阿里云 DashScope](https://dashscope.console.aliyun.com/) |
-| ENABLE_MCP | 否 | 是否启用 MCP 工具 (true/false，默认 false) | - |
-| ENABLE_RAG | 否 | 是否启用 RAG 智能工具选择 (true/false，默认 false) | - |
-| RAG_TOP_K | 否 | RAG 返回工具数量 (默认: 5) | - |
-| RAG_THRESHOLD | 否 | RAG 相似度阈值 (默认: 0.3) | - |
-| RPC_SERVER_PORT | 否 | RPC Server 端口 (默认: 50051) | - |
-| ORCHESTRATOR_URL | 否 | Orchestrator 地址 (默认: http://localhost:5000) | - |
+| 变量 | 必需 | 说明 |
+|------|------|------|
+| LLM_API_KEY | 否 | LLM API Key，用于 AI 对话、意图识别和 RAG 向量化（脚本内置默认 Key） |
+| ENABLE_MCP | 否 | 是否启用 MCP 工具 (true/false，默认 false) |
+| ENABLE_RAG | 否 | 是否启用 RAG 智能工具选择 (true/false，默认 false) |
+| RAG_TOP_K | 否 | RAG 返回工具数量 (默认: 5) |
+| RAG_THRESHOLD | 否 | RAG 相似度阈值 (默认: 0.3) |
+| RPC_SERVER_PORT | 否 | RPC Server 端口 (默认: 50051) |
+| ORCHESTRATOR_URL | 否 | Orchestrator 地址 (默认: http://localhost:5000) |
 
 ```bash
-# 设置所有环境变量（完整功能）
-export QWEN_API_KEY=sk-your-qwen-api-key
-export DASHSCOPE_API_KEY=sk-your-dashscope-api-key
+# 设置环境变量（完整功能）
+export LLM_API_KEY=sk-your-api-key
 export ENABLE_MCP=true
 export ENABLE_RAG=true
 export RAG_TOP_K=5
@@ -921,10 +915,10 @@ export RAG_THRESHOLD=0.3
   --mcp-server <path>     MCP Server 路径
   --mcp-args <args>       MCP Server 参数 (逗号分隔)
   --enable-rag            启用 RAG 智能工具选择
-  --rag-api-key <key>     DashScope API Key (也可通过环境变量设置)
+  --rag-api-key <key>     LLM API Key (也可通过环境变量设置)
   --rag-top-k <n>         返回工具数量 (默认: 5)
   --rag-threshold <f>     相似度阈值 (默认: 0.3)
-  --rag-model <model>     Embedding 模型 (默认: text-embedding-v2)
+  --rag-model <model>     Embedding 模型 (默认: deepseek-v4-pro)
 ```
 
 ---
@@ -1018,10 +1012,10 @@ redis-cli ping  # 应返回 PONG
 
 ```bash
 # 确保设置了正确的 API Key
-echo $QWEN_API_KEY
+echo $LLM_API_KEY
 
 # 重新设置
-export QWEN_API_KEY=sk-your-actual-api-key
+export LLM_API_KEY=sk-your-actual-api-key
 ```
 
 ### Q: MCP 工具不可用
@@ -1044,11 +1038,11 @@ grep "MCP 已启用" examples/ai_orchestrator/logs/orchestrator.log
 ### Q: RAG 功能不工作
 
 ```bash
-# 1. 确保设置了 DashScope API Key
-echo $DASHSCOPE_API_KEY
+# 1. 确保设置了 API Key
+echo $LLM_API_KEY
 
 # 2. 重新设置
-export DASHSCOPE_API_KEY=sk-your-dashscope-api-key
+export LLM_API_KEY=sk-your-api-key
 
 # 3. 确保启动时启用了 RAG
 ENABLE_MCP=true ENABLE_RAG=true ./examples/ai_orchestrator/start_system.sh

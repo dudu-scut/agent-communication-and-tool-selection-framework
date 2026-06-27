@@ -17,16 +17,11 @@ if [ ! -f "$BIN_DIR/grpc_server" ]; then
 fi
 
 # 获取 API Key
-API_KEY="${QWEN_API_KEY:-}"
-if [ -z "$API_KEY" ]; then
-    echo "错误: 请设置 QWEN_API_KEY 环境变量"
-    echo "  export QWEN_API_KEY=sk-xxx"
-    exit 1
-fi
+API_KEY="${LLM_API_KEY:-sk-REDACTED}"
 
 # 默认参数
 PORT="${1:-50051}"
-MODEL="${2:-qwen-plus}"
+MODEL="${2:-deepseek-v4-pro}"
 
 echo "==========================================="
 echo "启动 gRPC AI Server"
