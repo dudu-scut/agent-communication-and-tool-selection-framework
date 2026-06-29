@@ -1,0 +1,54 @@
+# ============================================================================
+# NexusAI Gateway — Docker Compose
+# ============================================================================
+# 启动: docker compose -f docker-compose.gateway.yaml up -d
+# 停止: docker compose -f docker-compose.gateway.yaml down
+# 日志: docker compose -f docker-compose.gateway.yaml logs -f
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # grpcwebproxy: gRPC-Web ↔ gRPC 协议转换
+  # 浏览器 (gRPC-Web/HTTP1.1) → :8081 → gRPC/2 → NexusAI :50051
+  # --------------------------------------------------------------------------
+  grpcwebproxy:
+    image: improbable/grpcwebproxy:latest
+    container_name: nexusai-grpcwebproxy
+    command:
+      - "--backend_addr=host.docker.internal:50051"
+      - "--run_tls_server=false"
+      - "--server_http_debug_port=8081"
+      - "--allow_all_origins"
+      - "--use_websockets"
+    ports:
+      - "8081:8081"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # nginx: 反向代理 + 限流 + 认证 + 负载均衡
+  # :8080 gRPC-Web 入口（浏览器流量）
+  # :8082 直连 gRPC 入口（后端服务间调用）
+  # --------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nexusai-nginx
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+      - "8082:8082"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - gateway-net
+    depends_on:
+      - grpcwebproxy
+    restart: unless-stopped
+
+networks:
+  gateway-net:
+    driver: bridge
