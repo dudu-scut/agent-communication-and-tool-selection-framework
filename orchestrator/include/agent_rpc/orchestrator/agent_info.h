@@ -12,24 +12,39 @@
 #include <vector>
 #include <chrono>
 #include <optional>
+#include <unordered_map>
+
+// Forward declaration to avoid circular dependency
+struct AgentRegistration;
 
 namespace agent_rpc {
 namespace orchestrator {
 
 /**
  * @brief Agent information structure
+ * 
+ * Unified agent representation used by AgentRouter for routing decisions.
+ * Can be populated from AgentRegistration (HTTP Registry) or gRPC RegisterAgent.
  */
 struct AgentInfo {
     std::string id;                              // Unique agent identifier
     std::string name;                            // Human-readable name
     std::string url;                             // Agent endpoint URL
-    std::vector<std::string> skills;             // Agent capabilities/skills
+    std::vector<std::string> skills;             // Agent capabilities/skills (skill names from AgentCard)
     std::vector<std::string> tags;               // Additional tags for filtering
     bool is_healthy = true;                      // Health status
     std::chrono::steady_clock::time_point last_heartbeat;  // Last heartbeat time
     int current_load = 0;                        // Current task load (for LEAST_LOAD strategy)
     std::string description;                     // Agent description
     std::string version;                         // Agent version
+    
+    /**
+     * @brief Skill name → description mapping
+     * 
+     * Populated from AgentCard.skills[].description during registration.
+     * Used by AgentRouter to build dynamic intent classification prompts.
+     */
+    std::unordered_map<std::string, std::string> skill_descriptions;
     
     /**
      * @brief Check if agent has a specific skill
@@ -70,6 +85,27 @@ struct AgentInfo {
         }
         return required_skills.empty();
     }
+    
+    /**
+     * @brief Get description for a specific skill
+     * @param skill Skill name
+     * @return Skill description or empty string
+     */
+    std::string getSkillDescription(const std::string& skill) const {
+        auto it = skill_descriptions.find(skill);
+        return (it != skill_descriptions.end()) ? it->second : "";
+    }
+    
+    /**
+     * @brief Build AgentInfo from AgentRegistration JSON data
+     * 
+     * Parses the agent_card field to extract skills with full metadata.
+     * This bridges the HTTP Registry (AgentRegistration) to the routing layer (AgentInfo).
+     * 
+     * @param reg_json JSON representation of AgentRegistration
+     * @return Populated AgentInfo
+     */
+    static AgentInfo from_registration(const AgentRegistration& reg);
 };
 
 /**

@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.15)
 # Source files
 set(ORCHESTRATOR_SOURCES
     src/agent_router.cpp
+    src/agent_info.cpp
 )
 
 # Header files

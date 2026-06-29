@@ -6,8 +6,10 @@
  */
 
 #include "agent_rpc/orchestrator/agent_router.h"
+#include <a2a/examples/agent_registry.hpp>
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 
 namespace agent_rpc {
 namespace orchestrator {
@@ -346,6 +348,112 @@ AgentInfo AgentRouter::selectLeastLoad(const std::vector<AgentInfo>& candidates)
             return a.current_load < b.current_load;
         });
     return *min_it;
+}
+
+// === Dynamic Intent Classification (P0-1 / P1-1) ===
+
+void AgentRouter::syncFromRegistry(const std::vector<AgentRegistration>& registrations) {
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    
+    // Track which agents we've seen in this sync
+    std::unordered_set<std::string> synced_ids;
+    
+    for (const auto& reg : registrations) {
+        synced_ids.insert(reg.id);
+        
+        // Convert AgentRegistration to AgentInfo (uses P0-3 bridge)
+        AgentInfo info = AgentInfo::from_registration(reg);
+        
+        // Preserve existing health/load state if agent already known
+        auto existing = agents_.find(reg.id);
+        if (existing != agents_.end()) {
+            info.is_healthy = existing->second.is_healthy;
+            info.current_load = existing->second.current_load;
+            info.last_heartbeat = existing->second.last_heartbeat;
+        }
+        
+        agents_[reg.id] = std::move(info);
+    }
+    
+    // Remove agents that are no longer in the registry
+    std::vector<std::string> to_remove;
+    for (const auto& [id, agent] : agents_) {
+        if (synced_ids.find(id) == synced_ids.end()) {
+            to_remove.push_back(id);
+        }
+    }
+    for (const auto& id : to_remove) {
+        agents_.erase(id);
+    }
+}
+
+std::string AgentRouter::buildDynamicIntentPrompt(const std::string& user_text) const {
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    
+    // Collect all unique skills with descriptions from healthy agents
+    std::unordered_map<std::string, std::string> all_skills;
+    
+    for (const auto& [id, agent] : agents_) {
+        if (!agent.is_healthy) continue;
+        
+        for (const auto& skill : agent.skills) {
+            // Only add if not already present (first occurrence wins)
+            if (all_skills.find(skill) == all_skills.end()) {
+                auto desc_it = agent.skill_descriptions.find(skill);
+                if (desc_it != agent.skill_descriptions.end() && !desc_it->second.empty()) {
+                    all_skills[skill] = desc_it->second;
+                } else {
+                    all_skills[skill] = "";
+                }
+            }
+        }
+    }
+    
+    // If no skills registered, fall back to a minimal prompt
+    if (all_skills.empty()) {
+        return "判断以下用户输入的意图类型，只回答类型名称。\n"
+               "用户输入: " + user_text;
+    }
+    
+    // Build the dynamic prompt
+    std::ostringstream prompt;
+    prompt << "判断以下用户输入最匹配哪个技能，只回答技能名称之一：\n";
+    
+    for (const auto& [skill, description] : all_skills) {
+        prompt << "- " << skill;
+        if (!description.empty()) {
+            prompt << ": " << description;
+        }
+        prompt << "\n";
+    }
+    
+    prompt << "- none: 以上都不匹配\n\n";
+    prompt << "用户输入: " << user_text;
+    
+    return prompt.str();
+}
+
+std::unordered_map<std::string, std::string> AgentRouter::getAllSkillDescriptions() const {
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    
+    std::unordered_map<std::string, std::string> result;
+    
+    for (const auto& [id, agent] : agents_) {
+        if (!agent.is_healthy) continue;
+        
+        for (const auto& skill : agent.skills) {
+            if (result.find(skill) == result.end()) {
+                auto desc_it = agent.skill_descriptions.find(skill);
+                if (desc_it != agent.skill_descriptions.end()) {
+                    result[skill] = desc_it->second;
+                } else {
+                    result[skill] = "";
+                }
+            }
+        }
+    }
+    
+    return result;
 }
 
 } // namespace orchestrator

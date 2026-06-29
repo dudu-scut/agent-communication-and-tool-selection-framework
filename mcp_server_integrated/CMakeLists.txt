@@ -42,24 +42,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
 
-# Link platform-specific libraries
-if(WIN32)
-    # Windows Sockets library is required on Windows
-    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-else()
-    # On POSIX systems (Linux, macOS), standard socket functions are
-    # typically part of the standard C library (libc) and usually
-    # don't require explicit linking.
-    # If you encounter specific linker errors on older Linux systems related
-    # to networking functions (like gethostbyname), you might need:
-    # target_link_libraries(coversight_server PRIVATE socket nsl)
-    # However, try without them first, as they are often unnecessary now.
-endif()
-
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    if(WIN32)
-        target_link_options(${PROJECT_NAME} PRIVATE "-static-libgcc" "-static-libstdc++" "-static")
-    elseif(UNIX AND NOT APPLE) # e.g., Linux
+    if(UNIX AND NOT APPLE)
         target_link_options(${PROJECT_NAME} PRIVATE "-static-libgcc" "-static-libstdc++")
     endif()
 endif()

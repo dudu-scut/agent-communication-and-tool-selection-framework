@@ -16,6 +16,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+// Forward declaration for syncFromRegistry parameter
+struct AgentRegistration;
+
 namespace agent_rpc {
 namespace orchestrator {
 
@@ -186,6 +189,36 @@ public:
      * @brief Get number of healthy agents
      */
     size_t getHealthyAgentCount() const;
+    
+    // === Dynamic Intent Classification (P0-1 / P1-1) ===
+    
+    /**
+     * @brief Synchronize agent list from HTTP Registry
+     * 
+     * Converts AgentRegistration objects to AgentInfo and updates the internal
+     * agent map. Call this periodically or on registry change events.
+     * 
+     * @param registrations List of agent registrations from the registry
+     */
+    void syncFromRegistry(const std::vector<AgentRegistration>& registrations);
+    
+    /**
+     * @brief Build a dynamic intent classification prompt from registered agents
+     * 
+     * Constructs an LLM prompt that lists all registered skills dynamically.
+     * Replaces the hardcoded math/code/general prompt in the orchestrator.
+     * 
+     * @param user_text The user's input text
+     * @return Complete prompt string ready to send to LLM
+     */
+    std::string buildDynamicIntentPrompt(const std::string& user_text) const;
+    
+    /**
+     * @brief Get all unique skill names with their descriptions
+     * 
+     * Returns a map of skill_name → description for prompt building.
+     */
+    std::unordered_map<std::string, std::string> getAllSkillDescriptions() const;
 
 private:
     /**

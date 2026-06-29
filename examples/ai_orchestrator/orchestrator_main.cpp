@@ -15,6 +15,9 @@
 #include "http_server.hpp"
 #include "registry_client.hpp"
 
+// P0-1: 统一路由层
+#include <agent_rpc/orchestrator/agent_router.h>
+
 #include <a2a/models/agent_message.hpp>
 #include <a2a/models/agent_task.hpp>
 #include <a2a/models/task_status.hpp>
@@ -32,10 +35,13 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <sstream>
 
 using namespace a2a;
 using json = nlohmann::json;
 using namespace agent_rpc::mcp;
+using namespace agent_rpc::orchestrator;
 
 // 简单的 HTTP 客户端
 class SimpleHttpClient {
@@ -92,7 +98,12 @@ public:
         , task_store_(std::make_shared<RedisTaskStore>(redis_host, redis_port))
         , llm_client_(api_key)
         , registry_client_(registry_url)
-        , mcp_integration_(std::make_unique<MCPAgentIntegration>()) {
+        , mcp_integration_(std::make_unique<MCPAgentIntegration>())
+        , agent_router_(std::make_unique<AgentRouter>())
+        , sync_running_(false) {
+        
+        // 初始化路由层
+        agent_router_->initialize(RoutingStrategy::SKILL_MATCH);
         
         // 初始化 MCP 集成
         if (!mcp_integration_->initialize(mcp_config)) {
@@ -106,10 +117,14 @@ public:
             std::cout << std::endl;
         }
         
-        std::cout << "[Orchestrator] 初始化完成" << std::endl;
+        std::cout << "[Orchestrator] 初始化完成 (动态路由已启用)" << std::endl;
     }
     
     ~AIOrchestrator() {
+        stop_registry_sync();
+        if (agent_router_) {
+            agent_router_->shutdown();
+        }
         if (mcp_integration_) {
             mcp_integration_->shutdown();
         }
@@ -158,6 +173,9 @@ public:
             std::cerr << "[Orchestrator] 注册失败" << std::endl;
         }
         
+        // 启动 Registry 同步线程（P0-1: 定期从 Registry 拉取 Agent 列表到 Router）
+        start_registry_sync();
+        
         server_thread.join();
     }
 
@@ -187,21 +205,18 @@ private:
                 // 保存用户消息
                 save_message(context_id, message);
                 
-                // 识别意图
-                std::string intent = analyze_intent(user_text);
+                // P0-1: 动态意图识别 + AgentRouter 路由
+                std::string intent = analyze_intent_dynamic(user_text);
                 std::cout << "[Orchestrator] 识别意图: " << intent << std::endl;
                 
                 std::string response_text;
                 
-                if (intent == "math") {
-                    // 动态查找 Math Agent
-                    response_text = call_math_agent(user_text, context_id);
-                } else if (intent == "code") {
-                    // 动态查找 Code Agent
-                    response_text = call_code_agent(user_text, context_id);
-                } else {
-                    // 通用对话
+                if (intent == "none") {
+                    // 没有匹配的技能，走通用对话
                     response_text = handle_general_query(user_text, context_id);
+                } else {
+                    // P0-1: 通过 AgentRouter 选择 Agent（统一路由）
+                    response_text = route_and_call(intent, user_text, context_id);
                 }
                 
                 // 保存 Agent 响应
@@ -279,8 +294,8 @@ private:
             };
             write_callback(start_event.dump());
             
-            // 识别意图
-            std::string intent = analyze_intent(user_text);
+            // P0-1: 动态意图识别
+            std::string intent = analyze_intent_dynamic(user_text);
             std::cout << "[Orchestrator] 识别意图: " << intent << std::endl;
             
             // 发送意图识别事件
@@ -297,12 +312,11 @@ private:
             // 处理查询并流式返回
             std::string response_text;
             
-            if (intent == "math") {
-                response_text = call_math_agent(user_text, context_id);
-            } else if (intent == "code") {
-                response_text = call_code_agent(user_text, context_id);
-            } else {
+            if (intent == "none") {
                 response_text = handle_general_query(user_text, context_id);
+            } else {
+                // P0-1: 通过 AgentRouter 路由
+                response_text = route_and_call(intent, user_text, context_id);
             }
             
             // UTF-8 安全的分块函数
@@ -386,41 +400,81 @@ private:
         }
     }
 
-    std::string analyze_intent(const std::string& text) {
-        std::string prompt = "判断以下用户输入属于哪个类别，只回答类别名称：\n"
-                            "- math: 数学计算、方程求解\n"
-                            "- code: 编程、代码相关\n"
-                            "- general: 其他对话\n\n"
-                            "用户输入: " + text;
+    /**
+     * @brief P0-1: 动态意图识别
+     * 
+     * 使用 AgentRouter.buildDynamicIntentPrompt() 构建包含所有已注册技能的 prompt，
+     * 而不是硬编码 math/code/general 三个类别。
+     * 返回值为已注册的 skill name 之一，或 "none"。
+     */
+    std::string analyze_intent_dynamic(const std::string& text) {
+        // 用 AgentRouter 构建动态 prompt（包含所有已注册 Agent 的技能）
+        std::string prompt = agent_router_->buildDynamicIntentPrompt(text);
         
         std::string result = llm_client_.chat("", prompt);
         
-        if (result.find("math") != std::string::npos) {
-            return "math";
+        // Trim whitespace from LLM response
+        auto start = result.find_first_not_of(" \t\n\r");
+        auto end = result.find_last_not_of(" \t\n\r");
+        if (start != std::string::npos) {
+            result = result.substr(start, end - start + 1);
         }
-        if (result.find("code") != std::string::npos) {
-            return "code";
+        
+        // P1-3: 精确匹配 —— LLM 返回的字符串必须与注册的 skill name 完全一致
+        auto all_skills = agent_router_->getAllSkillDescriptions();
+        for (const auto& [skill_name, _] : all_skills) {
+            if (result == skill_name) {
+                return skill_name;
+            }
         }
-        return "general";
+        
+        // 也检查 agents 的 tags（兼容旧 Agent 只用 tags 注册的情况）
+        auto agents = agent_router_->getHealthyAgents();
+        for (const auto& agent : agents) {
+            for (const auto& tag : agent.tags) {
+                if (result == tag) {
+                    return tag;
+                }
+            }
+        }
+        
+        return "none";
     }
     
-    std::string call_math_agent(const std::string& query, const std::string& context_id) {
-        return call_agent_by_tag("math", query, context_id);
+    /**
+     * @brief P0-1: 通过 AgentRouter 路由并调用 Agent
+     * 
+     * 使用 AgentRouter 选择最合适的 Agent，然后通过其 URL 直接调用。
+     * 替代原来的 call_math_agent() / call_code_agent() + call_agent_by_tag() 模式。
+     */
+    std::string route_and_call(const std::string& intent, 
+                                const std::string& query, 
+                                const std::string& context_id) {
+        // 通过 AgentRouter 选择 Agent
+        std::vector<std::string> required_skills = {intent};
+        auto selected = agent_router_->selectAgent(query, required_skills);
+        
+        if (!selected.has_value()) {
+            std::cerr << "[Orchestrator] 未找到匹配 Agent: " << intent << std::endl;
+            // Fallback: 尝试用 registry_client 按 tag 查找（兼容旧逻辑）
+            return call_agent_by_tag_fallback(intent, query, context_id);
+        }
+        
+        const auto& agent = selected.value();
+        std::cout << "[Orchestrator] 路由到 Agent: " << agent.name 
+                  << " (" << agent.url << ") skill=" << intent << std::endl;
+        
+        return call_agent_by_url(agent.url, intent, query, context_id);
     }
     
-    std::string call_code_agent(const std::string& query, const std::string& context_id) {
-        return call_agent_by_tag("code", query, context_id);
-    }
-    
-    std::string call_agent_by_tag(const std::string& tag, 
+    /**
+     * @brief 通用 Agent 调用（通过 URL 直接发送 JSON-RPC 请求）
+     */
+    std::string call_agent_by_url(const std::string& agent_url,
+                                   const std::string& tag,
                                    const std::string& query, 
                                    const std::string& context_id) {
         try {
-            // 从注册中心查找 Agent
-            std::string agent_url = registry_client_.select_agent_by_tag(tag);
-            
-            std::cout << "[Orchestrator] 调用 " << tag << " Agent: " << agent_url << std::endl;
-            
             // 构造请求
             json request = {
                 {"jsonrpc", "2.0"},
@@ -451,6 +505,23 @@ private:
         } catch (const std::exception& e) {
             std::cerr << "[Orchestrator] 调用 " << tag << " Agent 失败: " << e.what() << std::endl;
             return "抱歉，" + tag + " 服务暂时不可用，使用通用模型回答";
+        }
+    }
+    
+    /**
+     * @brief Fallback: 当 AgentRouter 找不到匹配 Agent 时，回退到 RegistryClient tag 查找
+     * 
+     * 保留兼容性，确保旧 Agent（未注册 skills 只用 tags）仍能被调用。
+     */
+    std::string call_agent_by_tag_fallback(const std::string& tag, 
+                                            const std::string& query, 
+                                            const std::string& context_id) {
+        try {
+            std::string agent_url = registry_client_.select_agent_by_tag(tag);
+            return call_agent_by_url(agent_url, tag, query, context_id);
+        } catch (const std::exception& e) {
+            std::cerr << "[Orchestrator] Fallback 也失败: " << e.what() << std::endl;
+            return "抱歉，暂时无法处理此类请求";
         }
     }
     
@@ -573,6 +644,74 @@ private:
     LLMClient llm_client_;
     RegistryClient registry_client_;
     std::unique_ptr<MCPAgentIntegration> mcp_integration_;
+    
+    // P0-1: 统一路由层
+    std::unique_ptr<AgentRouter> agent_router_;
+    
+    // Registry 同步线程
+    std::atomic<bool> sync_running_;
+    std::thread sync_thread_;
+    
+    /**
+     * @brief 启动 Registry 同步线程
+     * 
+     * 每 15 秒从 Registry 拉取所有 Agent 列表，同步到 AgentRouter。
+     * 这使得 AgentRouter 始终拥有最新的 Agent 信息用于路由决策。
+     */
+    void start_registry_sync() {
+        bool expected = false;
+        if (!sync_running_.compare_exchange_strong(expected, true)) return;
+        
+        // 立即做一次同步
+        do_registry_sync();
+        
+        sync_thread_ = std::thread([this]() {
+            while (sync_running_) {
+                std::this_thread::sleep_for(std::chrono::seconds(15));
+                if (!sync_running_) break;
+                do_registry_sync();
+            }
+        });
+        
+        std::cout << "[Orchestrator] Registry 同步已启动 (每 15 秒)" << std::endl;
+    }
+    
+    void stop_registry_sync() {
+        sync_running_ = false;
+        if (sync_thread_.joinable()) {
+            sync_thread_.join();
+        }
+    }
+    
+    /**
+     * @brief 执行一次 Registry 同步
+     */
+    void do_registry_sync() {
+        try {
+            auto agents = registry_client_.get_all_agents();
+            agent_router_->syncFromRegistry(agents);
+            
+            size_t healthy = agent_router_->getHealthyAgentCount();
+            size_t total = agent_router_->getAgentCount();
+            
+            if (total > 0) {
+                std::cout << "[Orchestrator] Registry 同步完成: " 
+                          << healthy << "/" << total << " 个 Agent 健康" << std::endl;
+                
+                // 打印已注册的技能列表
+                auto skills = agent_router_->getAllSkillDescriptions();
+                if (!skills.empty()) {
+                    std::cout << "[Orchestrator] 已注册技能: ";
+                    for (const auto& [name, desc] : skills) {
+                        std::cout << name << " ";
+                    }
+                    std::cout << std::endl;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[Orchestrator] Registry 同步失败: " << e.what() << std::endl;
+        }
+    }
 };
 
 void print_usage(const char* program) {
