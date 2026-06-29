@@ -17,6 +17,8 @@ message ServiceInfo {
     int32 port = 4;
     repeated string tags = 5;
     map<string, string> metadata = 6;
+    repeated string skills = 7;          // AgentCard 技能名称列表
+    string agent_card = 8;               // AgentCard JSON（完整元数据）
 }
 
 // 健康检查请求

@@ -52,7 +52,10 @@ struct ServiceEndpoint {
     int port;
     std::string service_name;
     std::string version;
+    std::vector<std::string> tags;
     std::map<std::string, std::string> metadata;
+    std::vector<std::string> skills;
+    std::string agent_card;
     bool is_healthy = true;
     std::chrono::steady_clock::time_point last_heartbeat;
 };

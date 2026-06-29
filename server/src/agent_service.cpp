@@ -73,6 +73,7 @@ void AgentCommunicationServiceImpl::cleanupOfflineAgents() {
     while (it != agents_.end()) {
         if (now - it->second.last_heartbeat > timeout) {
             LOG_WARN("Agent offline, removing: " + it->first);
+            removeFromIndexes(it->first);
             agent_message_queues_.erase(it->first);
             common::Metrics::getInstance().recordDisconnection(it->first);
             it = agents_.erase(it);
@@ -216,9 +217,16 @@ grpc::Status AgentCommunicationServiceImpl::GetAgents(
         info->set_version(pair.second.version);
         info->set_host(pair.second.host);
         info->set_port(pair.second.port);
+        for (const auto& t : pair.second.tags) {
+            info->add_tags(t);
+        }
         for (const auto& m : pair.second.metadata) {
             (*info->mutable_metadata())[m.first] = m.second;
         }
+        for (const auto& s : pair.second.skills) {
+            info->add_skills(s);
+        }
+        info->set_agent_card(pair.second.agent_card);
         added++;
     }
 
@@ -247,11 +255,19 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     for (const auto& m : info.metadata()) {
         endpoint.metadata[m.first] = m.second;
     }
+    for (const auto& t : info.tags()) {
+        endpoint.tags.push_back(t);
+    }
+    for (const auto& s : info.skills()) {
+        endpoint.skills.push_back(s);
+    }
+    endpoint.agent_card = info.agent_card();
 
     {
         std::lock_guard<std::mutex> lock(agents_mutex_);
         agents_[agent_id] = endpoint;
         agent_message_queues_.try_emplace(agent_id);
+        addToIndexes(agent_id, endpoint);
     }
 
     common::Metrics::getInstance().recordConnection(agent_id, true);
@@ -274,6 +290,7 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
     const auto& agent_id = request->agent_id();
     {
         std::lock_guard<std::mutex> lock(agents_mutex_);
+        removeFromIndexes(agent_id);
         agents_.erase(agent_id);
         agent_message_queues_.erase(agent_id);
     }
@@ -365,6 +382,120 @@ grpc::Status AgentCommunicationServiceImpl::RealTimeCommunication(
         // Echo back for now; real implementation would route to target
         if (!stream->Write(msg)) break;
     }
+    return grpc::Status::OK;
+}
+
+// ========================================================================
+// Index helpers & FindAgents
+// ========================================================================
+
+void AgentCommunicationServiceImpl::addToIndexes(
+    const std::string& agent_id, const common::ServiceEndpoint& endpoint) {
+    for (const auto& tag : endpoint.tags) {
+        tags_index_[tag].insert(agent_id);
+    }
+    for (const auto& skill : endpoint.skills) {
+        skills_index_[skill].insert(agent_id);
+    }
+}
+
+void AgentCommunicationServiceImpl::removeFromIndexes(const std::string& agent_id) {
+    auto ait = agents_.find(agent_id);
+    if (ait == agents_.end()) return;
+
+    for (const auto& tag : ait->second.tags) {
+        auto it = tags_index_.find(tag);
+        if (it != tags_index_.end()) {
+            it->second.erase(agent_id);
+            if (it->second.empty()) tags_index_.erase(it);
+        }
+    }
+    for (const auto& skill : ait->second.skills) {
+        auto it = skills_index_.find(skill);
+        if (it != skills_index_.end()) {
+            it->second.erase(agent_id);
+            if (it->second.empty()) skills_index_.erase(it);
+        }
+    }
+}
+
+grpc::Status AgentCommunicationServiceImpl::FindAgents(
+    grpc::ServerContext* /*context*/,
+    const agent_communication::FindAgentsRequest* request,
+    agent_communication::FindAgentsResponse* response) {
+
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    int limit = request->limit();
+    if (limit <= 0) limit = 100;
+
+    // 收集候选 agent_id 集合
+    std::set<std::string> candidates;
+    bool has_filter = false;
+
+    if (!request->tag().empty()) {
+        has_filter = true;
+        auto it = tags_index_.find(request->tag());
+        if (it != tags_index_.end()) {
+            candidates = it->second;
+        }
+    }
+
+    if (!request->skill().empty()) {
+        has_filter = true;
+        auto it = skills_index_.find(request->skill());
+        if (it != skills_index_.end()) {
+            if (candidates.empty() && !request->tag().empty()) {
+                // tag 有结果但 skill 无结果 → 交集为空
+            } else if (!candidates.empty()) {
+                // 交集
+                std::set<std::string> intersection;
+                for (const auto& id : it->second) {
+                    if (candidates.count(id)) intersection.insert(id);
+                }
+                candidates = intersection;
+            } else {
+                candidates = it->second;
+            }
+        } else if (!candidates.empty()) {
+            candidates.clear();
+        }
+    }
+
+    int added = 0;
+    for (const auto& pair : agents_) {
+        if (added >= limit) break;
+
+        if (has_filter && candidates.find(pair.first) == candidates.end()) {
+            continue;
+        }
+
+        if (!request->keyword().empty() &&
+            pair.second.service_name.find(request->keyword()) == std::string::npos) {
+            continue;
+        }
+
+        auto* info = response->add_agents();
+        info->set_service_name(pair.second.service_name);
+        info->set_version(pair.second.version);
+        info->set_host(pair.second.host);
+        info->set_port(pair.second.port);
+        for (const auto& t : pair.second.tags) {
+            info->add_tags(t);
+        }
+        for (const auto& m : pair.second.metadata) {
+            (*info->mutable_metadata())[m.first] = m.second;
+        }
+        for (const auto& s : pair.second.skills) {
+            info->add_skills(s);
+        }
+        info->set_agent_card(pair.second.agent_card);
+        added++;
+    }
+
+    response->set_total_count(added);
+    auto* status = response->mutable_status();
+    status->set_code(0);
+    status->set_message("OK");
     return grpc::Status::OK;
 }
 

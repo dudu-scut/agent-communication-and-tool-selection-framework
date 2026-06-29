@@ -107,6 +107,21 @@ message HeartbeatResponse {
     int64 server_time = 2;
 }
 
+// 查找代理请求（按标签/技能筛选）
+message FindAgentsRequest {
+    string tag = 1;
+    string skill = 2;
+    string keyword = 3;
+    int32 limit = 4;
+}
+
+// 查找代理响应
+message FindAgentsResponse {
+    common.Status status = 1;
+    repeated common.ServiceInfo agents = 2;
+    int32 total_count = 3;
+}
+
 // 代理通信服务定义
 service AgentCommunicationService {
     // 简单RPC - 发送消息
@@ -120,6 +135,9 @@ service AgentCommunicationService {
     
     // 简单RPC - 获取代理列表
     rpc GetAgents(GetAgentsRequest) returns (GetAgentsResponse);
+    
+    // 简单RPC - 按标签/技能查找代理
+    rpc FindAgents(FindAgentsRequest) returns (FindAgentsResponse);
     
     // 简单RPC - 注册代理
     rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);

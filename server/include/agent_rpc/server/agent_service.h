@@ -14,6 +14,8 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <set>
+#include <unordered_map>
 
 namespace agent_rpc {
 namespace server {
@@ -26,7 +28,7 @@ public:
     ~AgentCommunicationServiceImpl();
 
     // ========================================================================
-    // gRPC Service Methods (10 个 RPC)
+    // gRPC Service Methods (11 个 RPC)
     // ========================================================================
 
     grpc::Status SendMessage(
@@ -48,6 +50,11 @@ public:
         grpc::ServerContext* context,
         const agent_communication::GetAgentsRequest* request,
         agent_communication::GetAgentsResponse* response) override;
+
+    grpc::Status FindAgents(
+        grpc::ServerContext* context,
+        const agent_communication::FindAgentsRequest* request,
+        agent_communication::FindAgentsResponse* response) override;
 
     grpc::Status RegisterAgent(
         grpc::ServerContext* context,
@@ -94,10 +101,16 @@ private:
     bool isAgentOnline(const std::string& agent_id);
     void updateAgentHeartbeat(const std::string& agent_id);
     void cleanupOfflineAgents();
+    void addToIndexes(const std::string& agent_id, const common::ServiceEndpoint& endpoint);
+    void removeFromIndexes(const std::string& agent_id);
 
     mutable std::mutex agents_mutex_;
     std::map<std::string, common::ServiceEndpoint> agents_;
     std::map<std::string, common::MessageQueue<agent_communication::Message>> agent_message_queues_;
+
+    // 标签/技能倒排索引（agent_id 集合），加速 FindAgents 查询
+    std::unordered_map<std::string, std::set<std::string>> tags_index_;
+    std::unordered_map<std::string, std::set<std::string>> skills_index_;
 
     common::MessageHandler message_handler_;
     common::ErrorHandler error_handler_;
