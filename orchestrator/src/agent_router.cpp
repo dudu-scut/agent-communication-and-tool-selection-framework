@@ -9,7 +9,80 @@
 #include <a2a/examples/agent_registry.hpp>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <sstream>
+
+namespace {
+
+// Common English stopwords to filter out when extracting keywords from descriptions
+const std::unordered_set<std::string> STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+    "should", "may", "might", "must", "can", "could", "to", "of", "in",
+    "for", "on", "with", "at", "by", "from", "as", "into", "through",
+    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+    "neither", "each", "every", "all", "any", "few", "more", "most",
+    "other", "some", "such", "no", "only", "own", "same", "than", "too",
+    "very", "just", "because", "if", "when", "while", "that", "this",
+    "it", "its", "they", "them", "their", "we", "our", "you", "your",
+    "he", "she", "his", "her", "i", "me", "my", "about", "which", "who",
+    "whom", "what", "how", "where", "there", "here", "up", "out", "then"
+};
+
+// Decode one UTF-8 code point starting at position pos, return code point and advance pos
+uint32_t decodeUtf8(const std::string& s, size_t& pos) {
+    unsigned char c = static_cast<unsigned char>(s[pos]);
+    uint32_t cp = 0;
+    if (c < 0x80) {
+        cp = c; pos += 1;
+    } else if ((c & 0xE0) == 0xC0 && pos + 1 < s.size()) {
+        cp = (c & 0x1F) << 6;
+        cp |= (static_cast<unsigned char>(s[pos + 1]) & 0x3F);
+        pos += 2;
+    } else if ((c & 0xF0) == 0xE0 && pos + 2 < s.size()) {
+        cp = (c & 0x0F) << 12;
+        cp |= (static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 6;
+        cp |= (static_cast<unsigned char>(s[pos + 2]) & 0x3F);
+        pos += 3;
+    } else if ((c & 0xF8) == 0xF0 && pos + 3 < s.size()) {
+        cp = (c & 0x07) << 18;
+        cp |= (static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 12;
+        cp |= (static_cast<unsigned char>(s[pos + 2]) & 0x3F) << 6;
+        cp |= (static_cast<unsigned char>(s[pos + 3]) & 0x3F);
+        pos += 4;
+    } else {
+        pos += 1; // skip malformed byte
+    }
+    return cp;
+}
+
+// Encode a code point back to UTF-8
+std::string encodeUtf8(uint32_t cp) {
+    std::string result;
+    if (cp < 0x80) {
+        result += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        result += static_cast<char>(0xC0 | (cp >> 6));
+        result += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        result += static_cast<char>(0xE0 | (cp >> 12));
+        result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        result += static_cast<char>(0xF0 | (cp >> 18));
+        result += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+    return result;
+}
+
+bool isCJK(uint32_t cp) {
+    return (cp >= 0x4E00 && cp <= 0x9FFF) ||   // CJK Unified Ideographs
+           (cp >= 0x3400 && cp <= 0x4DBF);      // CJK Extension A
+}
+
+} // anonymous namespace
 
 namespace agent_rpc {
 namespace orchestrator {
@@ -150,16 +223,22 @@ void AgentRouter::updateAgentList(const std::vector<AgentInfo>& agents) {
     for (const auto& agent : agents) {
         agents_[agent.id] = agent;
     }
+    rebuildSkillKeywordIndex();
 }
 
 void AgentRouter::addAgent(const AgentInfo& agent) {
     std::lock_guard<std::mutex> lock(agents_mutex_);
     agents_[agent.id] = agent;
+    rebuildSkillKeywordIndex();
 }
 
 bool AgentRouter::removeAgent(const std::string& agent_id) {
     std::lock_guard<std::mutex> lock(agents_mutex_);
-    return agents_.erase(agent_id) > 0;
+    bool removed = agents_.erase(agent_id) > 0;
+    if (removed) {
+        rebuildSkillKeywordIndex();
+    }
+    return removed;
 }
 
 std::optional<AgentInfo> AgentRouter::getAgent(const std::string& agent_id) {
@@ -268,49 +347,141 @@ size_t AgentRouter::getHealthyAgentCount() const {
 }
 
 std::string AgentRouter::analyzeRequiredSkill(const std::string& question) {
-    // Simple keyword-based skill detection
+    // Lowercase the question for case-insensitive matching
     std::string lower_question;
     lower_question.reserve(question.size());
     for (char c : question) {
         lower_question += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
-    
-    // Math-related keywords
-    if (lower_question.find("math") != std::string::npos ||
-        lower_question.find("calculate") != std::string::npos ||
-        lower_question.find("compute") != std::string::npos ||
-        lower_question.find("equation") != std::string::npos ||
-        lower_question.find("数学") != std::string::npos ||
-        lower_question.find("计算") != std::string::npos) {
-        return "math";
+
+    // Aggregate IDF-weighted scores across all matched keywords per skill.
+    // Unique keywords (low IDF denominator) contribute more; shared keywords
+    // contribute less — naturally downweighting generic terms.
+    std::unordered_map<std::string, double> skill_scores;
+
+    for (const auto& [keyword, entries] : skill_keywords_) {
+        if (lower_question.find(keyword) != std::string::npos) {
+            for (const auto& entry : entries) {
+                skill_scores[entry.skill_name] += entry.weight;
+            }
+        }
     }
-    
-    // Code-related keywords
-    if (lower_question.find("code") != std::string::npos ||
-        lower_question.find("program") != std::string::npos ||
-        lower_question.find("function") != std::string::npos ||
-        lower_question.find("debug") != std::string::npos ||
-        lower_question.find("代码") != std::string::npos ||
-        lower_question.find("编程") != std::string::npos) {
-        return "coding";
+
+    // Pick the skill with the highest aggregated score
+    std::string best_skill;
+    double best_score = 0.0;
+    for (const auto& [skill, score] : skill_scores) {
+        if (score > best_score) {
+            best_score = score;
+            best_skill = skill;
+        }
     }
-    
-    // Writing-related keywords
-    if (lower_question.find("write") != std::string::npos ||
-        lower_question.find("essay") != std::string::npos ||
-        lower_question.find("article") != std::string::npos ||
-        lower_question.find("写作") != std::string::npos ||
-        lower_question.find("文章") != std::string::npos) {
-        return "writing";
+
+    return best_skill;  // Empty string if no skill detected
+}
+
+void AgentRouter::rebuildSkillKeywordIndex() {
+    // Must be called while agents_mutex_ is held.
+    //
+    // Two-pass construction:
+    //   Pass 1 — collect keyword → set<skill_name> into a temporary map
+    //   Pass 2 — compute IDF weight (1.0 / skill count) and build inverted index
+    //
+    // This ensures shared keywords (e.g. "write" appearing in both code-generation
+    // and article-writing) get a lower weight, while unique keywords retain full
+    // signal strength.
+
+    skill_keywords_.clear();
+
+    // Pass 1: collect keyword → set<skill>
+    std::unordered_map<std::string, std::unordered_set<std::string>> keyword_to_skills;
+
+    auto add_keyword = [&](const std::string& keyword, const std::string& skill) {
+        if (!keyword.empty()) {
+            keyword_to_skills[keyword].insert(skill);
+        }
+    };
+
+    for (const auto& [id, agent] : agents_) {
+        if (!agent.is_healthy) continue;
+
+        for (size_t i = 0; i < agent.skills.size(); ++i) {
+            const std::string& skill = agent.skills[i];
+
+            // 1) Add the skill name itself as a keyword (lowercased)
+            std::string lower_skill;
+            for (char c : skill) {
+                lower_skill += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            add_keyword(lower_skill, skill);
+
+            // 2) Split skill name by - and _ as additional keywords
+            std::istringstream name_stream(skill);
+            std::string token;
+            while (std::getline(name_stream, token, '-')) {
+                std::istringstream sub_stream(token);
+                std::string sub_token;
+                while (std::getline(sub_stream, sub_token, '_')) {
+                    std::string lower_token;
+                    for (char c : sub_token) {
+                        lower_token += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    }
+                    add_keyword(lower_token, skill);
+                }
+            }
+
+            // 3) Extract keywords from skill description
+            auto desc_it = agent.skill_descriptions.find(skill);
+            if (desc_it == agent.skill_descriptions.end() || desc_it->second.empty()) {
+                continue;
+            }
+
+            const std::string& desc = desc_it->second;
+
+            // Extract English words (space-delimited, filtered by stopwords)
+            std::istringstream word_stream(desc);
+            std::string word;
+            while (word_stream >> word) {
+                // Strip trailing punctuation
+                while (!word.empty() && (word.back() == ',' || word.back() == '.' ||
+                       word.back() == ';' || word.back() == ':' || word.back() == ')' ||
+                       word.back() == '(')) {
+                    word.pop_back();
+                }
+                std::string lower_word;
+                for (char c : word) {
+                    lower_word += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                }
+                if (lower_word.size() >= 2 && STOPWORDS.find(lower_word) == STOPWORDS.end()) {
+                    add_keyword(lower_word, skill);
+                }
+            }
+
+            // Extract Chinese character bigrams for CJK text matching
+            size_t pos = 0;
+            std::vector<uint32_t> codepoints;
+            while (pos < desc.size()) {
+                codepoints.push_back(decodeUtf8(desc, pos));
+            }
+            for (size_t j = 0; j + 1 < codepoints.size(); ++j) {
+                if (isCJK(codepoints[j]) && isCJK(codepoints[j + 1])) {
+                    std::string bigram = encodeUtf8(codepoints[j]) + encodeUtf8(codepoints[j + 1]);
+                    add_keyword(bigram, skill);
+                }
+            }
+        }
     }
-    
-    // Translation-related keywords
-    if (lower_question.find("translate") != std::string::npos ||
-        lower_question.find("翻译") != std::string::npos) {
-        return "translation";
+
+    // Pass 2: build inverted index with IDF weights
+    for (const auto& [keyword, skills] : keyword_to_skills) {
+        double weight = 1.0 / static_cast<double>(skills.size());
+        std::vector<KeywordEntry> entries;
+        entries.reserve(skills.size());
+        for (const auto& skill : skills) {
+            entries.push_back({skill, weight});
+        }
+        skill_keywords_[keyword] = std::move(entries);
     }
-    
-    return "";  // No specific skill detected
 }
 
 AgentInfo AgentRouter::selectByStrategy(const std::vector<AgentInfo>& candidates) {
@@ -385,6 +556,9 @@ void AgentRouter::syncFromRegistry(const std::vector<AgentRegistration>& registr
     for (const auto& id : to_remove) {
         agents_.erase(id);
     }
+    
+    // Rebuild keyword index from updated agent list
+    rebuildSkillKeywordIndex();
 }
 
 std::string AgentRouter::buildDynamicIntentPrompt(const std::string& user_text) const {

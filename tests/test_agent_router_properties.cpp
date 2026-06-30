@@ -420,24 +420,68 @@ TEST_F(AgentRouterPropertyTest, UpdateAgentLoad) {
 }
 
 TEST_F(AgentRouterPropertyTest, SkillAnalysisFromQuestion) {
-    router_->addAgent(createAgent("math-1", {"math"}));
-    router_->addAgent(createAgent("code-1", {"coding"}));
-    router_->addAgent(createAgent("write-1", {"writing"}));
+    // Create agents with skill descriptions so dynamic keyword extraction works.
+    // Descriptions use distinct vocabulary to avoid cross-skill keyword overlap.
+    AgentInfo math_agent = createAgent("math-1", {"math"});
+    math_agent.skill_descriptions["math"] = "Calculate and compute mathematical equations and formulas";
+    router_->addAgent(math_agent);
     
-    // Math question
+    AgentInfo code_agent = createAgent("code-1", {"coding"});
+    code_agent.skill_descriptions["coding"] = "Develop, implement and debug software programs";
+    router_->addAgent(code_agent);
+    
+    AgentInfo write_agent = createAgent("write-1", {"writing"});
+    write_agent.skill_descriptions["writing"] = "Compose essays, articles and creative prose";
+    router_->addAgent(write_agent);
+    
+    // Math question — "calculate" is unique to math description
     auto math_result = router_->selectAgent("Please calculate 2+2");
     ASSERT_TRUE(math_result.has_value());
     EXPECT_TRUE(math_result->hasSkill("math"));
     
-    // Code question
-    auto code_result = router_->selectAgent("Write a function to sort array");
+    // Code question — "debug" is unique to coding description
+    auto code_result = router_->selectAgent("Help me debug this program");
     ASSERT_TRUE(code_result.has_value());
     EXPECT_TRUE(code_result->hasSkill("coding"));
     
-    // Writing question
-    auto write_result = router_->selectAgent("Write an essay about AI");
+    // Writing question — "essay" is unique to writing description
+    auto write_result = router_->selectAgent("Compose an essay about nature");
     ASSERT_TRUE(write_result.has_value());
     EXPECT_TRUE(write_result->hasSkill("writing"));
+}
+
+TEST_F(AgentRouterPropertyTest, InvertedIndexSharedKeywords) {
+    // Two skills share the keyword "write" in their descriptions.
+    // With IDF weighting, shared "write" gets weight 0.5 while unique
+    // keywords get weight 1.0, so unique matches dominate the score.
+    AgentInfo article_agent = createAgent("article-1", {"article-writing"});
+    article_agent.skill_descriptions["article-writing"] =
+        "Write creative articles and storytelling prose";
+    router_->addAgent(article_agent);
+
+    AgentInfo code_agent = createAgent("code-gen-1", {"code-generation"});
+    code_agent.skill_descriptions["code-generation"] =
+        "Write programs and implement software";
+    router_->addAgent(code_agent);
+
+    // "write creative story":
+    //   "write" → article-writing += 0.5, code-generation += 0.5
+    //   "creative" → article-writing += 1.0
+    //   "storytelling" → article-writing += 1.0
+    //   article-writing = 2.5, code-generation = 0.5
+    auto article_result = router_->selectAgent("Write creative story");
+    ASSERT_TRUE(article_result.has_value());
+    EXPECT_TRUE(article_result->hasSkill("article-writing"));
+
+    // "write programs in Python":
+    //   "write" → article-writing += 0.5, code-generation += 0.5
+    //   "programs" → code-generation += 1.0
+    //   "implement" → code-generation += 1.0
+    //   "software" → code-generation += 1.0
+    //   code-generation = 3.5, article-writing = 0.5
+    auto code_result = router_->selectAgent("Write programs in Python");
+    ASSERT_TRUE(code_result.has_value());
+    EXPECT_TRUE(code_result->hasSkill("code-generation"));
 }
 
 TEST_F(AgentRouterPropertyTest, AgentInfoHasSkillMethods) {

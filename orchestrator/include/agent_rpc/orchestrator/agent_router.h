@@ -250,12 +250,28 @@ private:
      */
     AgentInfo selectLeastLoad(const std::vector<AgentInfo>& candidates);
     
+    /**
+     * @brief Rebuild the skill keyword index from current agents
+     * 
+     * Extracts keywords from healthy agents' skill names and descriptions.
+     * Must be called while agents_mutex_ is held (e.g. from syncFromRegistry).
+     */
+    void rebuildSkillKeywordIndex();
+    
     mutable std::mutex agents_mutex_;
     std::unordered_map<std::string, AgentInfo> agents_;
     RoutingStrategy strategy_ = RoutingStrategy::SKILL_MATCH;
     std::atomic<size_t> round_robin_index_{0};
     std::mt19937 random_generator_;
     bool initialized_ = false;
+    
+    // Inverted keyword index: keyword → list of (skill, IDF weight) entries.
+    // Rebuilt on syncFromRegistry() / addAgent() / removeAgent().
+    struct KeywordEntry {
+        std::string skill_name;
+        double weight;  // IDF: 1.0 / number of skills sharing this keyword
+    };
+    std::unordered_map<std::string, std::vector<KeywordEntry>> skill_keywords_;
 };
 
 } // namespace orchestrator
