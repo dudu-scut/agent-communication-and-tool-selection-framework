@@ -7,6 +7,8 @@
 #   ./run.sh test               运行全部测试
 #   ./run.sh clean              清理构建目录
 #   ./run.sh orchestrator       启动完整多智能体系统
+#   ./run.sh frontend-dev       启动前端开发服务器
+#   ./run.sh frontend-build     构建前端生产包
 #   ./run.sh stop               停止所有服务
 #   ./run.sh setup              检测开发环境
 # ============================================================================
@@ -22,6 +24,7 @@ BUILD_DIR="$PROJECT_ROOT/build"
 ORCH_BIN_DIR="$BUILD_DIR/examples/ai_orchestrator"
 LOGS_DIR="$PROJECT_ROOT/logs"
 PIDS_DIR="$PROJECT_ROOT/pids"
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
@@ -323,6 +326,63 @@ start_redis() {
 }
 
 # ============================================================================
+# frontend-dev - 启动前端开发服务器
+# ============================================================================
+cmd_frontend_dev() {
+    banner "前端开发服务器"
+
+    if [ ! -d "$FRONTEND_DIR" ]; then
+        error "frontend 目录不存在: $FRONTEND_DIR"
+        exit 1
+    fi
+
+    if ! command -v npm &>/dev/null; then
+        error "未找到 npm，请先安装 Node.js (https://nodejs.org)"
+        exit 1
+    fi
+
+    cd "$FRONTEND_DIR"
+
+    if [ ! -d "node_modules" ]; then
+        info "安装前端依赖..."
+        npm install
+    fi
+
+    info "启动 Vite 开发服务器 (HMR)..."
+    npm run dev
+}
+
+# ============================================================================
+# frontend-build - 构建前端生产包
+# ============================================================================
+cmd_frontend_build() {
+    banner "前端生产构建"
+
+    if [ ! -d "$FRONTEND_DIR" ]; then
+        error "frontend 目录不存在: $FRONTEND_DIR"
+        exit 1
+    fi
+
+    if ! command -v npm &>/dev/null; then
+        error "未找到 npm，请先安装 Node.js (https://nodejs.org)"
+        exit 1
+    fi
+
+    cd "$FRONTEND_DIR"
+
+    if [ ! -d "node_modules" ]; then
+        info "安装前端依赖..."
+        npm install
+    fi
+
+    info "构建中..."
+    npm run build
+
+    echo ""
+    info "构建完成! 产物在 $FRONTEND_DIR/dist/"
+}
+
+# ============================================================================
 # 主入口
 # ============================================================================
 usage() {
@@ -333,6 +393,8 @@ usage() {
     echo "  test          运行全部测试 (ctest)"
     echo "  clean         清理构建目录"
     echo "  orchestrator  启动完整多智能体系统"
+    echo "  frontend-dev  启动前端开发服务器 (Vite HMR)"
+    echo "  frontend-build 构建前端生产包"
     echo "  stop          停止所有服务"
     echo "  setup         检测开发环境"
     echo ""
@@ -351,11 +413,13 @@ usage() {
 }
 
 case "${1:-}" in
-    build)        cmd_build ;;
-    test)         shift; cmd_test "$@" ;;
-    clean)        cmd_clean ;;
-    orchestrator) cmd_orchestrator ;;
-    stop)         cmd_stop ;;
-    setup)        cmd_setup ;;
-    *)            usage ;;
+    build)          cmd_build ;;
+    test)           shift; cmd_test "$@" ;;
+    clean)          cmd_clean ;;
+    orchestrator)   cmd_orchestrator ;;
+    frontend-dev)   cmd_frontend_dev ;;
+    frontend-build) cmd_frontend_build ;;
+    stop)           cmd_stop ;;
+    setup)          cmd_setup ;;
+    *)              usage ;;
 esac
