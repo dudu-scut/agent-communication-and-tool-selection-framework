@@ -15,6 +15,14 @@ message AgentPreference {
     bool allow_fallback = 3;               // 允许回退到其他Agent
 }
 
+// 系统上下文: 平台注入的记忆和对话历史
+message SystemContext {
+    string user_id = 1;                    // 用户ID
+    string user_memory = 2;                // Tier 2: 用户长期记忆 (格式化文本)
+    string conversation_history = 3;       // Tier 1: 当前Agent对话历史
+    string cross_agent_summary = 4;        // 跨Agent切换时的上下文摘要
+}
+
 // AI查询请求
 message AIQueryRequest {
     string request_id = 1;           // 请求唯一ID
@@ -24,6 +32,8 @@ message AIQueryRequest {
     int32 timeout_seconds = 5;       // 超时时间
     map<string, string> metadata = 6; // 元数据
     AgentPreference preference = 7;   // Agent偏好设置
+    string user_id = 8;              // 用户ID (登录后注入)
+    SystemContext system_context = 9; // 平台注入的系统上下文 (记忆+历史)
 }
 
 // 产物
@@ -45,6 +55,7 @@ message AIQueryResponse {
     string context_id = 7;           // 上下文ID
     repeated Artifact artifacts = 8;  // 产物列表
     int64 processing_time_ms = 9;    // 处理时间
+    map<string, string> memory_hints = 10; // Agent报告的用户记忆 (方式二: Agent上报, 平台存储)
 }
 
 // 流式事件

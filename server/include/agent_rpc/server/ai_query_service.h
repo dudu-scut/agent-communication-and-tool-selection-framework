@@ -12,6 +12,7 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/circuit_breaker.h"
+#include "agent_rpc/common/memory_service.h"
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/orchestrator/agent_router.h"
@@ -118,6 +119,11 @@ public:
      */
     orchestrator::AgentRouter* getAgentRouter() { return agent_router_.get(); }
 
+    /**
+     * @brief Get the MemoryService for memory system integration
+     */
+    common::MemoryService* getMemoryService() { return &memory_service_; }
+
 private:
     std::string generateRequestId();
     void recordMetrics(const std::string& method, int64_t duration_ms, bool success);
@@ -151,6 +157,7 @@ private:
     common::RpcConfig rpc_config_;
     std::atomic<bool> initialized_{false};
     std::atomic<uint64_t> request_counter_{0};
+    common::MemoryService memory_service_;
 
     // ========================================================================
     // Multi-Agent Orchestration (P4-4)

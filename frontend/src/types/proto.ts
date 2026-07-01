@@ -30,6 +30,13 @@ export interface AgentPreference {
   allow_fallback: boolean
 }
 
+export interface SystemContext {
+  user_id: string
+  user_memory: string
+  conversation_history: string
+  cross_agent_summary: string
+}
+
 export interface AIQueryRequest {
   request_id: string
   question: string
@@ -38,6 +45,8 @@ export interface AIQueryRequest {
   timeout_seconds: number
   metadata: Record<string, string>
   preference?: AgentPreference
+  user_id?: string
+  system_context?: SystemContext
 }
 
 export interface AIQueryResponse {
@@ -49,6 +58,7 @@ export interface AIQueryResponse {
   task_id: string
   context_id: string
   processing_time_ms: number
+  memory_hints?: Record<string, string>
 }
 
 export interface AIStreamEvent {

@@ -9,6 +9,7 @@ set(COMMON_SOURCES
     src/metrics.cpp
     src/circuit_breaker.cpp
     src/load_balancer.cpp
+    src/memory_service.cpp
 )
 
 # 创建静态库

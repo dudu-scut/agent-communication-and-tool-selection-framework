@@ -7,6 +7,7 @@
  */
 
 #include "agent_rpc/server/ai_query_service.h"
+#include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/a2a_adapter/error_mapper.h"
@@ -118,9 +119,34 @@ grpc::Status AIQueryServiceImpl::Query(
     
     LOG_INFO("Processing AI query: " + request_id);
 
+    // Memory: resolve user_id from request or auth interceptor
+    std::string user_id = request->user_id();
+    if (user_id.empty()) {
+        user_id = AuthInterceptor::currentUserId();
+    }
+
+    // Memory: build enriched request with SystemContext
+    agent_communication::AIQueryRequest enriched_req = *request;
+    if (!user_id.empty()) {
+        enriched_req.set_user_id(user_id);
+        auto sys_ctx = memory_service_.buildSystemContext(
+            user_id, request->context_id(), /* agent_id will be set by router */ "");
+        *enriched_req.mutable_system_context() = sys_ctx;
+    }
+
     // P4-4: Multi-agent orchestrator path
     if (orchestrator_enabled_) {
-        return handleMultiAgentQuery(context, request, response, request_id);
+        auto status = handleMultiAgentQuery(context, &enriched_req, response, request_id);
+        // Memory: post-process response (store hints + conversation)
+        if (!user_id.empty()) {
+            memory_service_.updateUserMemoryFromHints(
+                user_id, {response->memory_hints().begin(), response->memory_hints().end()});
+            memory_service_.appendMessage(request->context_id(),
+                response->agent_id(), "user", request->question());
+            memory_service_.appendMessage(request->context_id(),
+                response->agent_id(), "agent", response->answer());
+        }
+        return status;
     }
 
     // Check for cancellation
@@ -151,7 +177,7 @@ grpc::Status AIQueryServiceImpl::Query(
         a2a_adapter_->setRequestTimeout(timeout_sec);
     }
 
-    bool success = a2a_adapter_->processQuery(*request, response);
+    bool success = a2a_adapter_->processQuery(enriched_req, response);
 
     // Record circuit breaker result
     if (circuit_breaker_) {
@@ -170,6 +196,16 @@ grpc::Status AIQueryServiceImpl::Query(
 
     // Record metrics
     recordMetrics("Query", duration.count(), success);
+
+    // Memory: post-process — store hints + conversation history
+    if (success && !user_id.empty()) {
+        memory_service_.updateUserMemoryFromHints(
+            user_id, {response->memory_hints().begin(), response->memory_hints().end()});
+        memory_service_.appendMessage(request->context_id(),
+            response->agent_id(), "user", request->question());
+        memory_service_.appendMessage(request->context_id(),
+            response->agent_id(), "agent", response->answer());
+    }
 
     if (success) {
         updateTaskStatus(request_id, "completed",
@@ -212,9 +248,30 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     
     LOG_INFO("Processing streaming AI query: " + request_id);
 
+    // Memory: resolve user_id from request or auth interceptor
+    std::string user_id = request->user_id();
+    if (user_id.empty()) {
+        user_id = AuthInterceptor::currentUserId();
+    }
+
+    // Memory: build enriched request with SystemContext
+    agent_communication::AIQueryRequest enriched_req = *request;
+    if (!user_id.empty()) {
+        enriched_req.set_user_id(user_id);
+        auto sys_ctx = memory_service_.buildSystemContext(
+            user_id, request->context_id(), "");
+        *enriched_req.mutable_system_context() = sys_ctx;
+    }
+
     // P4-4: Multi-agent orchestrator path
     if (orchestrator_enabled_) {
-        return handleMultiAgentQueryStream(context, request, writer, request_id);
+        auto status = handleMultiAgentQueryStream(context, &enriched_req, writer, request_id);
+        // Memory: append conversation history (streaming has no memory_hints)
+        if (!user_id.empty()) {
+            memory_service_.appendMessage(request->context_id(),
+                "", "user", request->question());
+        }
+        return status;
     }
 
     // Check circuit breaker before calling A2A backend
@@ -239,7 +296,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         a2a_adapter_->setRequestTimeout(timeout_sec);
     }
 
-    a2a_adapter_->processQueryStreaming(*request,
+    a2a_adapter_->processQueryStreaming(enriched_req,
         [this, &context, &writer, &success, &error_message, &request_id](
             const agent_communication::AIStreamEvent& event) {
 
@@ -272,6 +329,12 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     if (circuit_breaker_) {
         if (success) circuit_breaker_->recordSuccess();
         else circuit_breaker_->recordFailure();
+    }
+
+    // Memory: append conversation history for streaming (no memory_hints available)
+    if (success && !user_id.empty()) {
+        memory_service_.appendMessage(request->context_id(),
+            "", "user", request->question());
     }
 
     if (success) {
