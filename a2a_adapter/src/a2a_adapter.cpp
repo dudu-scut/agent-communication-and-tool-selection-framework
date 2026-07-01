@@ -6,6 +6,7 @@
  */
 
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
+#include "agent_rpc/a2a_adapter/error_mapper.h"
 #include "ai_query.pb.h"
 #include <a2a/core/exception.hpp>
 #include <nlohmann/json.hpp>
@@ -102,20 +103,23 @@ bool A2AAdapter::processQuery(
         return true;
         
     } catch (const a2a::A2AException& e) {
-        // Handle A2A specific errors
+        // Handle A2A protocol errors via ErrorMapper
         auto* status = response->mutable_status();
-        status->set_code(static_cast<int>(e.error_code()));
+        grpc::StatusCode grpc_code = ErrorMapper::mapToGrpcStatus(
+            static_cast<a2a::ErrorCode>(e.error_code()));
+        status->set_code(static_cast<int>(grpc_code));
         std::string error_msg = e.what();
         if (error_msg.empty()) {
-            error_msg = "A2A request failed (Orchestrator may not be running at " + 
-                       config_.orchestrator_url + ")";
+            error_msg = ErrorMapper::getErrorDescription(
+                static_cast<a2a::ErrorCode>(e.error_code()));
         }
         status->set_message(error_msg);
         return false;
     } catch (const std::exception& e) {
-        // Handle general errors
+        // Handle network and general errors via ErrorMapper
         auto* status = response->mutable_status();
-        status->set_code(-1);
+        grpc::StatusCode grpc_code = ErrorMapper::mapNetworkException(e);
+        status->set_code(static_cast<int>(grpc_code));
         std::string error_msg = e.what();
         if (error_msg.empty()) {
             error_msg = "Unknown error occurred while processing query";

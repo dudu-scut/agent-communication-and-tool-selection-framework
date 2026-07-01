@@ -9,6 +9,7 @@
 #include "agent_rpc/server/ai_query_service.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/a2a_adapter/error_mapper.h"
 
 #include <chrono>
 #include <sstream>
@@ -101,15 +102,20 @@ grpc::Status AIQueryServiceImpl::Query(
     
     // Check for cancellation
     if (context->IsCancelled()) {
+        updateTaskStatus(request_id, "cancelled");
         return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
     }
-    
+
+    // Track task as working
+    updateTaskStatus(request_id, "working");
+
     // Check circuit breaker before calling A2A backend
     if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
         LOG_WARN("A2A backend circuit breaker open, rejecting query: " + request_id);
         auto* status = response->mutable_status();
         status->set_code(-1);
         status->set_message("A2A backend temporarily unavailable (circuit breaker open)");
+        updateTaskStatus(request_id, "failed", "", "", "Circuit breaker open");
         return grpc::Status(grpc::StatusCode::UNAVAILABLE, "A2A backend circuit breaker open");
     }
 
@@ -121,26 +127,33 @@ grpc::Status AIQueryServiceImpl::Query(
         if (success) circuit_breaker_->recordSuccess();
         else circuit_breaker_->recordFailure();
     }
-    
-    // Ensure request_id is set in response
+
+    // Ensure request_id and task_id are set in response
     response->set_request_id(request_id);
-    
+    response->set_task_id(request_id);
+
     // Calculate duration
     auto end_time = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time - start_time);
-    
+
     // Record metrics
     recordMetrics("Query", duration.count(), success);
-    
+
     if (success) {
-        LOG_INFO("AI query completed: " + request_id + 
+        updateTaskStatus(request_id, "completed",
+                         response->agent_id(), response->agent_name());
+        LOG_INFO("AI query completed: " + request_id +
                 " in " + std::to_string(duration.count()) + "ms");
         return grpc::Status::OK;
     } else {
+        updateTaskStatus(request_id, "failed", "", "",
+                         response->status().message());
+        // Map the adapter's error code to proper gRPC status
+        grpc::StatusCode grpc_code = a2a_adapter::ErrorMapper::mapIntToGrpcStatus(
+            response->status().code());
         LOG_ERROR("AI query failed: " + request_id);
-        return grpc::Status(grpc::StatusCode::INTERNAL,
-                           response->status().message());
+        return grpc::Status(grpc_code, response->status().message());
     }
 }
 
@@ -171,24 +184,29 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     // Check circuit breaker before calling A2A backend
     if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
         LOG_WARN("A2A backend circuit breaker open, rejecting streaming query: " + request_id);
+        updateTaskStatus(request_id, "failed", "", "", "Circuit breaker open");
         return grpc::Status(grpc::StatusCode::UNAVAILABLE, "A2A backend circuit breaker open");
     }
 
+    // Track task as working
+    updateTaskStatus(request_id, "working");
+
     bool success = true;
     std::string error_message;
-    
+
     // Process streaming query
     a2a_adapter_->processQueryStreaming(*request,
-        [&context, &writer, &success, &error_message](
+        [this, &context, &writer, &success, &error_message, &request_id](
             const agent_communication::AIStreamEvent& event) {
-            
+
             // Check for cancellation
             if (context->IsCancelled()) {
                 success = false;
                 error_message = "Request cancelled";
+                updateTaskStatus(request_id, "cancelled");
                 return;
             }
-            
+
             // Write event to stream
             if (!writer->Write(event)) {
                 success = false;
@@ -211,11 +229,16 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     }
 
     if (success) {
+        updateTaskStatus(request_id, "completed");
         LOG_INFO("Streaming AI query completed: " + request_id +
                 " in " + std::to_string(duration.count()) + "ms");
         return grpc::Status::OK;
     } else {
-        LOG_ERROR("Streaming AI query failed: " + request_id + 
+        // Don't overwrite "cancelled" state with "failed"
+        if (error_message != "Request cancelled") {
+            updateTaskStatus(request_id, "failed", "", "", error_message);
+        }
+        LOG_ERROR("Streaming AI query failed: " + request_id +
                  " - " + error_message);
         return grpc::Status(grpc::StatusCode::INTERNAL, error_message);
     }
@@ -248,12 +271,47 @@ grpc::Status AIQueryServiceImpl::GetQueryStatus(
 
     LOG_INFO("Getting query status for task: " + request->task_id());
 
-    // 当前 A2AAdapter 仅透传同步/流式查询，不维护可查询的任务状态仓库。
-    // 显式返回“未实现”比返回 unknown stub 更清晰，也避免误导调用方。
+    // Look up task status from cache
+    {
+        std::lock_guard<std::mutex> lock(task_status_mutex_);
+        auto it = task_status_cache_.find(request->task_id());
+        if (it != task_status_cache_.end()) {
+            const auto& ts = it->second;
+            auto* status = response->mutable_status();
+            status->set_code(0);
+            status->set_message("OK");
+            response->set_task_state(ts.state);
+
+            if (!ts.agent_id.empty()) {
+                auto* hist = response->add_history();
+                hist->set_message_id(ts.task_id);
+                hist->set_role("agent");
+                hist->set_content(ts.agent_name);
+                hist->set_timestamp(
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                        ts.updated_at.time_since_epoch()).count());
+            }
+            return grpc::Status::OK;
+        }
+    }
+
+    // Also check by context_id (all tasks under a conversation)
+    if (!request->context_id().empty()) {
+        std::lock_guard<std::mutex> lock(task_status_mutex_);
+        for (const auto& [id, ts] : task_status_cache_) {
+            auto* status = response->mutable_status();
+            status->set_code(0);
+            status->set_message("OK");
+            response->set_task_state(ts.state);
+            return grpc::Status::OK;
+        }
+    }
+
+    // Task not found in cache
     auto* status = response->mutable_status();
-    status->set_code(static_cast<int>(grpc::StatusCode::UNIMPLEMENTED));
-    status->set_message("Query status is not tracked by the current A2A adapter implementation");
-    response->set_task_state("unavailable");
+    status->set_code(0);
+    status->set_message("Task not found or expired");
+    response->set_task_state("unknown");
 
     return grpc::Status::OK;
 }
@@ -290,6 +348,62 @@ void AIQueryServiceImpl::recordMetrics(
         metrics.recordRpcResponse("AIQueryService", method, 0);
     } else {
         metrics.recordRpcError("AIQueryService", method, "Error");
+    }
+}
+
+void AIQueryServiceImpl::updateTaskStatus(
+    const std::string& task_id,
+    const std::string& state,
+    const std::string& agent_id,
+    const std::string& agent_name,
+    const std::string& error_msg) {
+
+    auto now = std::chrono::steady_clock::now();
+
+    std::lock_guard<std::mutex> lock(task_status_mutex_);
+
+    auto it = task_status_cache_.find(task_id);
+    if (it != task_status_cache_.end()) {
+        // Update existing entry
+        it->second.state = state;
+        it->second.updated_at = now;
+        if (!agent_id.empty()) it->second.agent_id = agent_id;
+        if (!agent_name.empty()) it->second.agent_name = agent_name;
+        if (!error_msg.empty()) it->second.error_message = error_msg;
+    } else {
+        // Insert new entry
+        task_status_cache_[task_id] = TaskStatus{
+            task_id, state, now, now, agent_id, agent_name, error_msg
+        };
+    }
+
+    // Periodic cleanup every 100 status updates
+    uint64_t count = status_query_count_.fetch_add(1);
+    if (count % 100 == 0 && count > 0) {
+        // Inline cleanup while we hold the lock
+        auto cutoff = now - std::chrono::minutes(5);
+        for (auto entry = task_status_cache_.begin();
+             entry != task_status_cache_.end(); ) {
+            if (entry->second.updated_at < cutoff) {
+                entry = task_status_cache_.erase(entry);
+            } else {
+                ++entry;
+            }
+        }
+    }
+}
+
+void AIQueryServiceImpl::cleanupExpiredTasks() {
+    auto now = std::chrono::steady_clock::now();
+    auto cutoff = now - std::chrono::minutes(5);
+
+    std::lock_guard<std::mutex> lock(task_status_mutex_);
+    for (auto it = task_status_cache_.begin(); it != task_status_cache_.end(); ) {
+        if (it->second.updated_at < cutoff) {
+            it = task_status_cache_.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 

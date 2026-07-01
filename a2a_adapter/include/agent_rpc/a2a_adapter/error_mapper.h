@@ -49,6 +49,20 @@ public:
      * @return Corresponding gRPC status code
      */
     static grpc::StatusCode mapIntToGrpcStatus(int32_t error_code);
+
+    /**
+     * @brief Classify a network/system exception into a gRPC status code
+     *
+     * Inspects the exception message for common patterns:
+     * - "Connection refused" / "connect" → UNAVAILABLE
+     * - "timed out" / "timeout" → DEADLINE_EXCEEDED
+     * - "Broken pipe" / "Connection reset" → UNAVAILABLE
+     * - fallback → INTERNAL
+     *
+     * @param e The caught exception
+     * @return Corresponding gRPC status code
+     */
+    static grpc::StatusCode mapNetworkException(const std::exception& e);
 };
 
 } // namespace a2a_adapter

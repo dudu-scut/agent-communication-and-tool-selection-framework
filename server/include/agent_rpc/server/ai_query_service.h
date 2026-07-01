@@ -19,9 +19,12 @@
 #include "ai_query.pb.h"
 
 #include <grpcpp/grpcpp.h>
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <atomic>
+#include <unordered_map>
 
 namespace agent_rpc {
 namespace server {
@@ -108,6 +111,30 @@ public:
 private:
     std::string generateRequestId();
     void recordMetrics(const std::string& method, int64_t duration_ms, bool success);
+
+    // ========================================================================
+    // Task Status Tracking (P2-1)
+    // ========================================================================
+
+    struct TaskStatus {
+        std::string task_id;
+        std::string state;       // submitted | working | completed | failed | cancelled
+        std::chrono::steady_clock::time_point created_at;
+        std::chrono::steady_clock::time_point updated_at;
+        std::string agent_id;
+        std::string agent_name;
+        std::string error_message;
+    };
+
+    void updateTaskStatus(const std::string& task_id, const std::string& state,
+                          const std::string& agent_id = "",
+                          const std::string& agent_name = "",
+                          const std::string& error_msg = "");
+    void cleanupExpiredTasks();
+
+    mutable std::mutex task_status_mutex_;
+    std::unordered_map<std::string, TaskStatus> task_status_cache_;
+    std::atomic<uint64_t> status_query_count_{0};
     
     std::unique_ptr<a2a_adapter::A2AAdapter> a2a_adapter_;
     std::shared_ptr<common::CircuitBreaker> circuit_breaker_;

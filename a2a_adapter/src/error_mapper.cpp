@@ -105,5 +105,52 @@ grpc::StatusCode ErrorMapper::mapIntToGrpcStatus(int32_t error_code) {
     }
 }
 
+grpc::StatusCode ErrorMapper::mapNetworkException(const std::exception& e) {
+    std::string msg = e.what();
+
+    // Lowercase for case-insensitive matching
+    std::string lower_msg;
+    lower_msg.reserve(msg.size());
+    for (char c : msg) {
+        lower_msg += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    // Connection errors → UNAVAILABLE
+    if (lower_msg.find("connection refused") != std::string::npos ||
+        lower_msg.find("connect failed") != std::string::npos ||
+        lower_msg.find("could not connect") != std::string::npos ||
+        lower_msg.find("no route to host") != std::string::npos ||
+        lower_msg.find("network is unreachable") != std::string::npos ||
+        lower_msg.find("broken pipe") != std::string::npos ||
+        lower_msg.find("connection reset") != std::string::npos ||
+        lower_msg.find("connection aborted") != std::string::npos) {
+        return grpc::StatusCode::UNAVAILABLE;
+    }
+
+    // Timeout errors → DEADLINE_EXCEEDED
+    if (lower_msg.find("timed out") != std::string::npos ||
+        lower_msg.find("timeout") != std::string::npos ||
+        lower_msg.find("deadline") != std::string::npos) {
+        return grpc::StatusCode::DEADLINE_EXCEEDED;
+    }
+
+    // DNS / resolution errors → UNAVAILABLE
+    if (lower_msg.find("resolve") != std::string::npos ||
+        lower_msg.find("dns") != std::string::npos ||
+        lower_msg.find("name or service not known") != std::string::npos ||
+        lower_msg.find("host not found") != std::string::npos) {
+        return grpc::StatusCode::UNAVAILABLE;
+    }
+
+    // SSE / stream disconnection
+    if (lower_msg.find("eof") != std::string::npos ||
+        lower_msg.find("unexpected end") != std::string::npos ||
+        lower_msg.find("stream closed") != std::string::npos) {
+        return grpc::StatusCode::UNAVAILABLE;
+    }
+
+    return grpc::StatusCode::INTERNAL;
+}
+
 } // namespace a2a_adapter
 } // namespace agent_rpc
