@@ -8,6 +8,21 @@
 
 services:
   # --------------------------------------------------------------------------
+  # redis: 持久化存储 (认证 Token + 用户数据 + 对话记忆)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: nexusai-redis
+    command: redis-server --port 6379 --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
   # grpcwebproxy: gRPC-Web ↔ gRPC 协议转换
   # 浏览器 (gRPC-Web/HTTP1.1) → :8081 → gRPC/2 → NexusAI :50051
   # --------------------------------------------------------------------------
@@ -47,8 +62,12 @@ services:
       - gateway-net
     depends_on:
       - grpcwebproxy
+      - redis
     restart: unless-stopped
 
 networks:
   gateway-net:
     driver: bridge
+
+volumes:
+  redis-data:

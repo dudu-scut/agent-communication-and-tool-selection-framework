@@ -277,3 +277,28 @@ target_include_directories(test_agent_communication PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/../proto
 )
 add_test(NAME AgentCommunicationIntegrationTest COMMAND test_agent_communication)
+
+# Redis 集成测试 (AuthService + MemoryService + RedisClient)
+# 需要运行中的 Redis 实例，不可用时自动跳过
+add_executable(test_redis_services test_redis_services.cpp)
+target_link_libraries(test_redis_services
+    agent_rpc_server
+    agent_rpc_common
+    proto_lib
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_redis_services PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+add_test(NAME RedisServicesTest COMMAND test_redis_services)

@@ -93,6 +93,14 @@ cmd_test() {
         exit 1
     fi
 
+    # Redis 前置检查：AuthService 和 MemoryService 依赖 Redis
+    if ! check_redis; then
+        warn "Redis 未运行 ($REDIS_HOST:$REDIS_PORT)"
+        warn "AuthService / MemoryService 相关测试可能失败"
+        warn "启动 Redis: redis-server --port $REDIS_PORT --daemonize yes"
+        echo ""
+    fi
+
     cd "$BUILD_DIR"
     ctest --output-on-failure --timeout 30 "$@"
     echo ""
@@ -276,6 +284,8 @@ usage() {
     echo "环境变量:"
     echo "  BUILD_TYPE    构建类型 (默认: Release)"
     echo "  BUILD_JOBS    并行任务数 (默认: nproc)"
+    echo "  REDIS_HOST    Redis 地址 (默认: 127.0.0.1)"
+    echo "  REDIS_PORT    Redis 端口 (默认: 6379)"
     echo ""
     echo "示例:"
     echo "  ./run.sh build"
