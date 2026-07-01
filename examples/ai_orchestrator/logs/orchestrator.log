@@ -1,7 +1,0 @@
-[RedisTaskStore] 连接到 Redis 127.0.0.1:6379
-[RedisTaskStore] 连接成功
-[2026-01-05 22:40:38.163] [INFO ] MCP is disabled, skipping initialization
-[Orchestrator] 初始化完成
-[Orchestrator] 启动在端口 5000
-terminate called after throwing an instance of 'std::runtime_error'
-  what():  Failed to bind to port 5000

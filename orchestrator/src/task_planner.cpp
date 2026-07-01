@@ -5,7 +5,9 @@
 
 #include "agent_rpc/orchestrator/task_planner.h"
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace agent_rpc {
 namespace orchestrator {
@@ -153,6 +155,19 @@ ExecutionPlan TaskPlanner::parsePlanResponse(
         }
 
         plan.tasks.push_back(std::move(st));
+    }
+
+    // Validate depends_on references: remove any that point to non-existent task IDs
+    std::unordered_set<std::string> valid_ids;
+    for (const auto& t : plan.tasks) {
+        valid_ids.insert(t.id);
+    }
+    for (auto& t : plan.tasks) {
+        auto it = std::remove_if(t.depends_on.begin(), t.depends_on.end(),
+            [&valid_ids](const std::string& dep) {
+                return valid_ids.find(dep) == valid_ids.end();
+            });
+        t.depends_on.erase(it, t.depends_on.end());
     }
 
     // If no valid tasks parsed, fall back to single-agent

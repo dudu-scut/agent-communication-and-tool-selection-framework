@@ -1,5 +1,0 @@
-Agent Registry Server
-端口: 8500
-心跳超时: 30 秒
-[Registry] 启动在端口 8500
-terminate called without an active exception
