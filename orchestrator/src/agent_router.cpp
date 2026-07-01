@@ -118,25 +118,35 @@ void AgentRouter::shutdown() {
 std::optional<AgentInfo> AgentRouter::selectAgent(
     const std::string& question,
     const std::vector<std::string>& required_skills) {
-    
+
+    // Phase 1: Determine skills to match (intent analysis).
+    // Done BEFORE locking agents_mutex_ because analyzeRequiredSkillHybrid()
+    // acquires agents_mutex_ internally in its Tier 3 keyword fallback path.
+    std::vector<std::string> skills_to_match = required_skills;
+    if (skills_to_match.empty() && strategy_ == RoutingStrategy::SKILL_MATCH) {
+        if (isEmbeddingEnabled()) {
+            SkillMatchResult match = analyzeRequiredSkillHybrid(question);
+            if (!match.skill_name.empty()) {
+                skills_to_match.push_back(match.skill_name);
+            }
+        } else {
+            std::lock_guard<std::mutex> lock(agents_mutex_);
+            std::string detected_skill = analyzeRequiredSkill(question);
+            if (!detected_skill.empty()) {
+                skills_to_match.push_back(detected_skill);
+            }
+        }
+    }
+
+    // Phase 2: Filter and select from candidate agents
     std::lock_guard<std::mutex> lock(agents_mutex_);
-    
+
     if (agents_.empty()) {
         return std::nullopt;
     }
-    
+
     // Build candidate list
     std::vector<AgentInfo> candidates;
-    
-    // Determine skills to match
-    std::vector<std::string> skills_to_match = required_skills;
-    if (skills_to_match.empty() && strategy_ == RoutingStrategy::SKILL_MATCH) {
-        // Analyze question to determine skill
-        std::string detected_skill = analyzeRequiredSkill(question);
-        if (!detected_skill.empty()) {
-            skills_to_match.push_back(detected_skill);
-        }
-    }
     
     // Filter agents
     for (const auto& [id, agent] : agents_) {
@@ -482,6 +492,11 @@ void AgentRouter::rebuildSkillKeywordIndex() {
         }
         skill_keywords_[keyword] = std::move(entries);
     }
+
+    // Rebuild embedding index when agents change (if embedding routing is enabled)
+    if (isEmbeddingEnabled()) {
+        buildSkillEmbeddingIndex();
+    }
 }
 
 AgentInfo AgentRouter::selectByStrategy(const std::vector<AgentInfo>& candidates) {
@@ -609,12 +624,12 @@ std::string AgentRouter::buildDynamicIntentPrompt(const std::string& user_text) 
 
 std::unordered_map<std::string, std::string> AgentRouter::getAllSkillDescriptions() const {
     std::lock_guard<std::mutex> lock(agents_mutex_);
-    
+
     std::unordered_map<std::string, std::string> result;
-    
+
     for (const auto& [id, agent] : agents_) {
         if (!agent.is_healthy) continue;
-        
+
         for (const auto& skill : agent.skills) {
             if (result.find(skill) == result.end()) {
                 auto desc_it = agent.skill_descriptions.find(skill);
@@ -626,7 +641,180 @@ std::unordered_map<std::string, std::string> AgentRouter::getAllSkillDescription
             }
         }
     }
-    
+
+    return result;
+}
+
+// === Embedding-based Routing (P3) ===
+
+bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
+
+    embedding_config_ = config;
+
+    if (!config.enabled) {
+        embedding_service_.reset();
+        skill_index_.reset();
+        embedding_cache_.reset();
+        return true;
+    }
+
+    try {
+        agent_rpc::mcp::rag::EmbeddingConfig emb_config;
+        emb_config.api_key = config.api_key;
+        emb_config.model = config.model;
+        emb_config.dimension = config.dimension;
+        emb_config.api_url = config.api_url;
+
+        embedding_service_ = std::make_unique<agent_rpc::mcp::rag::EmbeddingService>(emb_config);
+        skill_index_ = std::make_unique<agent_rpc::mcp::rag::VectorIndex>();
+        skill_index_->setVersion(config.model);
+
+        agent_rpc::mcp::rag::CacheConfig cache_config;
+        cache_config.max_size = 500;
+        cache_config.ttl_seconds = 3600;
+        embedding_cache_ = std::make_unique<agent_rpc::mcp::rag::EmbeddingCache>(cache_config);
+
+    } catch (const std::exception&) {
+        embedding_service_.reset();
+        skill_index_.reset();
+        embedding_cache_.reset();
+        embedding_config_.enabled = false;
+        return false;
+    }
+
+    // Build initial embedding index outside embedding_mutex_ scope.
+    // buildSkillEmbeddingIndex() locks embedding_mutex_ internally and
+    // also iterates agents_ (needs agents_mutex_ which callers may hold).
+    buildSkillEmbeddingIndex();
+
+    return true;
+}
+
+bool AgentRouter::isEmbeddingEnabled() const {
+    return embedding_config_.enabled && embedding_service_ != nullptr;
+}
+
+void AgentRouter::buildSkillEmbeddingIndex() {
+    // Locking: acquires embedding_mutex_ internally.
+    // Callers must hold agents_mutex_ (for iterating agents_).
+    // Lock order: agents_mutex_ → embedding_mutex_ (consistent with rest of codebase).
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
+    if (!embedding_service_ || !skill_index_) return;
+
+    skill_index_->clear();
+
+    for (const auto& [id, agent] : agents_) {
+        if (!agent.is_healthy) continue;
+
+        for (const auto& skill : agent.skills) {
+            // Build embedding text: "skill_name: description"
+            std::string text = skill;
+            auto desc_it = agent.skill_descriptions.find(skill);
+            if (desc_it != agent.skill_descriptions.end() && !desc_it->second.empty()) {
+                text += ": " + desc_it->second;
+            }
+
+            // Check cache first
+            std::vector<float> embedding;
+            if (embedding_cache_) {
+                auto cached = embedding_cache_->get(text);
+                if (cached.has_value()) {
+                    embedding = cached.value();
+                }
+            }
+
+            if (embedding.empty()) {
+                try {
+                    embedding = embedding_service_->embed(text);
+                    if (embedding_cache_ && !embedding.empty()) {
+                        embedding_cache_->put(text, embedding);
+                    }
+                } catch (const std::exception&) {
+                    // Skip this skill if embedding fails
+                    continue;
+                }
+            }
+
+            // Store in vector index (reuse IndexedTool with skill data)
+            agent_rpc::mcp::rag::IndexedTool tool;
+            tool.name = skill;
+            tool.description = (desc_it != agent.skill_descriptions.end()) ? desc_it->second : "";
+            tool.embedding = std::move(embedding);
+            skill_index_->addTool(tool);
+        }
+    }
+}
+
+SkillMatchResult AgentRouter::analyzeRequiredSkillHybrid(const std::string& question) {
+    // Three-tier routing pipeline:
+    //   1. Embedding high confidence → direct route
+    //   2. Fuzzy zone → return with confidence, caller decides
+    //   3. Low confidence → fall back to keyword IDF matching
+
+    SkillMatchResult result;
+
+    // Tier 1 & 2: Try embedding match if enabled
+    if (isEmbeddingEnabled()) {
+        embedding_query_count_.fetch_add(1);
+
+        std::lock_guard<std::mutex> lock(embedding_mutex_);
+
+        try {
+            // Embed the question
+            std::vector<float> query_embedding;
+            if (embedding_cache_) {
+                auto cached = embedding_cache_->get(question);
+                if (cached.has_value()) {
+                    query_embedding = cached.value();
+                }
+            }
+            if (query_embedding.empty()) {
+                query_embedding = embedding_service_->embed(question);
+                if (embedding_cache_ && !query_embedding.empty()) {
+                    embedding_cache_->put(question, query_embedding);
+                }
+            }
+
+            // Search skill index
+            auto search_results = skill_index_->search(query_embedding, 1, 0.0f);
+
+            if (!search_results.empty()) {
+                const auto& best = search_results[0];
+
+                if (best.similarity >= embedding_config_.high_threshold) {
+                    // High confidence: direct route
+                    result.skill_name = best.tool.name;
+                    result.confidence = best.similarity;
+                    result.source = SkillMatchResult::EMBEDDING;
+                    embedding_hit_count_.fetch_add(1);
+                    return result;
+                }
+
+                if (best.similarity >= embedding_config_.low_threshold) {
+                    // Fuzzy zone: return result, let caller decide
+                    result.skill_name = best.tool.name;
+                    result.confidence = best.similarity;
+                    result.source = SkillMatchResult::EMBEDDING;
+                    embedding_hit_count_.fetch_add(1);
+                    return result;
+                }
+            }
+        } catch (const std::exception&) {
+            // Embedding failed, fall through to keyword matching
+        }
+    }
+
+    // Tier 3: Fall back to keyword IDF matching
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    std::string keyword_skill = analyzeRequiredSkill(question);
+
+    if (!keyword_skill.empty()) {
+        result.skill_name = keyword_skill;
+        result.confidence = 0.6f;  // keyword match gets moderate confidence
+        result.source = SkillMatchResult::KEYWORD;
+    }
+
     return result;
 }
 

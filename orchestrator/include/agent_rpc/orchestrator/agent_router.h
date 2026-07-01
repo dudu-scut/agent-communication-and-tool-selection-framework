@@ -9,6 +9,9 @@
 #pragma once
 
 #include "agent_info.h"
+#include <agent_rpc/mcp/rag/embedding_service.h>
+#include <agent_rpc/mcp/rag/vector_index.h>
+#include <agent_rpc/mcp/rag/embedding_cache.h>
 #include <atomic>
 #include <mutex>
 #include <optional>
@@ -21,6 +24,28 @@ struct AgentRegistration;
 
 namespace agent_rpc {
 namespace orchestrator {
+
+/**
+ * @brief Configuration for embedding-based skill routing (P3)
+ */
+struct EmbeddingRouterConfig {
+    bool enabled = false;
+    float high_threshold = 0.85f;   // similarity > this → direct route
+    float low_threshold = 0.50f;    // similarity < this → no match
+    std::string api_key;            // embedding API key (falls back to LLM_API_KEY env)
+    std::string model = "deepseek-v4-pro";
+    int dimension = 1024;
+    std::string api_url = "https://api.deepseek.com/v1/embeddings";
+};
+
+/**
+ * @brief Result of hybrid skill analysis (P3)
+ */
+struct SkillMatchResult {
+    std::string skill_name;
+    float confidence = 0.0f;
+    enum Source { KEYWORD, EMBEDDING, NONE } source = NONE;
+};
 
 /**
  * @brief Agent Router - routes requests to appropriate agents
@@ -220,6 +245,33 @@ public:
      */
     std::unordered_map<std::string, std::string> getAllSkillDescriptions() const;
 
+    // === Embedding-based Routing (P3) ===
+
+    /**
+     * @brief Enable embedding-based skill routing
+     * @param config Embedding router configuration
+     * @return true if embedding service initialized successfully
+     */
+    bool enableEmbedding(const EmbeddingRouterConfig& config);
+
+    /**
+     * @brief Hybrid skill analysis: embedding (fast path) + keyword (fallback)
+     *
+     * Three-tier routing pipeline:
+     * 1. Embedding high confidence (similarity > high_threshold) → direct route
+     * 2. Fuzzy zone (low_threshold ~ high_threshold) → return result, caller decides
+     * 3. Low confidence (< low_threshold) → fall back to keyword IDF matching
+     *
+     * @param question User input text
+     * @return SkillMatchResult with skill name, confidence score, and source
+     */
+    SkillMatchResult analyzeRequiredSkillHybrid(const std::string& question);
+
+    /**
+     * @brief Check if embedding routing is enabled
+     */
+    bool isEmbeddingEnabled() const;
+
 private:
     /**
      * @brief Analyze question to determine required skill
@@ -257,14 +309,22 @@ private:
      * Must be called while agents_mutex_ is held (e.g. from syncFromRegistry).
      */
     void rebuildSkillKeywordIndex();
-    
+
+    /**
+     * @brief Build/rebuild the skill embedding index from current agents
+     *
+     * Embeds each skill's "name + description" text and stores in skill_index_.
+     * Called from rebuildSkillKeywordIndex() when embedding is enabled.
+     */
+    void buildSkillEmbeddingIndex();
+
     mutable std::mutex agents_mutex_;
     std::unordered_map<std::string, AgentInfo> agents_;
     RoutingStrategy strategy_ = RoutingStrategy::SKILL_MATCH;
     std::atomic<size_t> round_robin_index_{0};
     std::mt19937 random_generator_;
     bool initialized_ = false;
-    
+
     // Inverted keyword index: keyword → list of (skill, IDF weight) entries.
     // Rebuilt on syncFromRegistry() / addAgent() / removeAgent().
     struct KeywordEntry {
@@ -272,6 +332,15 @@ private:
         double weight;  // IDF: 1.0 / number of skills sharing this keyword
     };
     std::unordered_map<std::string, std::vector<KeywordEntry>> skill_keywords_;
+
+    // Embedding-based routing (P3)
+    EmbeddingRouterConfig embedding_config_;
+    std::unique_ptr<agent_rpc::mcp::rag::EmbeddingService> embedding_service_;
+    std::unique_ptr<agent_rpc::mcp::rag::VectorIndex> skill_index_;
+    std::unique_ptr<agent_rpc::mcp::rag::EmbeddingCache> embedding_cache_;
+    mutable std::mutex embedding_mutex_;
+    std::atomic<uint64_t> embedding_query_count_{0};
+    std::atomic<uint64_t> embedding_hit_count_{0};
 };
 
 } // namespace orchestrator
