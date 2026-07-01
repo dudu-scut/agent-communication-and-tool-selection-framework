@@ -28,6 +28,7 @@ router.beforeEach((to) => {
 
   const auth = useAuthStore()
   if (!auth.isAuthenticated) {
+    auth.logout() // Clean up stale token (expired or missing)
     return { name: 'login' }
   }
   return true

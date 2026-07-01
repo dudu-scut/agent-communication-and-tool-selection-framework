@@ -239,10 +239,6 @@ std::string AuthServiceImpl::generateToken() {
     return generateUuid();
 }
 
-std::string AuthServiceImpl::generateUserId() {
-    return generateUuid();
-}
-
 std::string AuthServiceImpl::generateSalt() {
     static thread_local std::mt19937 rng(std::random_device{}());
     static constexpr const char kHexChars[] = "0123456789abcdef";

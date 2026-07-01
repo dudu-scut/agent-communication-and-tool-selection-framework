@@ -137,9 +137,11 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
     // Tier 2: 用户长期记忆
     ctx.set_user_memory(getUserMemory(user_id));
 
-    // Tier 1: 当前Agent对话历史
-    ctx.set_conversation_history(
-        getConversationHistory(context_id, agent_id, max_history));
+    // Tier 1: 当前Agent对话历史 (路由前agent_id为空，跳过)
+    if (!agent_id.empty()) {
+        ctx.set_conversation_history(
+            getConversationHistory(context_id, agent_id, max_history));
+    }
 
     // 跨Agent摘要 (仅在切换Agent时有值)
     ctx.set_cross_agent_summary(getCrossAgentSummary(context_id));

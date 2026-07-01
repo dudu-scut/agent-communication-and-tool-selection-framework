@@ -39,7 +39,6 @@ public:
 
 private:
     static std::string generateToken();
-    static std::string generateUserId();
     static std::string hashPassword(const std::string& password,
                                     const std::string& salt);
     static std::string generateSalt();

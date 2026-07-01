@@ -86,7 +86,8 @@ public:
     // 构建 SystemContext (供 AIQueryService 注入)
     // ========================================================================
 
-    /** 构建完整的 SystemContext 用于注入到 AIQueryRequest */
+    /** 构建完整的 SystemContext 用于注入到 AIQueryRequest
+     *  agent_id 为空时跳过 conversation_history（路由前不知道 agent）*/
     agent_communication::SystemContext buildSystemContext(
         const std::string& user_id,
         const std::string& context_id,

@@ -108,7 +108,13 @@ grpc::Status AIQueryServiceImpl::Query(
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                            "Invalid request or response");
     }
-    
+
+    // Auth: reject unauthenticated requests (interceptor sets TLS auth state)
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
     auto start_time = std::chrono::steady_clock::now();
     
     // Generate request ID if not provided
@@ -238,7 +244,13 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                            "Invalid request or writer");
     }
-    
+
+    // Auth: reject unauthenticated requests (interceptor sets TLS auth state)
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
     auto start_time = std::chrono::steady_clock::now();
     
     std::string request_id = request->request_id();
@@ -266,7 +278,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     // P4-4: Multi-agent orchestrator path
     if (orchestrator_enabled_) {
         auto status = handleMultiAgentQueryStream(context, &enriched_req, writer, request_id);
-        // Memory: append conversation history (streaming has no memory_hints)
+        // Memory: store user question to Tier 1 (agent response stored by orchestrator)
         if (!user_id.empty()) {
             memory_service_.appendMessage(request->context_id(),
                 "", "user", request->question());
@@ -286,6 +298,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
 
     bool success = true;
     std::string error_message;
+    std::string streamed_content;  // Memory: accumulate agent response
 
     // Process streaming query
     // P2-2: Propagate gRPC deadline to A2A HTTP timeout
@@ -297,7 +310,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     }
 
     a2a_adapter_->processQueryStreaming(enriched_req,
-        [this, &context, &writer, &success, &error_message, &request_id](
+        [this, &context, &writer, &success, &error_message, &request_id, &streamed_content](
             const agent_communication::AIStreamEvent& event) {
 
             // Check for cancellation
@@ -308,6 +321,11 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                 // P2-2: Cancel the downstream A2A task
                 a2a_adapter_->cancelTask(request_id);
                 return;
+            }
+
+            // Memory: accumulate partial content for Tier 1 storage
+            if (event.event_type() == "partial") {
+                streamed_content += event.content();
             }
 
             // Write event to stream
@@ -331,10 +349,14 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         else circuit_breaker_->recordFailure();
     }
 
-    // Memory: append conversation history for streaming (no memory_hints available)
+    // Memory: store user question + accumulated agent response to Tier 1
     if (success && !user_id.empty()) {
         memory_service_.appendMessage(request->context_id(),
             "", "user", request->question());
+        if (!streamed_content.empty()) {
+            memory_service_.appendMessage(request->context_id(),
+                "", "agent", streamed_content);
+        }
     }
 
     if (success) {
@@ -367,7 +389,13 @@ grpc::Status AIQueryServiceImpl::GetQueryStatus(
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                            "Invalid request or response");
     }
-    
+
+    // Auth: reject unauthenticated requests
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
     // Check for cancellation
     if (context->IsCancelled()) {
         return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");

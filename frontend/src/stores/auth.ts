@@ -10,10 +10,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => {
     if (!token.value) return false
-    if (Date.now() > expiresAt.value) {
-      logout()
-      return false
-    }
+    if (Date.now() > expiresAt.value) return false
     return true
   })
 
