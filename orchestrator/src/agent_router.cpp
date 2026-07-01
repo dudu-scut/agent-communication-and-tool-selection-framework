@@ -9,7 +9,7 @@
 #include <agent_rpc/mcp/rag/embedding_service.h>
 #include <agent_rpc/mcp/rag/vector_index.h>
 #include <agent_rpc/mcp/rag/embedding_cache.h>
-#include <a2a/examples/agent_registry.hpp>
+#include <a2a/agent_registry.hpp>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>

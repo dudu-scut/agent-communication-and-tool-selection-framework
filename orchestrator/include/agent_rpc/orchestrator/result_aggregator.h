@@ -11,7 +11,7 @@
 
 #include "agent_rpc/orchestrator/task_planner.h"
 #include "agent_rpc/orchestrator/task_executor.h"
-#include <a2a/examples/llm_client.hpp>
+#include <a2a/llm_client.hpp>
 #include <memory>
 #include <string>
 #include <vector>

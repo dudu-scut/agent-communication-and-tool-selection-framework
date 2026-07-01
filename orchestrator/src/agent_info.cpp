@@ -7,7 +7,7 @@
  */
 
 #include "agent_rpc/orchestrator/agent_info.h"
-#include <a2a/examples/agent_registry.hpp>
+#include <a2a/agent_registry.hpp>
 #include <iostream>
 
 namespace agent_rpc {

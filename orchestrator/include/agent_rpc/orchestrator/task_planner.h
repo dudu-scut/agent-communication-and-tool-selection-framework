@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include <a2a/examples/llm_client.hpp>
+#include <a2a/llm_client.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
