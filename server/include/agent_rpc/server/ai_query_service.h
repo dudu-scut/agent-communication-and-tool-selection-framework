@@ -153,6 +153,9 @@ private:
                            const std::string& context_id,
                            const std::string& current_agent_id);
 
+    // Memory: build context string from request's SystemContext for sub-agent injection
+    std::string buildMemoryContext(const agent_communication::AIQueryRequest* request) const;
+
     mutable std::mutex task_status_mutex_;
     std::unordered_map<std::string, TaskStatus> task_status_cache_;
     std::atomic<uint64_t> status_query_count_{0};

@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <future>
 #include <sstream>
 #include <iomanip>
 #ifdef _WIN32
@@ -562,12 +563,11 @@ void AIQueryServiceImpl::handleAgentSwitch(
 
     std::string last_agent = memory_service_.getLastAgent(context_id);
     if (last_agent.empty() || last_agent == current_agent_id) {
-        // No switch or first call
-        memory_service_.setLastAgent(context_id, current_agent_id);
+        // No switch or first call — appendMessage will update last_agent
         return;
     }
 
-    // Agent switched — generate summary of old agent's conversation
+    // Agent switched — generate summary asynchronously to avoid blocking response
     LOG_INFO("Agent switch detected: " + last_agent + " → " + current_agent_id +
              " (context: " + context_id + ")");
 
@@ -575,20 +575,37 @@ void AIQueryServiceImpl::handleAgentSwitch(
         context_id, last_agent, 20);
 
     if (!old_history.empty() && memory_llm_client_) {
-        std::lock_guard<std::mutex> lock(memory_llm_mutex_);
-        try {
-            std::string summary = memory_llm_client_->chat(
-                "你是一个对话摘要助手。请用2-3句话简洁总结以下用户与助手的对话要点，"
-                "保留关键信息和上下文，以便下一个助手能够无缝接续对话。直接输出摘要，不要加前缀。",
-                old_history);
-            memory_service_.setCrossAgentSummary(context_id, summary);
-            LOG_INFO("Cross-agent summary generated for context: " + context_id);
-        } catch (const std::exception& e) {
-            LOG_WARN("Failed to generate cross-agent summary: " + std::string(e.what()));
+        (void)std::async(std::launch::async,
+            [this, context_id, old_history]() {
+                std::lock_guard<std::mutex> lock(memory_llm_mutex_);
+                try {
+                    std::string summary = memory_llm_client_->chat(
+                        "你是一个对话摘要助手。请用2-3句话简洁总结以下用户与助手的对话要点，"
+                        "保留关键信息和上下文，以便下一个助手能够无缝接续对话。直接输出摘要，不要加前缀。",
+                        old_history);
+                    memory_service_.setCrossAgentSummary(context_id, summary);
+                    LOG_INFO("Cross-agent summary generated for context: " + context_id);
+                } catch (const std::exception& e) {
+                    LOG_WARN("Failed to generate cross-agent summary: " + std::string(e.what()));
+                }
+            });
+    }
+    // last_agent updated by subsequent appendMessage
+}
+
+std::string AIQueryServiceImpl::buildMemoryContext(
+    const agent_communication::AIQueryRequest* request) const {
+    std::string memory_ctx;
+    if (request->has_system_context()) {
+        const auto& sys_ctx = request->system_context();
+        if (!sys_ctx.user_memory().empty()) {
+            memory_ctx += "[User Context]\n" + sys_ctx.user_memory() + "\n";
+        }
+        if (!sys_ctx.cross_agent_summary().empty()) {
+            memory_ctx += "[Prior Context]\n" + sys_ctx.cross_agent_summary() + "\n";
         }
     }
-
-    memory_service_.setLastAgent(context_id, current_agent_id);
+    return memory_ctx;
 }
 
 bool AIQueryServiceImpl::initializeOrchestrator(
@@ -676,16 +693,7 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     updateTaskStatus(request_id, "working");
 
     // Memory: build context to inject into sub-agent prompts
-    std::string memory_ctx;
-    if (request->has_system_context()) {
-        const auto& sys_ctx = request->system_context();
-        if (!sys_ctx.user_memory().empty()) {
-            memory_ctx += "[User Context]\n" + sys_ctx.user_memory() + "\n";
-        }
-        if (!sys_ctx.cross_agent_summary().empty()) {
-            memory_ctx += "[Prior Context]\n" + sys_ctx.cross_agent_summary() + "\n";
-        }
-    }
+    std::string memory_ctx = buildMemoryContext(request);
 
     // Step 2: Build AgentCallFn — resolves skill → agent → A2A call
     auto call_agent = [this, &memory_ctx](const std::string& skill,
@@ -725,35 +733,47 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
         return "";
     };
 
-    // Step 3: Execute DAG
-    auto results = task_executor_->execute(plan, call_agent);
+    try {
+        // Step 3: Execute DAG
+        auto results = task_executor_->execute(plan, call_agent);
 
-    // Step 4: Aggregate results
-    auto aggregated = result_aggregator_->aggregate(plan, results);
+        // Step 4: Aggregate results
+        auto aggregated = result_aggregator_->aggregate(plan, results);
 
-    // Populate response
-    response->set_request_id(request_id);
-    response->set_task_id(request_id);
-    response->set_answer(aggregated.final_answer);
-    response->set_context_id(request->context_id());
+        // Populate response
+        response->set_request_id(request_id);
+        response->set_task_id(request_id);
+        response->set_answer(aggregated.final_answer);
+        response->set_context_id(request->context_id());
 
-    auto end_time = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end_time - start_time);
-    response->set_processing_time_ms(duration.count());
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        response->set_processing_time_ms(duration.count());
 
-    auto* status = response->mutable_status();
-    status->set_code(0);
-    status->set_message("OK");
+        auto* status = response->mutable_status();
+        status->set_code(0);
+        status->set_message("OK");
 
-    updateTaskStatus(request_id, "completed", "", "multi-agent");
-    recordMetrics("Query", duration.count(), true);
+        updateTaskStatus(request_id, "completed", "", "multi-agent");
+        recordMetrics("Query", duration.count(), true);
 
-    LOG_INFO("Multi-agent query completed in " +
+        LOG_INFO("Multi-agent query completed in " +
              std::to_string(duration.count()) + "ms (" +
              std::to_string(plan.tasks.size()) + " subtasks)");
 
-    return grpc::Status::OK;
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        LOG_ERROR("Multi-agent query failed: " + request_id + " - " + e.what());
+        updateTaskStatus(request_id, "failed", "", "", e.what());
+        recordMetrics("Query", duration.count(), false);
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                           std::string("Multi-agent orchestration failed: ") + e.what());
+    }
 }
 
 grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
@@ -813,16 +833,7 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
     updateTaskStatus(request_id, "working");
 
     // Memory: build context to inject into sub-agent prompts
-    std::string memory_ctx;
-    if (request->has_system_context()) {
-        const auto& sys_ctx = request->system_context();
-        if (!sys_ctx.user_memory().empty()) {
-            memory_ctx += "[User Context]\n" + sys_ctx.user_memory() + "\n";
-        }
-        if (!sys_ctx.cross_agent_summary().empty()) {
-            memory_ctx += "[Prior Context]\n" + sys_ctx.cross_agent_summary() + "\n";
-        }
-    }
+    std::string memory_ctx = buildMemoryContext(request);
 
     // Step 2: AgentCallFn (same as sync path)
     auto call_agent = [this, &memory_ctx](const std::string& skill,
@@ -857,64 +868,83 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         return "";
     };
 
-    // Step 3: Execute with progress callback emitting stream events
-    orchestrator::ProgressCallback progress_cb =
-        [writer, &context_id](const orchestrator::SubTaskEvent& event) {
-            agent_communication::AIStreamEvent stream_event;
-            stream_event.set_context_id(context_id);
-            if (event.type == orchestrator::SubTaskEventType::START) {
-                stream_event.set_event_type("subtask_start");
-                stream_event.set_task_state(event.subtask_id);
-                stream_event.set_content(event.detail);
-            } else if (event.type == orchestrator::SubTaskEventType::COMPLETE) {
-                stream_event.set_event_type("subtask_complete");
-                stream_event.set_task_state(event.subtask_id);
-                stream_event.set_content(event.detail);
-            } else if (event.type == orchestrator::SubTaskEventType::FAILED) {
-                stream_event.set_event_type("subtask_complete");
-                stream_event.set_task_state(event.subtask_id);
-                stream_event.set_content("FAILED: " + event.detail);
-            }
-            writer->Write(stream_event);
-        };
+    try {
+        // Step 3: Execute with progress callback emitting stream events
+        orchestrator::ProgressCallback progress_cb =
+            [writer, &context_id](const orchestrator::SubTaskEvent& event) {
+                agent_communication::AIStreamEvent stream_event;
+                stream_event.set_context_id(context_id);
+                if (event.type == orchestrator::SubTaskEventType::START) {
+                    stream_event.set_event_type("subtask_start");
+                    stream_event.set_task_state(event.subtask_id);
+                    stream_event.set_content(event.detail);
+                } else if (event.type == orchestrator::SubTaskEventType::COMPLETE) {
+                    stream_event.set_event_type("subtask_complete");
+                    stream_event.set_task_state(event.subtask_id);
+                    stream_event.set_content(event.detail);
+                } else if (event.type == orchestrator::SubTaskEventType::FAILED) {
+                    stream_event.set_event_type("subtask_complete");
+                    stream_event.set_task_state(event.subtask_id);
+                    stream_event.set_content("FAILED: " + event.detail);
+                }
+                writer->Write(stream_event);
+            };
 
-    auto results = task_executor_->execute(plan, call_agent, progress_cb);
+        auto results = task_executor_->execute(plan, call_agent, progress_cb);
 
-    // Step 4: Aggregate
-    auto aggregated = result_aggregator_->aggregate(plan, results);
+        // Step 4: Aggregate
+        auto aggregated = result_aggregator_->aggregate(plan, results);
 
-    // Emit final answer
-    agent_communication::AIStreamEvent answer_event;
-    answer_event.set_event_type("partial");
-    answer_event.set_content(aggregated.final_answer);
-    answer_event.set_context_id(context_id);
-    writer->Write(answer_event);
+        // Emit final answer
+        agent_communication::AIStreamEvent answer_event;
+        answer_event.set_event_type("partial");
+        answer_event.set_content(aggregated.final_answer);
+        answer_event.set_context_id(context_id);
+        writer->Write(answer_event);
 
-    // Complete
-    agent_communication::AIStreamEvent complete_event;
-    complete_event.set_event_type("complete");
-    complete_event.set_context_id(context_id);
-    writer->Write(complete_event);
+        // Complete
+        agent_communication::AIStreamEvent complete_event;
+        complete_event.set_event_type("complete");
+        complete_event.set_context_id(context_id);
+        writer->Write(complete_event);
 
-    // Memory: store user question and aggregated answer to Tier 1
-    std::string user_id = request->user_id();
-    if (!user_id.empty()) {
-        handleAgentSwitch(user_id, context_id, "multi-agent");
-        memory_service_.appendMessage(context_id, "multi-agent", "user", question);
-        memory_service_.appendMessage(context_id, "multi-agent", "agent", aggregated.final_answer);
+        // Memory: store user question and aggregated answer to Tier 1
+        std::string user_id = request->user_id();
+        if (!user_id.empty()) {
+            handleAgentSwitch(user_id, context_id, "multi-agent");
+            memory_service_.appendMessage(context_id, "multi-agent", "user", question);
+            memory_service_.appendMessage(context_id, "multi-agent", "agent", aggregated.final_answer);
+        }
+
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        updateTaskStatus(request_id, "completed", "", "multi-agent");
+        recordMetrics("QueryStream", duration.count(), true);
+
+        LOG_INFO("Multi-agent stream completed in " +
+                 std::to_string(duration.count()) + "ms (" +
+                 std::to_string(plan.tasks.size()) + " subtasks)");
+
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        LOG_ERROR("Multi-agent stream failed: " + request_id + " - " + e.what());
+        updateTaskStatus(request_id, "failed", "", "", e.what());
+        recordMetrics("QueryStream", duration.count(), false);
+
+        agent_communication::AIStreamEvent error_event;
+        error_event.set_event_type("error");
+        error_event.set_content(std::string("Multi-agent orchestration failed: ") + e.what());
+        error_event.set_context_id(context_id);
+        writer->Write(error_event);
+
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                           std::string("Multi-agent orchestration failed: ") + e.what());
     }
-
-    auto end_time = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end_time - start_time);
-    updateTaskStatus(request_id, "completed", "", "multi-agent");
-    recordMetrics("QueryStream", duration.count(), true);
-
-    LOG_INFO("Multi-agent stream completed in " +
-             std::to_string(duration.count()) + "ms (" +
-             std::to_string(plan.tasks.size()) + " subtasks)");
-
-    return grpc::Status::OK;
 }
 
 } // namespace server
