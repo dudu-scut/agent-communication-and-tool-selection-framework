@@ -36,6 +36,7 @@ set(UUID_LIB "uuid")
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+pkg_check_modules(HIREDIS REQUIRED hiredis)
 
 # A2A模块包含目录
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/a2a/include)

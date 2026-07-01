@@ -53,7 +53,8 @@ public:
      * @return true if initialization successful
      */
     bool initialize(const common::RpcConfig& rpc_config,
-                   const a2a_adapter::A2AConfig& a2a_config);
+                   const a2a_adapter::A2AConfig& a2a_config,
+                   common::RedisClient* redis = nullptr);
     
     /**
      * @brief Shutdown the service
@@ -123,7 +124,7 @@ public:
     /**
      * @brief Get the MemoryService for memory system integration
      */
-    common::MemoryService* getMemoryService() { return &memory_service_; }
+    common::MemoryService* getMemoryService() { return memory_service_.get(); }
 
 private:
     std::string generateRequestId();
@@ -166,7 +167,7 @@ private:
     common::RpcConfig rpc_config_;
     std::atomic<bool> initialized_{false};
     std::atomic<uint64_t> request_counter_{0};
-    common::MemoryService memory_service_;
+    std::unique_ptr<common::MemoryService> memory_service_;
 
     // ========================================================================
     // Multi-Agent Orchestration (P4-4)

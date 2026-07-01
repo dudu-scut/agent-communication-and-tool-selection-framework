@@ -10,19 +10,21 @@ set(COMMON_SOURCES
     src/circuit_breaker.cpp
     src/load_balancer.cpp
     src/memory_service.cpp
+    src/redis_client.cpp
 )
 
 # 创建静态库
 add_library(agent_rpc_common STATIC ${COMMON_SOURCES})
 
 # 链接依赖
-target_link_libraries(agent_rpc_common 
+target_link_libraries(agent_rpc_common
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
     pthread
     ${UUID_LIB}
     curl
     jsoncpp
+    ${HIREDIS_LIBRARIES}
 )
 
 # 包含目录

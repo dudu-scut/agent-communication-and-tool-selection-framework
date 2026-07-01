@@ -32,6 +32,7 @@ target_link_libraries(rpc_server
     CURL::libcurl
     OpenSSL::SSL
     OpenSSL::Crypto
+    ${HIREDIS_LIBRARIES}
 )
 
 # 链接依赖
@@ -49,6 +50,7 @@ target_link_libraries(agent_rpc_server
     CURL::libcurl
     OpenSSL::SSL
     OpenSSL::Crypto
+    ${HIREDIS_LIBRARIES}
 )
 
 # 包含目录

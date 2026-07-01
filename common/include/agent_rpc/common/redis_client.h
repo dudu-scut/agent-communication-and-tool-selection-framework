@@ -1,0 +1,82 @@
+#pragma once
+
+#include <hiredis/hiredis.h>
+
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace agent_rpc {
+namespace common {
+
+/**
+ * @brief Thin wrapper around hiredis for Redis operations.
+ *
+ * Thread-safe: uses a single connection protected by a mutex.
+ * Sufficient for the synchronous gRPC server model.
+ */
+class RedisClient {
+public:
+    RedisClient();
+    ~RedisClient();
+
+    /** Connect to Redis server. Returns true on success. */
+    bool connect(const std::string& host = "127.0.0.1",
+                 int port = 6379,
+                 int timeout_ms = 1000);
+
+    /** Disconnect from Redis. */
+    void disconnect();
+
+    /** Check if connected. */
+    bool isConnected() const;
+
+    // ========================================================================
+    // String operations
+    // ========================================================================
+
+    bool set(const std::string& key, const std::string& value);
+    bool get(const std::string& key, std::string& value);
+    bool del(const std::string& key);
+    bool exists(const std::string& key);
+
+    /** Set key with TTL in seconds. */
+    bool setex(const std::string& key, int ttl_seconds, const std::string& value);
+
+    // ========================================================================
+    // Hash operations
+    // ========================================================================
+
+    bool hset(const std::string& key, const std::string& field,
+              const std::string& value);
+    bool hget(const std::string& key, const std::string& field,
+              std::string& value);
+    bool hgetall(const std::string& key,
+                 std::map<std::string, std::string>& result);
+    bool hdel(const std::string& key, const std::string& field);
+
+    // ========================================================================
+    // List operations
+    // ========================================================================
+
+    /** Push value to the tail of a list. */
+    bool rpush(const std::string& key, const std::string& value);
+
+    /** Get elements from a list. Negative stop = end of list. */
+    bool lrange(const std::string& key, int start, int stop,
+                std::vector<std::string>& result);
+
+    /** Trim list to [start, stop] range. */
+    bool ltrim(const std::string& key, int start, int stop);
+
+    /** Set TTL on a key (seconds). */
+    bool expire(const std::string& key, int seconds);
+
+private:
+    redisContext* ctx_;
+    mutable std::mutex mutex_;
+};
+
+}  // namespace common
+}  // namespace agent_rpc

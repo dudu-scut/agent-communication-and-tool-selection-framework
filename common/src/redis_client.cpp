@@ -1,0 +1,258 @@
+#include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/logger.h"
+
+namespace agent_rpc {
+namespace common {
+
+RedisClient::RedisClient() : ctx_(nullptr) {}
+
+RedisClient::~RedisClient() {
+    disconnect();
+}
+
+bool RedisClient::connect(const std::string& host, int port, int timeout_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (ctx_) {
+        redisFree(ctx_);
+        ctx_ = nullptr;
+    }
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    ctx_ = redisConnectWithTimeout(host.c_str(), port, tv);
+    if (!ctx_ || ctx_->err) {
+        if (ctx_) {
+            LOG_ERROR("Redis connect failed: " + std::string(ctx_->errstr));
+            redisFree(ctx_);
+            ctx_ = nullptr;
+        } else {
+            LOG_ERROR("Redis connect failed: can't allocate redis context");
+        }
+        return false;
+    }
+
+    LOG_INFO("Redis connected to " + host + ":" + std::to_string(port));
+    return true;
+}
+
+void RedisClient::disconnect() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ctx_) {
+        redisFree(ctx_);
+        ctx_ = nullptr;
+    }
+}
+
+bool RedisClient::isConnected() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ctx_ != nullptr && !ctx_->err;
+}
+
+// ============================================================================
+// String operations
+// ============================================================================
+
+bool RedisClient::set(const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "SET %s %b", key.c_str(), value.data(), value.size()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_STATUS);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::get(const std::string& key, std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "GET %s", key.c_str()));
+    if (!reply) return false;
+
+    if (reply->type == REDIS_REPLY_STRING) {
+        value.assign(reply->str, reply->len);
+        freeReplyObject(reply);
+        return true;
+    }
+    freeReplyObject(reply);
+    return false;
+}
+
+bool RedisClient::del(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "DEL %s", key.c_str()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER && reply->integer > 0);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::exists(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "EXISTS %s", key.c_str()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER && reply->integer > 0);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::setex(const std::string& key, int ttl_seconds,
+                         const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "SETEX %s %d %b",
+                     key.c_str(), ttl_seconds, value.data(), value.size()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_STATUS);
+    freeReplyObject(reply);
+    return ok;
+}
+
+// ============================================================================
+// Hash operations
+// ============================================================================
+
+bool RedisClient::hset(const std::string& key, const std::string& field,
+                        const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "HSET %s %s %b",
+                     key.c_str(), field.c_str(), value.data(), value.size()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::hget(const std::string& key, const std::string& field,
+                        std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "HGET %s %s", key.c_str(), field.c_str()));
+    if (!reply) return false;
+
+    if (reply->type == REDIS_REPLY_STRING) {
+        value.assign(reply->str, reply->len);
+        freeReplyObject(reply);
+        return true;
+    }
+    freeReplyObject(reply);
+    return false;
+}
+
+bool RedisClient::hgetall(const std::string& key,
+                           std::map<std::string, std::string>& result) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "HGETALL %s", key.c_str()));
+    if (!reply) return false;
+
+    if (reply->type == REDIS_REPLY_ARRAY && reply->elements >= 2) {
+        for (size_t i = 0; i + 1 < reply->elements; i += 2) {
+            if (reply->element[i]->type == REDIS_REPLY_STRING &&
+                reply->element[i + 1]->type == REDIS_REPLY_STRING) {
+                std::string k(reply->element[i]->str, reply->element[i]->len);
+                std::string v(reply->element[i + 1]->str, reply->element[i + 1]->len);
+                result[k] = v;
+            }
+        }
+    }
+    freeReplyObject(reply);
+    return !result.empty();
+}
+
+bool RedisClient::hdel(const std::string& key, const std::string& field) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "HDEL %s %s", key.c_str(), field.c_str()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER && reply->integer > 0);
+    freeReplyObject(reply);
+    return ok;
+}
+
+// ============================================================================
+// List operations
+// ============================================================================
+
+bool RedisClient::rpush(const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "RPUSH %s %b",
+                     key.c_str(), value.data(), value.size()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::lrange(const std::string& key, int start, int stop,
+                          std::vector<std::string>& result) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "LRANGE %s %d %d", key.c_str(), start, stop));
+    if (!reply) return false;
+
+    if (reply->type == REDIS_REPLY_ARRAY) {
+        for (size_t i = 0; i < reply->elements; ++i) {
+            if (reply->element[i]->type == REDIS_REPLY_STRING) {
+                result.emplace_back(reply->element[i]->str, reply->element[i]->len);
+            }
+        }
+    }
+    freeReplyObject(reply);
+    return !result.empty();
+}
+
+bool RedisClient::ltrim(const std::string& key, int start, int stop) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "LTRIM %s %d %d", key.c_str(), start, stop));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_STATUS);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::expire(const std::string& key, int seconds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ctx_) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "EXPIRE %s %d", key.c_str(), seconds));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER && reply->integer > 0);
+    freeReplyObject(reply);
+    return ok;
+}
+
+}  // namespace common
+}  // namespace agent_rpc

@@ -3,6 +3,7 @@
 #include "agent_rpc/common/types.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/common/redis_client.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/registry/service_registry.h"
 #include <grpcpp/grpcpp.h>
@@ -85,6 +86,7 @@ private:
     std::shared_ptr<HealthServiceImpl> health_service_impl_;
     std::shared_ptr<AIQueryServiceImpl> ai_query_service_impl_;
     std::shared_ptr<AuthServiceImpl> auth_service_impl_;
+    std::unique_ptr<common::RedisClient> redis_client_;
     
     // A2A配置
     a2a_adapter::A2AConfig a2a_config_;

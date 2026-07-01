@@ -94,18 +94,27 @@ RpcServer::~RpcServer() {
 bool RpcServer::initialize(const common::RpcConfig& config) {
     config_ = config;
     address_ = config.server_address;
-    
+
+    // Redis: connect to Redis server
+    redis_client_ = std::make_unique<common::RedisClient>();
+    std::string redis_host = std::getenv("REDIS_HOST") ? std::getenv("REDIS_HOST") : "127.0.0.1";
+    int redis_port = std::getenv("REDIS_PORT") ? std::atoi(std::getenv("REDIS_PORT")) : 6379;
+    if (!redis_client_->connect(redis_host, redis_port)) {
+        LOG_ERROR("Failed to connect to Redis at " + redis_host + ":" + std::to_string(redis_port));
+        return false;
+    }
+
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
     health_service_impl_ = std::make_shared<HealthServiceImpl>();
     ai_query_service_impl_ = std::make_shared<AIQueryServiceImpl>();
-    auth_service_impl_ = std::make_shared<AuthServiceImpl>();
+    auth_service_impl_ = std::make_shared<AuthServiceImpl>(redis_client_.get());
     
     // 初始化序列化器
     common::MessageSerializer::getInstance().initialize(common::SerializerFactory::PROTOBUF_BINARY);
     
     // 初始化AI查询服务
-    if (!ai_query_service_impl_->initialize(config_, a2a_config_)) {
+    if (!ai_query_service_impl_->initialize(config_, a2a_config_, redis_client_.get())) {
         LOG_WARN("Failed to initialize AI Query Service, continuing without it");
     }
 

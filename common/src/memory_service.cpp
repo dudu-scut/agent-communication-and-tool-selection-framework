@@ -1,88 +1,80 @@
 #include "agent_rpc/common/memory_service.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <sstream>
 
 namespace agent_rpc {
 namespace common {
 
-MemoryService::MemoryService() = default;
+MemoryService::MemoryService(RedisClient* redis)
+    : redis_(redis) {}
 
 // ============================================================================
-// Tier 1: 对话历史
+// Tier 1: 对话历史 (Redis list, JSON-encoded messages)
 // ============================================================================
 
 void MemoryService::appendMessage(const std::string& context_id,
                                     const std::string& agent_id,
                                     const std::string& role,
                                     const std::string& content) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    auto key = convKey(context_id, agent_id);
+    auto ts = std::chrono::duration_cast<std::chrono::seconds>(
+                  std::chrono::system_clock::now().time_since_epoch())
+                  .count();
 
-    auto key = std::make_pair(context_id, agent_id);
-    auto& conv = conversations_[key];
+    nlohmann::json msg;
+    msg["role"] = role;
+    msg["content"] = content;
+    msg["ts"] = ts;
+    redis_->rpush(key, msg.dump());
 
-    Message msg;
-    msg.role = role;
-    msg.content = content;
-    msg.timestamp = std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
-                        .count();
+    // Trim to max size
+    redis_->ltrim(key, -kMaxHistoryPerAgent, -1);
 
-    conv.push_back(std::move(msg));
-
-    // 限制单个对话的历史长度
-    while (static_cast<int>(conv.size()) > kMaxHistoryPerAgent) {
-        conv.pop_front();
-    }
-
-    // 更新最后活跃Agent
-    last_agents_[context_id] = agent_id;
+    // Update last active agent
+    redis_->set(lastAgentKey(context_id), agent_id);
 }
 
 std::string MemoryService::getConversationHistory(
     const std::string& context_id,
     const std::string& agent_id,
     int max_messages) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto key = std::make_pair(context_id, agent_id);
-    auto it = conversations_.find(key);
-    if (it == conversations_.end()) return "";
-
-    return formatHistory(it->second, max_messages);
+    auto key = convKey(context_id, agent_id);
+    std::vector<std::string> raw;
+    redis_->lrange(key, -max_messages, -1, raw);
+    if (raw.empty()) return "";
+    return formatHistory(raw, max_messages);
 }
 
 std::string MemoryService::getLastAgent(const std::string& context_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = last_agents_.find(context_id);
-    return (it != last_agents_.end()) ? it->second : "";
+    std::string agent;
+    redis_->get(lastAgentKey(context_id), agent);
+    return agent;
 }
 
 void MemoryService::setLastAgent(const std::string& context_id,
                                    const std::string& agent_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    last_agents_[context_id] = agent_id;
+    redis_->set(lastAgentKey(context_id), agent_id);
 }
 
 // ============================================================================
-// Tier 2: 用户长期记忆
+// Tier 2: 用户长期记忆 (Redis hash)
 // ============================================================================
 
 void MemoryService::setUserMemory(const std::string& user_id,
                                     const std::string& key,
                                     const std::string& value) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    user_memories_[user_id][key] = value;
+    redis_->hset(memoryKey(user_id), key, value);
 }
 
 std::string MemoryService::getUserMemory(const std::string& user_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = user_memories_.find(user_id);
-    if (it == user_memories_.end() || it->second.empty()) return "";
+    std::map<std::string, std::string> all;
+    if (!redis_->hgetall(memoryKey(user_id), all) || all.empty()) return "";
 
     std::ostringstream oss;
-    for (const auto& [key, value] : it->second) {
+    for (const auto& [key, value] : all) {
         oss << "- " << key << ": " << value << "\n";
     }
     return oss.str();
@@ -93,32 +85,30 @@ void MemoryService::updateUserMemoryFromHints(
     const std::map<std::string, std::string>& hints) {
     if (hints.empty() || user_id.empty()) return;
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto& mem = user_memories_[user_id];
-    for (const auto& [key, value] : hints) {
-        if (value.empty()) {
-            mem.erase(key);  // 空值表示删除
+    auto key = memoryKey(user_id);
+    for (const auto& [k, v] : hints) {
+        if (v.empty()) {
+            redis_->hdel(key, k);
         } else {
-            mem[key] = value;
+            redis_->hset(key, k, v);
         }
     }
 }
 
 // ============================================================================
-// 跨Agent摘要
+// 跨Agent摘要 (Redis string)
 // ============================================================================
 
 void MemoryService::setCrossAgentSummary(const std::string& context_id,
                                             const std::string& summary) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    cross_agent_summaries_[context_id] = summary;
+    redis_->set(summaryKey(context_id), summary);
 }
 
 std::string MemoryService::getCrossAgentSummary(
     const std::string& context_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = cross_agent_summaries_.find(context_id);
-    return (it != cross_agent_summaries_.end()) ? it->second : "";
+    std::string summary;
+    redis_->get(summaryKey(context_id), summary);
+    return summary;
 }
 
 // ============================================================================
@@ -143,7 +133,7 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
             getConversationHistory(context_id, agent_id, max_history));
     }
 
-    // 跨Agent摘要 (仅在切换Agent时有值)
+    // 跨Agent摘要
     ctx.set_cross_agent_summary(getCrossAgentSummary(context_id));
 
     return ctx;
@@ -153,16 +143,24 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
 // 格式化
 // ============================================================================
 
-std::string MemoryService::formatHistory(const std::deque<Message>& messages,
-                                           int max_messages) {
-    if (messages.empty()) return "";
+std::string MemoryService::formatHistory(
+    const std::vector<std::string>& raw_messages,
+    int max_messages) {
+    if (raw_messages.empty()) return "";
 
-    int start = std::max(0, static_cast<int>(messages.size()) - max_messages);
+    int start = std::max(0, static_cast<int>(raw_messages.size()) - max_messages);
 
     std::ostringstream oss;
-    for (int i = start; i < static_cast<int>(messages.size()); ++i) {
-        const auto& msg = messages[i];
-        oss << (msg.role == "user" ? "用户: " : "助手: ") << msg.content << "\n";
+    for (int i = start; i < static_cast<int>(raw_messages.size()); ++i) {
+        try {
+            auto j = nlohmann::json::parse(raw_messages[i]);
+            std::string role = j.value("role", "agent");
+            std::string content = j.value("content", "");
+            oss << (role == "user" ? "用户: " : "助手: ") << content << "\n";
+        } catch (...) {
+            // Fallback: treat raw string as content
+            oss << "助手: " << raw_messages[i] << "\n";
+        }
     }
     return oss.str();
 }

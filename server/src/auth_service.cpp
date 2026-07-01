@@ -3,7 +3,6 @@
 
 #include <openssl/sha.h>
 
-#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <random>
@@ -41,7 +40,8 @@ std::string generateUuid() {
 
 }  // namespace
 
-AuthServiceImpl::AuthServiceImpl() = default;
+AuthServiceImpl::AuthServiceImpl(common::RedisClient* redis)
+    : redis_(redis) {}
 
 // ============================================================================
 // Register
@@ -67,39 +67,34 @@ grpc::Status AuthServiceImpl::Register(
                             "Input too long");
     }
 
-    {
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        if (users_.count(request->username())) {
-            response->mutable_status()->set_code(409);
-            response->mutable_status()->set_message("Username already exists");
-            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS,
-                                "Username already exists");
-        }
+    // Check if username already exists (Redis: check key existence)
+    auto key = userKey(request->username());
+    if (redis_->exists(key)) {
+        response->mutable_status()->set_code(409);
+        response->mutable_status()->set_message("Username already exists");
+        return grpc::Status(grpc::StatusCode::ALREADY_EXISTS,
+                            "Username already exists");
     }
 
     auto user_id = generateUuid();
     auto salt = generateSalt();
     auto password_hash = hashPassword(request->password(), salt);
+    auto display_name = request->display_name().empty()
+                            ? request->username()
+                            : request->display_name();
+    auto now = std::chrono::system_clock::now();
+    auto created_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                          now.time_since_epoch())
+                          .count();
 
-    UserInfo info;
-    info.user_id = user_id;
-    info.username = request->username();
-    info.display_name =
-        request->display_name().empty() ? request->username() : request->display_name();
-    info.password_hash = password_hash;
-    info.created_at = std::chrono::system_clock::now();
+    // Store user in Redis hash: nexusai:user:{username}
+    redis_->hset(key, "user_id", user_id);
+    redis_->hset(key, "display_name", display_name);
+    redis_->hset(key, "password_hash", password_hash);
+    redis_->hset(key, "created_at", std::to_string(created_ts));
 
-    {
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        // Double-check after re-acquiring lock
-        if (users_.count(request->username())) {
-            response->mutable_status()->set_code(409);
-            response->mutable_status()->set_message("Username already exists");
-            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS,
-                                "Username already exists");
-        }
-        users_[request->username()] = std::move(info);
-    }
+    // Reverse index: nexusai:uid:{user_id} → username (for token validation)
+    redis_->set(usernameIdxKey(user_id), request->username());
 
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("Registration successful");
@@ -127,44 +122,43 @@ grpc::Status AuthServiceImpl::Login(
                             "Username and password required");
     }
 
-    UserInfo user_copy;
-    {
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        auto it = users_.find(request->username());
-        if (it == users_.end()) {
-            response->mutable_status()->set_code(401);
-            response->mutable_status()->set_message("Invalid credentials");
-            return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
-                                "Invalid credentials");
-        }
-        user_copy = it->second;
-    }
-
-    if (!verifyPassword(request->password(), user_copy.password_hash)) {
+    // Look up user from Redis
+    auto key = userKey(request->username());
+    std::string password_hash, user_id;
+    if (!redis_->hget(key, "password_hash", password_hash) ||
+        !redis_->hget(key, "user_id", user_id)) {
         response->mutable_status()->set_code(401);
         response->mutable_status()->set_message("Invalid credentials");
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                             "Invalid credentials");
     }
 
+    if (!verifyPassword(request->password(), password_hash)) {
+        response->mutable_status()->set_code(401);
+        response->mutable_status()->set_message("Invalid credentials");
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                            "Invalid credentials");
+    }
+
+    // Generate token and store in Redis with TTL
     auto token = generateToken();
     auto now = std::chrono::system_clock::now();
     auto expires_at = now + std::chrono::hours(kTokenTtlHours);
+    auto expires_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                          expires_at.time_since_epoch())
+                          .count();
 
-    {
-        std::lock_guard<std::mutex> lock(tokens_mutex_);
-        tokens_[token] = TokenInfo{user_copy.user_id, expires_at};
-    }
+    auto tkey = tokenKey(token);
+    redis_->hset(tkey, "user_id", user_id);
+    redis_->hset(tkey, "expires_at", std::to_string(expires_ts));
+    redis_->expire(tkey, kTokenTtlSeconds);
 
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("Login successful");
-    response->set_user_id(user_copy.user_id);
-    response->set_username(user_copy.username);
+    response->set_user_id(user_id);
+    response->set_username(request->username());
     response->set_token(token);
-    response->set_expires_at(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            expires_at.time_since_epoch())
-            .count());
+    response->set_expires_at(expires_ts);
 
     LOG_INFO("User logged in: " + request->username());
     return grpc::Status::OK;
@@ -205,30 +199,27 @@ bool AuthServiceImpl::validateToken(const std::string& token,
                                      std::string& username) {
     if (token.empty()) return false;
 
-    TokenInfo token_info;
-    {
-        std::lock_guard<std::mutex> lock(tokens_mutex_);
-        auto it = tokens_.find(token);
-        if (it == tokens_.end()) return false;
-
-        if (std::chrono::system_clock::now() > it->second.expires_at) {
-            tokens_.erase(it);
-            return false;
-        }
-        token_info = it->second;
+    // Look up token from Redis
+    auto tkey = tokenKey(token);
+    std::string expires_str;
+    if (!redis_->hget(tkey, "user_id", user_id) ||
+        !redis_->hget(tkey, "expires_at", expires_str)) {
+        return false;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        for (const auto& [uname, info] : users_) {
-            if (info.user_id == token_info.user_id) {
-                user_id = info.user_id;
-                username = info.username;
-                return true;
-            }
-        }
+    // Check expiry
+    auto expires_ts = std::stoll(expires_str);
+    auto now_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+    if (now_ts > expires_ts) {
+        redis_->del(tkey);  // Clean up expired token
+        return false;
     }
-    return false;
+
+    // Reverse lookup: user_id → username via index key
+    redis_->get(usernameIdxKey(user_id), username);
+    return true;
 }
 
 // ============================================================================

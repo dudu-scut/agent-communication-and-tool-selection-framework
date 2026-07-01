@@ -41,14 +41,18 @@ AIQueryServiceImpl::~AIQueryServiceImpl() {
 
 bool AIQueryServiceImpl::initialize(
     const common::RpcConfig& rpc_config,
-    const a2a_adapter::A2AConfig& a2a_config) {
-    
+    const a2a_adapter::A2AConfig& a2a_config,
+    common::RedisClient* redis) {
+
     if (initialized_) {
         return true;
     }
-    
+
     rpc_config_ = rpc_config;
-    
+
+    // Initialize MemoryService (Redis-backed)
+    memory_service_ = std::make_unique<common::MemoryService>(redis);
+
     // Initialize A2A adapter
     if (!a2a_adapter_->initialize(a2a_config)) {
         LOG_ERROR("Failed to initialize A2A adapter");
@@ -140,7 +144,7 @@ grpc::Status AIQueryServiceImpl::Query(
     agent_communication::AIQueryRequest enriched_req = *request;
     if (!user_id.empty()) {
         enriched_req.set_user_id(user_id);
-        auto sys_ctx = memory_service_.buildSystemContext(
+        auto sys_ctx = memory_service_->buildSystemContext(
             user_id, request->context_id(), /* agent_id will be set by router */ "");
         *enriched_req.mutable_system_context() = sys_ctx;
     }
@@ -154,9 +158,9 @@ grpc::Status AIQueryServiceImpl::Query(
             std::string resp_agent = response->agent_id().empty() ? "multi-agent" : response->agent_id();
             // Detect agent switch and generate summary for future queries
             handleAgentSwitch(user_id, request->context_id(), resp_agent);
-            memory_service_.appendMessage(request->context_id(),
+            memory_service_->appendMessage(request->context_id(),
                 resp_agent, "user", request->question());
-            memory_service_.appendMessage(request->context_id(),
+            memory_service_->appendMessage(request->context_id(),
                 resp_agent, "agent", response->answer());
         }
         return status;
@@ -212,13 +216,13 @@ grpc::Status AIQueryServiceImpl::Query(
 
     // Memory: post-process — store hints + conversation history
     if (success && !user_id.empty()) {
-        memory_service_.updateUserMemoryFromHints(
+        memory_service_->updateUserMemoryFromHints(
             user_id, {response->memory_hints().begin(), response->memory_hints().end()});
         // Detect agent switch for future summary generation
         handleAgentSwitch(user_id, request->context_id(), response->agent_id());
-        memory_service_.appendMessage(request->context_id(),
+        memory_service_->appendMessage(request->context_id(),
             response->agent_id(), "user", request->question());
-        memory_service_.appendMessage(request->context_id(),
+        memory_service_->appendMessage(request->context_id(),
             response->agent_id(), "agent", response->answer());
     }
 
@@ -279,7 +283,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     agent_communication::AIQueryRequest enriched_req = *request;
     if (!user_id.empty()) {
         enriched_req.set_user_id(user_id);
-        auto sys_ctx = memory_service_.buildSystemContext(
+        auto sys_ctx = memory_service_->buildSystemContext(
             user_id, request->context_id(), "");
         *enriched_req.mutable_system_context() = sys_ctx;
     }
@@ -355,11 +359,11 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     // Memory: store user question + accumulated agent response to Tier 1
     if (success && !user_id.empty()) {
         // Use "default" as agent bucket for single-agent streaming
-        memory_service_.setLastAgent(request->context_id(), "default");
-        memory_service_.appendMessage(request->context_id(),
+        memory_service_->setLastAgent(request->context_id(), "default");
+        memory_service_->appendMessage(request->context_id(),
             "default", "user", request->question());
         if (!streamed_content.empty()) {
-            memory_service_.appendMessage(request->context_id(),
+            memory_service_->appendMessage(request->context_id(),
                 "default", "agent", streamed_content);
         }
     }
@@ -560,7 +564,7 @@ void AIQueryServiceImpl::handleAgentSwitch(
 
     if (user_id.empty() || context_id.empty() || current_agent_id.empty()) return;
 
-    std::string last_agent = memory_service_.getLastAgent(context_id);
+    std::string last_agent = memory_service_->getLastAgent(context_id);
     if (last_agent.empty() || last_agent == current_agent_id) {
         // No switch or first call — appendMessage will update last_agent
         return;
@@ -570,7 +574,7 @@ void AIQueryServiceImpl::handleAgentSwitch(
     LOG_INFO("Agent switch detected: " + last_agent + " → " + current_agent_id +
              " (context: " + context_id + ")");
 
-    std::string old_history = memory_service_.getConversationHistory(
+    std::string old_history = memory_service_->getConversationHistory(
         context_id, last_agent, 20);
 
     if (!old_history.empty() && memory_llm_client_) {
@@ -590,7 +594,7 @@ void AIQueryServiceImpl::handleAgentSwitch(
                         "你是一个对话摘要助手。请用2-3句话简洁总结以下用户与助手的对话要点，"
                         "保留关键信息和上下文，以便下一个助手能够无缝接续对话。直接输出摘要，不要加前缀。",
                         old_history);
-                    memory_service_.setCrossAgentSummary(context_id, summary);
+                    memory_service_->setCrossAgentSummary(context_id, summary);
                     LOG_INFO("Cross-agent summary generated for context: " + context_id);
                 } catch (const std::exception& e) {
                     LOG_WARN("Failed to generate cross-agent summary: " + std::string(e.what()));
@@ -920,8 +924,8 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         std::string user_id = request->user_id();
         if (!user_id.empty()) {
             handleAgentSwitch(user_id, context_id, "multi-agent");
-            memory_service_.appendMessage(context_id, "multi-agent", "user", question);
-            memory_service_.appendMessage(context_id, "multi-agent", "agent", aggregated.final_answer);
+            memory_service_->appendMessage(context_id, "multi-agent", "user", question);
+            memory_service_->appendMessage(context_id, "multi-agent", "agent", aggregated.final_answer);
         }
 
         auto end_time = std::chrono::steady_clock::now();

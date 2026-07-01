@@ -1,19 +1,17 @@
 #pragma once
 
+#include "agent_rpc/common/redis_client.h"
 #include "user.grpc.pb.h"
 #include "user.pb.h"
 
-#include <chrono>
-#include <mutex>
 #include <string>
-#include <unordered_map>
 
 namespace agent_rpc {
 namespace server {
 
 class AuthServiceImpl final : public agent_communication::auth::UserService::Service {
 public:
-    AuthServiceImpl();
+    explicit AuthServiceImpl(common::RedisClient* redis);
     ~AuthServiceImpl() override = default;
 
     // gRPC RPC handlers
@@ -45,26 +43,21 @@ private:
     static bool verifyPassword(const std::string& password,
                                const std::string& stored_hash);
 
-    struct UserInfo {
-        std::string user_id;
-        std::string username;
-        std::string display_name;
-        std::string password_hash;  // "salt:sha256hex"
-        std::chrono::system_clock::time_point created_at;
-    };
+    // Redis key helpers
+    static std::string userKey(const std::string& username) {
+        return "nexusai:user:" + username;
+    }
+    static std::string usernameIdxKey(const std::string& user_id) {
+        return "nexusai:uid:" + user_id;
+    }
+    static std::string tokenKey(const std::string& token) {
+        return "nexusai:token:" + token;
+    }
 
-    struct TokenInfo {
-        std::string user_id;
-        std::chrono::system_clock::time_point expires_at;
-    };
-
-    std::mutex users_mutex_;
-    std::unordered_map<std::string, UserInfo> users_;  // username → info
-
-    std::mutex tokens_mutex_;
-    std::unordered_map<std::string, TokenInfo> tokens_;  // token → info
+    common::RedisClient* redis_;  // not owned
 
     static constexpr int kTokenTtlHours = 24;
+    static constexpr int kTokenTtlSeconds = kTokenTtlHours * 3600;
 };
 
 }  // namespace server
