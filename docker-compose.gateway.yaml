@@ -23,18 +23,14 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # grpcwebproxy: gRPC-Web ↔ gRPC 协议转换
+  # envoy: gRPC-Web ↔ gRPC 协议转换（替代 improbable/grpcwebproxy）
   # 浏览器 (gRPC-Web/HTTP1.1) → :8081 → gRPC/2 → NexusAI :50051
   # --------------------------------------------------------------------------
-  grpcwebproxy:
-    image: improbable/grpcwebproxy:latest
-    container_name: nexusai-grpcwebproxy
-    command:
-      - "--backend_addr=host.docker.internal:50051"
-      - "--run_tls_server=false"
-      - "--server_http_debug_port=8081"
-      - "--allow_all_origins"
-      - "--use_websockets"
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    container_name: nexusai-envoy
+    volumes:
+      - ./gateway/envoy.yaml:/etc/envoy/envoy.yaml:ro
     ports:
       - "8081:8081"
     extra_hosts:
@@ -61,7 +57,7 @@ services:
     networks:
       - gateway-net
     depends_on:
-      - grpcwebproxy
+      - envoy
       - redis
     restart: unless-stopped
 
