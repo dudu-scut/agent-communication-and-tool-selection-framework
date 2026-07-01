@@ -56,6 +56,10 @@ public:
                  std::map<std::string, std::string>& result);
     bool hdel(const std::string& key, const std::string& field);
 
+    /** Set field only if it does not exist. Returns true if field was newly set. */
+    bool hsetnx(const std::string& key, const std::string& field,
+                const std::string& value);
+
     // ========================================================================
     // List operations
     // ========================================================================
@@ -74,8 +78,16 @@ public:
     bool expire(const std::string& key, int seconds);
 
 private:
+    /** Attempt reconnect if connection is lost. Must be called with mutex_ held. */
+    bool ensureConnected();
+
     redisContext* ctx_;
     mutable std::mutex mutex_;
+
+    // Stored for lazy reconnection
+    std::string host_;
+    int port_ = 6379;
+    int timeout_ms_ = 1000;
 };
 
 }  // namespace common

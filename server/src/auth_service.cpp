@@ -69,12 +69,6 @@ grpc::Status AuthServiceImpl::Register(
 
     // Check if username already exists (Redis: check key existence)
     auto key = userKey(request->username());
-    if (redis_->exists(key)) {
-        response->mutable_status()->set_code(409);
-        response->mutable_status()->set_message("Username already exists");
-        return grpc::Status(grpc::StatusCode::ALREADY_EXISTS,
-                            "Username already exists");
-    }
 
     auto user_id = generateUuid();
     auto salt = generateSalt();
@@ -87,14 +81,30 @@ grpc::Status AuthServiceImpl::Register(
                           now.time_since_epoch())
                           .count();
 
-    // Store user in Redis hash: nexusai:user:{username}
-    redis_->hset(key, "user_id", user_id);
-    redis_->hset(key, "display_name", display_name);
-    redis_->hset(key, "password_hash", password_hash);
-    redis_->hset(key, "created_at", std::to_string(created_ts));
+    // Atomic registration: HSETNX on user_id field — only succeeds if key doesn't exist
+    if (!redis_->hsetnx(key, "user_id", user_id)) {
+        response->mutable_status()->set_code(409);
+        response->mutable_status()->set_message("Username already exists");
+        return grpc::Status(grpc::StatusCode::ALREADY_EXISTS,
+                            "Username already exists");
+    }
+
+    // Store remaining user fields (check critical writes)
+    if (!redis_->hset(key, "display_name", display_name) ||
+        !redis_->hset(key, "password_hash", password_hash) ||
+        !redis_->hset(key, "created_at", std::to_string(created_ts))) {
+        LOG_ERROR("Failed to store user fields for: " + request->username());
+        redis_->del(key);  // Roll back partial registration
+        response->mutable_status()->set_code(500);
+        response->mutable_status()->set_message("Internal server error");
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                            "Failed to store user data");
+    }
 
     // Reverse index: nexusai:uid:{user_id} → username (for token validation)
-    redis_->set(usernameIdxKey(user_id), request->username());
+    if (!redis_->set(usernameIdxKey(user_id), request->username())) {
+        LOG_ERROR("Failed to create reverse index for user: " + user_id);
+    }
 
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("Registration successful");
@@ -150,7 +160,6 @@ grpc::Status AuthServiceImpl::Login(
 
     auto tkey = tokenKey(token);
     redis_->hset(tkey, "user_id", user_id);
-    redis_->hset(tkey, "expires_at", std::to_string(expires_ts));
     redis_->expire(tkey, kTokenTtlSeconds);
 
     response->mutable_status()->set_code(0);
@@ -199,21 +208,9 @@ bool AuthServiceImpl::validateToken(const std::string& token,
                                      std::string& username) {
     if (token.empty()) return false;
 
-    // Look up token from Redis
+    // Redis TTL handles expiry automatically — if key expired, hget returns false
     auto tkey = tokenKey(token);
-    std::string expires_str;
-    if (!redis_->hget(tkey, "user_id", user_id) ||
-        !redis_->hget(tkey, "expires_at", expires_str)) {
-        return false;
-    }
-
-    // Check expiry
-    auto expires_ts = std::stoll(expires_str);
-    auto now_ts = std::chrono::duration_cast<std::chrono::seconds>(
-                      std::chrono::system_clock::now().time_since_epoch())
-                      .count();
-    if (now_ts > expires_ts) {
-        redis_->del(tkey);  // Clean up expired token
+    if (!redis_->hget(tkey, "user_id", user_id)) {
         return false;
     }
 

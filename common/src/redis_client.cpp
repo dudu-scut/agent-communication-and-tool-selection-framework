@@ -13,6 +13,11 @@ RedisClient::~RedisClient() {
 bool RedisClient::connect(const std::string& host, int port, int timeout_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    // Store params for lazy reconnection
+    host_ = host;
+    port_ = port;
+    timeout_ms_ = timeout_ms;
+
     if (ctx_) {
         redisFree(ctx_);
         ctx_ = nullptr;
@@ -46,6 +51,33 @@ void RedisClient::disconnect() {
     }
 }
 
+bool RedisClient::ensureConnected() {
+    // Caller must hold mutex_
+    if (ctx_ && !ctx_->err) return true;
+
+    // Free broken context
+    if (ctx_) {
+        redisFree(ctx_);
+        ctx_ = nullptr;
+    }
+
+    if (host_.empty()) return false;  // never connected via connect()
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms_ / 1000;
+    tv.tv_usec = (timeout_ms_ % 1000) * 1000;
+
+    ctx_ = redisConnectWithTimeout(host_.c_str(), port_, tv);
+    if (!ctx_ || ctx_->err) {
+        if (ctx_) {
+            redisFree(ctx_);
+            ctx_ = nullptr;
+        }
+        return false;
+    }
+    return true;
+}
+
 bool RedisClient::isConnected() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return ctx_ != nullptr && !ctx_->err;
@@ -57,7 +89,7 @@ bool RedisClient::isConnected() const {
 
 bool RedisClient::set(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "SET %s %b", key.c_str(), value.data(), value.size()));
@@ -69,7 +101,7 @@ bool RedisClient::set(const std::string& key, const std::string& value) {
 
 bool RedisClient::get(const std::string& key, std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "GET %s", key.c_str()));
@@ -86,7 +118,7 @@ bool RedisClient::get(const std::string& key, std::string& value) {
 
 bool RedisClient::del(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "DEL %s", key.c_str()));
@@ -98,7 +130,7 @@ bool RedisClient::del(const std::string& key) {
 
 bool RedisClient::exists(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "EXISTS %s", key.c_str()));
@@ -111,7 +143,7 @@ bool RedisClient::exists(const std::string& key) {
 bool RedisClient::setex(const std::string& key, int ttl_seconds,
                          const std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "SETEX %s %d %b",
@@ -129,7 +161,7 @@ bool RedisClient::setex(const std::string& key, int ttl_seconds,
 bool RedisClient::hset(const std::string& key, const std::string& field,
                         const std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "HSET %s %s %b",
@@ -143,7 +175,7 @@ bool RedisClient::hset(const std::string& key, const std::string& field,
 bool RedisClient::hget(const std::string& key, const std::string& field,
                         std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "HGET %s %s", key.c_str(), field.c_str()));
@@ -161,7 +193,7 @@ bool RedisClient::hget(const std::string& key, const std::string& field,
 bool RedisClient::hgetall(const std::string& key,
                            std::map<std::string, std::string>& result) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "HGETALL %s", key.c_str()));
@@ -183,12 +215,26 @@ bool RedisClient::hgetall(const std::string& key,
 
 bool RedisClient::hdel(const std::string& key, const std::string& field) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "HDEL %s %s", key.c_str(), field.c_str()));
     if (!reply) return false;
     bool ok = (reply->type == REDIS_REPLY_INTEGER && reply->integer > 0);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisClient::hsetnx(const std::string& key, const std::string& field,
+                          const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ensureConnected()) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "HSETNX %s %s %b",
+                     key.c_str(), field.c_str(), value.data(), value.size()));
+    if (!reply) return false;
+    bool ok = (reply->type == REDIS_REPLY_INTEGER && reply->integer == 1);
     freeReplyObject(reply);
     return ok;
 }
@@ -199,7 +245,7 @@ bool RedisClient::hdel(const std::string& key, const std::string& field) {
 
 bool RedisClient::rpush(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "RPUSH %s %b",
@@ -213,7 +259,7 @@ bool RedisClient::rpush(const std::string& key, const std::string& value) {
 bool RedisClient::lrange(const std::string& key, int start, int stop,
                           std::vector<std::string>& result) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "LRANGE %s %d %d", key.c_str(), start, stop));
@@ -232,7 +278,7 @@ bool RedisClient::lrange(const std::string& key, int start, int stop,
 
 bool RedisClient::ltrim(const std::string& key, int start, int stop) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "LTRIM %s %d %d", key.c_str(), start, stop));
@@ -244,7 +290,7 @@ bool RedisClient::ltrim(const std::string& key, int start, int stop) {
 
 bool RedisClient::expire(const std::string& key, int seconds) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ctx_) return false;
+    if (!ensureConnected()) return false;
 
     auto* reply = static_cast<redisReply*>(
         redisCommand(ctx_, "EXPIRE %s %d", key.c_str(), seconds));
