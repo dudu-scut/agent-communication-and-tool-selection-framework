@@ -148,6 +148,11 @@ private:
                           const std::string& error_msg = "");
     void cleanupExpiredTasks();
 
+    // Memory: detect agent switch and generate cross-agent summary
+    void handleAgentSwitch(const std::string& user_id,
+                           const std::string& context_id,
+                           const std::string& current_agent_id);
+
     mutable std::mutex task_status_mutex_;
     std::unordered_map<std::string, TaskStatus> task_status_cache_;
     std::atomic<uint64_t> status_query_count_{0};
@@ -184,6 +189,10 @@ private:
     std::unique_ptr<orchestrator::TaskExecutor> task_executor_;
     std::unique_ptr<orchestrator::ResultAggregator> result_aggregator_;
     std::atomic<bool> orchestrator_enabled_{false};
+
+    // Memory: LLM client for cross-agent summary generation
+    std::unique_ptr<LLMClient> memory_llm_client_;
+    std::mutex memory_llm_mutex_;
 };
 
 } // namespace server

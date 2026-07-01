@@ -65,6 +65,10 @@ bool AIQueryServiceImpl::initialize(
         std::string model = std::getenv("LLM_MODEL") ? std::getenv("LLM_MODEL") : "deepseek-v4-pro";
         std::string api_url = std::getenv("LLM_API_URL") ? std::getenv("LLM_API_URL")
             : "https://api.deepseek.com/v1/chat/completions";
+
+        // Memory: LLM client for cross-agent summary generation
+        memory_llm_client_ = std::make_unique<LLMClient>(api_key, model, api_url);
+
         if (initializeOrchestrator(api_key, model, api_url)) {
             LOG_INFO("Multi-agent orchestrator enabled (LLM: " + model + ")");
         } else {
@@ -145,12 +149,15 @@ grpc::Status AIQueryServiceImpl::Query(
         auto status = handleMultiAgentQuery(context, &enriched_req, response, request_id);
         // Memory: post-process response (store hints + conversation)
         if (!user_id.empty()) {
+            std::string resp_agent = response->agent_id().empty() ? "multi-agent" : response->agent_id();
+            // Detect agent switch and generate summary for future queries
+            handleAgentSwitch(user_id, request->context_id(), resp_agent);
             memory_service_.updateUserMemoryFromHints(
                 user_id, {response->memory_hints().begin(), response->memory_hints().end()});
             memory_service_.appendMessage(request->context_id(),
-                response->agent_id(), "user", request->question());
+                resp_agent, "user", request->question());
             memory_service_.appendMessage(request->context_id(),
-                response->agent_id(), "agent", response->answer());
+                resp_agent, "agent", response->answer());
         }
         return status;
     }
@@ -207,6 +214,8 @@ grpc::Status AIQueryServiceImpl::Query(
     if (success && !user_id.empty()) {
         memory_service_.updateUserMemoryFromHints(
             user_id, {response->memory_hints().begin(), response->memory_hints().end()});
+        // Detect agent switch for future summary generation
+        handleAgentSwitch(user_id, request->context_id(), response->agent_id());
         memory_service_.appendMessage(request->context_id(),
             response->agent_id(), "user", request->question());
         memory_service_.appendMessage(request->context_id(),
@@ -277,13 +286,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
 
     // P4-4: Multi-agent orchestrator path
     if (orchestrator_enabled_) {
-        auto status = handleMultiAgentQueryStream(context, &enriched_req, writer, request_id);
-        // Memory: store user question to Tier 1 (agent response stored by orchestrator)
-        if (!user_id.empty()) {
-            memory_service_.appendMessage(request->context_id(),
-                "", "user", request->question());
-        }
-        return status;
+        return handleMultiAgentQueryStream(context, &enriched_req, writer, request_id);
     }
 
     // Check circuit breaker before calling A2A backend
@@ -351,11 +354,13 @@ grpc::Status AIQueryServiceImpl::QueryStream(
 
     // Memory: store user question + accumulated agent response to Tier 1
     if (success && !user_id.empty()) {
+        // Use "default" as agent bucket for single-agent streaming
+        memory_service_.setLastAgent(request->context_id(), "default");
         memory_service_.appendMessage(request->context_id(),
-            "", "user", request->question());
+            "default", "user", request->question());
         if (!streamed_content.empty()) {
             memory_service_.appendMessage(request->context_id(),
-                "", "agent", streamed_content);
+                "default", "agent", streamed_content);
         }
     }
 
@@ -548,6 +553,44 @@ void AIQueryServiceImpl::cleanupExpiredTasks() {
 // Multi-Agent Orchestration (P4-4)
 // ============================================================================
 
+void AIQueryServiceImpl::handleAgentSwitch(
+    const std::string& user_id,
+    const std::string& context_id,
+    const std::string& current_agent_id) {
+
+    if (user_id.empty() || context_id.empty() || current_agent_id.empty()) return;
+
+    std::string last_agent = memory_service_.getLastAgent(context_id);
+    if (last_agent.empty() || last_agent == current_agent_id) {
+        // No switch or first call
+        memory_service_.setLastAgent(context_id, current_agent_id);
+        return;
+    }
+
+    // Agent switched — generate summary of old agent's conversation
+    LOG_INFO("Agent switch detected: " + last_agent + " → " + current_agent_id +
+             " (context: " + context_id + ")");
+
+    std::string old_history = memory_service_.getConversationHistory(
+        context_id, last_agent, 20);
+
+    if (!old_history.empty() && memory_llm_client_) {
+        std::lock_guard<std::mutex> lock(memory_llm_mutex_);
+        try {
+            std::string summary = memory_llm_client_->chat(
+                "你是一个对话摘要助手。请用2-3句话简洁总结以下用户与助手的对话要点，"
+                "保留关键信息和上下文，以便下一个助手能够无缝接续对话。直接输出摘要，不要加前缀。",
+                old_history);
+            memory_service_.setCrossAgentSummary(context_id, summary);
+            LOG_INFO("Cross-agent summary generated for context: " + context_id);
+        } catch (const std::exception& e) {
+            LOG_WARN("Failed to generate cross-agent summary: " + std::string(e.what()));
+        }
+    }
+
+    memory_service_.setLastAgent(context_id, current_agent_id);
+}
+
 bool AIQueryServiceImpl::initializeOrchestrator(
     const std::string& api_key,
     const std::string& model,
@@ -632,12 +675,30 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     LOG_INFO("Multi-agent plan: " + std::to_string(plan.tasks.size()) + " subtasks");
     updateTaskStatus(request_id, "working");
 
+    // Memory: build context to inject into sub-agent prompts
+    std::string memory_ctx;
+    if (request->has_system_context()) {
+        const auto& sys_ctx = request->system_context();
+        if (!sys_ctx.user_memory().empty()) {
+            memory_ctx += "[User Context]\n" + sys_ctx.user_memory() + "\n";
+        }
+        if (!sys_ctx.cross_agent_summary().empty()) {
+            memory_ctx += "[Prior Context]\n" + sys_ctx.cross_agent_summary() + "\n";
+        }
+    }
+
     // Step 2: Build AgentCallFn — resolves skill → agent → A2A call
-    auto call_agent = [this](const std::string& skill,
+    auto call_agent = [this, &memory_ctx](const std::string& skill,
                              const std::string& prompt) -> std::string {
         auto agent = agent_router_->selectAgent(prompt, {skill});
         if (!agent.has_value()) {
             throw std::runtime_error("No agent available for skill: " + skill);
+        }
+
+        // Inject memory context into sub-agent prompt
+        std::string enriched_prompt = prompt;
+        if (!memory_ctx.empty()) {
+            enriched_prompt = memory_ctx + "\n" + prompt;
         }
 
         a2a::A2AClient client(agent->url);
@@ -645,7 +706,7 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
 
         a2a::AgentMessage msg = a2a::AgentMessage::create()
             .with_role(a2a::MessageRole::User)
-            .with_text(prompt);
+            .with_text(enriched_prompt);
 
         auto params = a2a::MessageSendParams::create()
             .with_message(msg);
@@ -751,18 +812,37 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
 
     updateTaskStatus(request_id, "working");
 
+    // Memory: build context to inject into sub-agent prompts
+    std::string memory_ctx;
+    if (request->has_system_context()) {
+        const auto& sys_ctx = request->system_context();
+        if (!sys_ctx.user_memory().empty()) {
+            memory_ctx += "[User Context]\n" + sys_ctx.user_memory() + "\n";
+        }
+        if (!sys_ctx.cross_agent_summary().empty()) {
+            memory_ctx += "[Prior Context]\n" + sys_ctx.cross_agent_summary() + "\n";
+        }
+    }
+
     // Step 2: AgentCallFn (same as sync path)
-    auto call_agent = [this](const std::string& skill,
+    auto call_agent = [this, &memory_ctx](const std::string& skill,
                              const std::string& prompt) -> std::string {
         auto agent = agent_router_->selectAgent(prompt, {skill});
         if (!agent.has_value()) {
             throw std::runtime_error("No agent available for skill: " + skill);
         }
+
+        // Inject memory context into sub-agent prompt
+        std::string enriched_prompt = prompt;
+        if (!memory_ctx.empty()) {
+            enriched_prompt = memory_ctx + "\n" + prompt;
+        }
+
         a2a::A2AClient client(agent->url);
         client.set_timeout(rpc_config_.timeout_seconds);
         a2a::AgentMessage msg = a2a::AgentMessage::create()
             .with_role(a2a::MessageRole::User)
-            .with_text(prompt);
+            .with_text(enriched_prompt);
         auto params = a2a::MessageSendParams::create().with_message(msg);
         auto a2a_response = client.send_message(params);
         if (a2a_response.is_task()) {
@@ -815,6 +895,14 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
     complete_event.set_event_type("complete");
     complete_event.set_context_id(context_id);
     writer->Write(complete_event);
+
+    // Memory: store user question and aggregated answer to Tier 1
+    std::string user_id = request->user_id();
+    if (!user_id.empty()) {
+        handleAgentSwitch(user_id, context_id, "multi-agent");
+        memory_service_.appendMessage(context_id, "multi-agent", "user", question);
+        memory_service_.appendMessage(context_id, "multi-agent", "agent", aggregated.final_answer);
+    }
 
     auto end_time = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
