@@ -8,12 +8,18 @@ cmake_minimum_required(VERSION 3.15)
 set(ORCHESTRATOR_SOURCES
     src/agent_router.cpp
     src/agent_info.cpp
+    src/task_planner.cpp
+    src/task_executor.cpp
+    src/result_aggregator.cpp
 )
 
 # Header files
 set(ORCHESTRATOR_HEADERS
     include/agent_rpc/orchestrator/agent_info.h
     include/agent_rpc/orchestrator/agent_router.h
+    include/agent_rpc/orchestrator/task_planner.h
+    include/agent_rpc/orchestrator/task_executor.h
+    include/agent_rpc/orchestrator/result_aggregator.h
 )
 
 # Create library

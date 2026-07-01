@@ -18,6 +18,11 @@
 // P0-1: 统一路由层
 #include <agent_rpc/orchestrator/agent_router.h>
 
+// P4: 多 Agent 任务编排
+#include <agent_rpc/orchestrator/task_planner.h>
+#include <agent_rpc/orchestrator/task_executor.h>
+#include <agent_rpc/orchestrator/result_aggregator.h>
+
 #include <a2a/models/agent_message.hpp>
 #include <a2a/models/agent_task.hpp>
 #include <a2a/models/task_status.hpp>
@@ -104,6 +109,19 @@ public:
         
         // 初始化路由层
         agent_router_->initialize(RoutingStrategy::SKILL_MATCH);
+
+        // P4: 初始化多 Agent 编排组件
+        TaskPlannerConfig planner_config;
+        planner_config.api_key = api_key;
+        task_planner_ = std::make_unique<TaskPlanner>(planner_config);
+
+        ExecutorConfig executor_config;
+        task_executor_ = std::make_unique<TaskExecutor>(*agent_router_, executor_config);
+
+        AggregatorConfig agg_config;
+        agg_config.api_key = api_key;
+        agg_config.default_strategy = "llm_synthesize";
+        result_aggregator_ = std::make_unique<ResultAggregator>(agg_config);
         
         // 初始化 MCP 集成
         if (!mcp_integration_->initialize(mcp_config)) {
@@ -205,18 +223,30 @@ private:
                 // 保存用户消息
                 save_message(context_id, message);
                 
-                // P0-1: 动态意图识别 + AgentRouter 路由
-                std::string intent = analyze_intent_dynamic(user_text);
-                std::cout << "[Orchestrator] 识别意图: " << intent << std::endl;
-                
+                // P4: TaskPlanner 判断单 Agent / 多 Agent
+                auto available_skills = agent_router_->getAllSkillDescriptions();
+                ExecutionPlan plan = task_planner_->plan(user_text, available_skills);
+
                 std::string response_text;
-                
-                if (intent == "none") {
-                    // 没有匹配的技能，走通用对话
-                    response_text = handle_general_query(user_text, context_id);
+
+                if (plan.is_single_agent) {
+                    // 快速路径：单 Agent 路由（零额外开销）
+                    std::string intent = plan.single_agent_skill;
+                    if (intent.empty()) {
+                        intent = analyze_intent_dynamic(user_text);
+                    }
+                    std::cout << "[Orchestrator] 单 Agent 路径, 技能: " << intent << std::endl;
+
+                    if (intent == "none") {
+                        response_text = handle_general_query(user_text, context_id);
+                    } else {
+                        response_text = route_and_call(intent, user_text, context_id);
+                    }
                 } else {
-                    // P0-1: 通过 AgentRouter 选择 Agent（统一路由）
-                    response_text = route_and_call(intent, user_text, context_id);
+                    // P4: 多 Agent DAG 路径
+                    std::cout << "[Orchestrator] 多 Agent 路径, "
+                              << plan.tasks.size() << " 个子任务" << std::endl;
+                    response_text = handle_multi_agent_request(plan, context_id);
                 }
                 
                 // 保存 Agent 响应
@@ -466,6 +496,62 @@ private:
         
         return call_agent_by_url(agent.url, intent, query, context_id);
     }
+
+    /**
+     * @brief P4: 多 Agent DAG 执行路径
+     *
+     * 创建 AgentCallFn 桥接 TaskExecutor 和现有的 Agent 调用链，
+     * 执行 DAG 计划后聚合结果返回最终回答。
+     */
+    std::string handle_multi_agent_request(const ExecutionPlan& plan,
+                                            const std::string& context_id) {
+        // AgentCallFn: (skill, prompt) → response_text
+        // Bridges TaskExecutor with existing selectAgent + call_agent_by_url flow
+        AgentCallFn call_agent = [this, &context_id](
+                const std::string& skill, const std::string& prompt) -> std::string {
+            std::vector<std::string> required_skills = {skill};
+            auto selected = agent_router_->selectAgent(prompt, required_skills);
+
+            if (!selected.has_value()) {
+                throw std::runtime_error("No agent available for skill: " + skill);
+            }
+
+            const auto& agent = selected.value();
+            std::cout << "[Orchestrator] DAG 路由到 Agent: " << agent.name
+                      << " skill=" << skill << std::endl;
+            return call_agent_by_url(agent.url, skill, prompt, context_id);
+        };
+
+        // Progress callback for logging
+        ProgressCallback on_progress = [](const SubTaskEvent& evt) {
+            const char* type_str = "UNKNOWN";
+            switch (evt.type) {
+                case SubTaskEventType::START:    type_str = "START"; break;
+                case SubTaskEventType::COMPLETE: type_str = "COMPLETE"; break;
+                case SubTaskEventType::FAILED:   type_str = "FAILED"; break;
+            }
+            std::cout << "[Orchestrator] 子任务 [" << evt.subtask_id << "] "
+                      << type_str;
+            if (!evt.detail.empty()) {
+                std::string preview = evt.detail.substr(0, 80);
+                std::cout << " — " << preview;
+            }
+            std::cout << std::endl;
+        };
+
+        try {
+            auto results = task_executor_->execute(plan, call_agent, on_progress);
+            auto aggregated = result_aggregator_->aggregate(plan, results);
+
+            std::cout << "[Orchestrator] DAG 执行完成, 策略: " << aggregated.strategy
+                      << ", 耗时: " << aggregated.total_time_ms << "ms" << std::endl;
+
+            return aggregated.final_answer;
+        } catch (const std::exception& e) {
+            std::cerr << "[Orchestrator] DAG 执行失败: " << e.what() << std::endl;
+            return "抱歉，多 Agent 协作执行出错: " + std::string(e.what());
+        }
+    }
     
     /**
      * @brief 通用 Agent 调用（通过 URL 直接发送 JSON-RPC 请求）
@@ -647,6 +733,11 @@ private:
     
     // P0-1: 统一路由层
     std::unique_ptr<AgentRouter> agent_router_;
+
+    // P4: 多 Agent 任务编排
+    std::unique_ptr<TaskPlanner> task_planner_;
+    std::unique_ptr<TaskExecutor> task_executor_;
+    std::unique_ptr<ResultAggregator> result_aggregator_;
     
     // Registry 同步线程
     std::atomic<bool> sync_running_;
