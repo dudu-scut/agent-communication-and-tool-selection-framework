@@ -681,17 +681,29 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     // Pre-resolve agents for all subtasks (eliminates redundant routing in executor)
     task_planner_->resolveAgents(plan, *agent_router_);
 
-    // Single-agent fast path: fall back to normal A2A adapter flow
+    // Single-agent fast path: use pre-resolved agent URL to bypass redundant routing
     if (plan.is_single_agent) {
-        std::vector<std::string> skills;
-        if (!plan.single_agent_skill.empty()) {
-            skills.push_back(plan.single_agent_skill);
+        bool success = false;
+
+        // Try to use pre-resolved agent URL (eliminates re-routing inside adapter)
+        std::string agent_url;
+        if (!plan.single_agent_id.empty()) {
+            auto agent = agent_router_->getAgent(plan.single_agent_id);
+            if (agent.has_value() && agent->is_healthy) {
+                agent_url = agent->url;
+            }
         }
-        // Delegate to normal query with skill hint
-        bool success = a2a_adapter_->processQuery(*request, response);
+
+        if (!agent_url.empty()) {
+            success = a2a_adapter_->processQueryDirect(*request, response, agent_url);
+        } else {
+            // Fallback: adapter does its own routing
+            success = a2a_adapter_->processQuery(*request, response);
+        }
+
         if (success) {
             updateTaskStatus(request_id, "completed",
-                             response->agent_id(), response->agent_name());
+                             plan.single_agent_id, plan.single_agent_name);
         }
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -803,13 +815,27 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
     // Pre-resolve agents for all subtasks
     task_planner_->resolveAgents(plan, *agent_router_);
 
-    // Single-agent fast path
+    // Single-agent fast path: use pre-resolved agent URL to bypass redundant routing
     if (plan.is_single_agent) {
-        // Delegate to normal streaming
-        a2a_adapter_->processQueryStreaming(*request,
-            [writer](const agent_communication::AIStreamEvent& event) {
-                writer->Write(event);
-            });
+        auto write_cb = [writer](const agent_communication::AIStreamEvent& event) {
+            writer->Write(event);
+        };
+
+        // Try to use pre-resolved agent URL
+        std::string agent_url;
+        if (!plan.single_agent_id.empty()) {
+            auto agent = agent_router_->getAgent(plan.single_agent_id);
+            if (agent.has_value() && agent->is_healthy) {
+                agent_url = agent->url;
+            }
+        }
+
+        if (!agent_url.empty()) {
+            a2a_adapter_->processQueryStreamingDirect(*request, write_cb, agent_url);
+        } else {
+            // Fallback: adapter does its own routing
+            a2a_adapter_->processQueryStreaming(*request, write_cb);
+        }
 
         agent_communication::AIStreamEvent complete;
         complete.set_event_type("complete");
@@ -819,7 +845,8 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             end_time - start_time);
-        updateTaskStatus(request_id, "completed");
+        updateTaskStatus(request_id, "completed",
+                         plan.single_agent_id, plan.single_agent_name);
         recordMetrics("QueryStream", duration.count(), true);
         return grpc::Status::OK;
     }

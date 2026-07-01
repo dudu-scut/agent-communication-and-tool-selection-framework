@@ -199,7 +199,11 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
         return std::nullopt;
     }
 
-    // Build candidate list
+    // Build candidate list.
+    // used_fallback=true: all four tiers failed to identify a skill, pick any healthy agent.
+    // skills_to_match.empty() without used_fallback: either required_skills was empty and
+    //   strategy_ != SKILL_MATCH (e.g. ROUND_ROBIN), or intent analysis produced no result
+    //   but we still want to serve the request with available agents.
     std::vector<AgentInfo> candidates;
 
     if (used_fallback || skills_to_match.empty()) {
@@ -871,78 +875,6 @@ void AgentRouter::buildSkillEmbeddingIndex() {
             skill_index_->addTool(tool);
         }
     }
-}
-
-SkillMatchResult AgentRouter::analyzeRequiredSkillHybrid(const std::string& question) {
-    // Three-tier routing pipeline:
-    //   1. Embedding high confidence → direct route
-    //   2. Fuzzy zone → return with confidence, caller decides
-    //   3. Low confidence → fall back to keyword IDF matching
-
-    SkillMatchResult result;
-
-    // Tier 1 & 2: Try embedding match if enabled
-    if (isEmbeddingEnabled()) {
-        embedding_query_count_.fetch_add(1);
-
-        std::lock_guard<std::mutex> lock(embedding_mutex_);
-
-        try {
-            // Embed the question
-            std::vector<float> query_embedding;
-            if (embedding_cache_) {
-                auto cached = embedding_cache_->get(question);
-                if (cached.has_value()) {
-                    query_embedding = cached.value();
-                }
-            }
-            if (query_embedding.empty()) {
-                query_embedding = embedding_service_->embed(question);
-                if (embedding_cache_ && !query_embedding.empty()) {
-                    embedding_cache_->put(question, query_embedding);
-                }
-            }
-
-            // Search skill index
-            auto search_results = skill_index_->search(query_embedding, 1, 0.0f);
-
-            if (!search_results.empty()) {
-                const auto& best = search_results[0];
-
-                if (best.similarity >= embedding_config_.high_threshold) {
-                    // High confidence: direct route
-                    result.skill_name = best.tool.name;
-                    result.confidence = best.similarity;
-                    result.source = SkillMatchResult::EMBEDDING;
-                    embedding_hit_count_.fetch_add(1);
-                    return result;
-                }
-
-                if (best.similarity >= embedding_config_.low_threshold) {
-                    // Fuzzy zone: return result, let caller decide
-                    result.skill_name = best.tool.name;
-                    result.confidence = best.similarity;
-                    result.source = SkillMatchResult::EMBEDDING;
-                    embedding_hit_count_.fetch_add(1);
-                    return result;
-                }
-            }
-        } catch (const std::exception&) {
-            // Embedding failed, fall through to keyword matching
-        }
-    }
-
-    // Tier 3: Fall back to keyword IDF matching
-    std::lock_guard<std::mutex> lock(agents_mutex_);
-    std::string keyword_skill = analyzeRequiredSkill(question);
-
-    if (!keyword_skill.empty()) {
-        result.skill_name = keyword_skill;
-        result.confidence = 0.6f;  // keyword match gets moderate confidence
-        result.source = SkillMatchResult::KEYWORD;
-    }
-
-    return result;
 }
 
 std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string& question) {

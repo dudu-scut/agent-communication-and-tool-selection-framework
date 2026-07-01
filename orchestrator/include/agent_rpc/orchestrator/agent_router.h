@@ -301,19 +301,6 @@ public:
     bool enableEmbedding(const EmbeddingRouterConfig& config);
 
     /**
-     * @brief Hybrid skill analysis: embedding (fast path) + keyword (fallback)
-     *
-     * Three-tier routing pipeline:
-     * 1. Embedding high confidence (similarity > high_threshold) → direct route
-     * 2. Fuzzy zone (low_threshold ~ high_threshold) → return result, caller decides
-     * 3. Low confidence (< low_threshold) → fall back to keyword IDF matching
-     *
-     * @param question User input text
-     * @return SkillMatchResult with skill name, confidence score, and source
-     */
-    SkillMatchResult analyzeRequiredSkillHybrid(const std::string& question);
-
-    /**
      * @brief High-confidence embedding-only skill matching.
      *
      * Returns a skill only when embedding similarity >= high_threshold.

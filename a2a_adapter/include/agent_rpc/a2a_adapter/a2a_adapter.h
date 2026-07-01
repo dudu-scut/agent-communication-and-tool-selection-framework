@@ -74,7 +74,30 @@ public:
     void processQueryStreaming(
         const agent_communication::AIQueryRequest& request,
         std::function<void(const agent_communication::AIStreamEvent&)> callback);
-    
+
+    /**
+     * @brief Process a sync query using a pre-resolved agent URL (bypasses routing)
+     * @param request The RPC request
+     * @param response The RPC response to populate
+     * @param agent_url Pre-resolved agent URL
+     * @return true if query successful
+     */
+    bool processQueryDirect(
+        const agent_communication::AIQueryRequest& request,
+        agent_communication::AIQueryResponse* response,
+        const std::string& agent_url);
+
+    /**
+     * @brief Process a streaming query using a pre-resolved agent URL (bypasses routing)
+     * @param request The RPC request
+     * @param callback Callback to invoke for each stream event
+     * @param agent_url Pre-resolved agent URL
+     */
+    void processQueryStreamingDirect(
+        const agent_communication::AIQueryRequest& request,
+        std::function<void(const agent_communication::AIStreamEvent&)> callback,
+        const std::string& agent_url);
+
     /**
      * @brief Check if the adapter is available
      * @return true if adapter is initialized and ready

@@ -280,5 +280,153 @@ bool A2AAdapter::isAvailable() const {
     return initialized_;
 }
 
+bool A2AAdapter::processQueryDirect(
+    const agent_communication::AIQueryRequest& request,
+    agent_communication::AIQueryResponse* response,
+    const std::string& agent_url) {
+
+    if (!response || !initialized_) {
+        if (response) {
+            auto* status = response->mutable_status();
+            status->set_code(-1);
+            status->set_message("A2A adapter not initialized");
+        }
+        return false;
+    }
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    try {
+        a2a::MessageSendParams params = request_adapter_->convertToA2A(request);
+
+        a2a::A2AClient client(agent_url);
+        client.set_timeout(config_.request_timeout_seconds);
+        a2a::A2AResponse a2a_response = client.send_message(params);
+
+        response_adapter_->convertFromA2A(a2a_response, request.request_id(), response);
+
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        response->set_processing_time_ms(duration.count());
+        return true;
+
+    } catch (const a2a::A2AException& e) {
+        auto* status = response->mutable_status();
+        grpc::StatusCode grpc_code = ErrorMapper::mapToGrpcStatus(
+            static_cast<a2a::ErrorCode>(e.error_code()));
+        status->set_code(static_cast<int>(grpc_code));
+        std::string error_msg = e.what();
+        if (error_msg.empty()) {
+            error_msg = ErrorMapper::getErrorDescription(
+                static_cast<a2a::ErrorCode>(e.error_code()));
+        }
+        status->set_message(error_msg);
+        return false;
+    } catch (const std::exception& e) {
+        auto* status = response->mutable_status();
+        grpc::StatusCode grpc_code = ErrorMapper::mapNetworkException(e);
+        status->set_code(static_cast<int>(grpc_code));
+        status->set_message(e.what());
+        return false;
+    }
+}
+
+void A2AAdapter::processQueryStreamingDirect(
+    const agent_communication::AIQueryRequest& request,
+    std::function<void(const agent_communication::AIStreamEvent&)> callback,
+    const std::string& agent_url) {
+
+    if (!initialized_ || !callback) {
+        return;
+    }
+
+    try {
+        a2a::MessageSendParams params = request_adapter_->convertToA2A(request);
+        std::string context_id = params.context_id().value_or("");
+
+        a2a::A2AClient client(agent_url);
+        client.set_timeout(config_.request_timeout_seconds);
+
+        client.send_message_streaming(params,
+            [this, &callback, &context_id](const std::string& event_line) {
+                if (event_line.empty() || event_line == "\n" || event_line == "\r\n") {
+                    return;
+                }
+
+                std::string event_data = event_line;
+                while (!event_data.empty() &&
+                       (event_data.back() == '\n' || event_data.back() == '\r')) {
+                    event_data.pop_back();
+                }
+
+                const std::string data_prefix = "data: ";
+                if (event_data.find(data_prefix) == 0) {
+                    event_data = event_data.substr(data_prefix.length());
+                }
+
+                if (event_data.empty()) return;
+
+                json j;
+                try {
+                    j = json::parse(event_data);
+                } catch (const json::exception&) {
+                    return;
+                }
+
+                try {
+                    if (j.contains("error")) {
+                        agent_communication::AIStreamEvent event;
+                        std::string error_msg = j["error"].value("message", "Unknown error");
+                        response_adapter_->buildStreamEvent(
+                            error_msg, context_id, "error", &event);
+                        callback(event);
+                        return;
+                    }
+
+                    if (j.contains("result")) {
+                        auto& result = j["result"];
+                        std::string type = result.value("type", "");
+
+                        if (type == "chunk") {
+                            std::string content = result.value("content", "");
+                            agent_communication::AIStreamEvent event;
+                            response_adapter_->buildStreamEvent(
+                                content, context_id, "partial", &event);
+                            callback(event);
+                        } else if (type == "stream_start") {
+                            agent_communication::AIStreamEvent event;
+                            response_adapter_->buildStreamEvent(
+                                "", context_id, "status", &event);
+                            event.set_task_state("processing");
+                            callback(event);
+                        } else if (type == "stream_end") {
+                            // Completion handled by outer scope
+                        } else if (type == "intent") {
+                            agent_communication::AIStreamEvent event;
+                            std::string intent = result.value("intent", "");
+                            response_adapter_->buildStreamEvent(
+                                "Intent: " + intent, context_id, "status", &event);
+                            callback(event);
+                        }
+                    }
+                } catch (const std::exception&) {
+                    // Skip malformed events
+                }
+            });
+
+        agent_communication::AIStreamEvent complete_event;
+        response_adapter_->buildStreamEvent(
+            "", context_id, "complete", &complete_event);
+        callback(complete_event);
+
+    } catch (const std::exception& e) {
+        agent_communication::AIStreamEvent error_event;
+        response_adapter_->buildStreamEvent(
+            e.what(), request.context_id(), "error", &error_event);
+        callback(error_event);
+    }
+}
+
 } // namespace a2a_adapter
 } // namespace agent_rpc
