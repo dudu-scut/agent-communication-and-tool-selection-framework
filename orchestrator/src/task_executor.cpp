@@ -20,8 +20,8 @@ TaskExecutor::TaskExecutor(AgentRouter& router, const ExecutorConfig& config)
 
 std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
     const ExecutionPlan& plan,
-    AgentCallFn call_agent,
-    ProgressCallback on_progress) {
+    const AgentCallFn& call_agent,
+    const ProgressCallback& on_progress) {
 
     std::unordered_map<std::string, SubTaskResult> results;
 
@@ -41,15 +41,19 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
     for (const auto& layer : layers) {
         // Check global timeout
         if (std::chrono::steady_clock::now() >= global_deadline) {
-            // Mark remaining subtasks as timed out
-            for (const auto& tid : layer) {
-                SubTaskResult r;
-                r.subtask_id = tid;
-                r.success = false;
-                r.error_message = "Global timeout exceeded";
-                results[tid] = std::move(r);
+            // Mark ALL remaining subtasks (current + future layers) as timed out
+            for (size_t li = &layer - &layers[0]; li < layers.size(); ++li) {
+                for (const auto& tid : layers[li]) {
+                    if (results.find(tid) == results.end()) {
+                        SubTaskResult r;
+                        r.subtask_id = tid;
+                        r.success = false;
+                        r.error_message = "Global timeout exceeded";
+                        results[tid] = std::move(r);
+                    }
+                }
             }
-            continue;
+            break;
         }
 
         if (layer.size() == 1) {
@@ -186,6 +190,17 @@ std::vector<std::vector<std::string>> TaskExecutor::topologicalLayers(
         }
     }
 
+    // Cycle detection: if not all tasks were emitted, there's a cycle
+    size_t total_emitted = 0;
+    for (const auto& layer : layers) {
+        total_emitted += layer.size();
+    }
+    if (total_emitted < tasks.size()) {
+        throw std::runtime_error(
+            "Circular dependency detected in execution plan: " +
+            std::to_string(tasks.size() - total_emitted) + " task(s) in cycle");
+    }
+
     return layers;
 }
 
@@ -224,7 +239,7 @@ std::string TaskExecutor::buildSubtaskPrompt(
 SubTaskResult TaskExecutor::executeSubtask(
     const SubTask& subtask,
     const std::string& enriched_prompt,
-    AgentCallFn& call_agent) {
+    const AgentCallFn& call_agent) {
 
     SubTaskResult result;
     result.subtask_id = subtask.id;

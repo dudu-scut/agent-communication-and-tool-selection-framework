@@ -507,7 +507,7 @@ private:
                                             const std::string& context_id) {
         // AgentCallFn: (skill, prompt) → response_text
         // Bridges TaskExecutor with existing selectAgent + call_agent_by_url flow
-        AgentCallFn call_agent = [this, &context_id](
+        AgentCallFn call_agent = [this, context_id](
                 const std::string& skill, const std::string& prompt) -> std::string {
             std::vector<std::string> required_skills = {skill};
             auto selected = agent_router_->selectAgent(prompt, required_skills);

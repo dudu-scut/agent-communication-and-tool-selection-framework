@@ -38,6 +38,12 @@ AggregatedResult ResultAggregator::aggregate(
     // Route to strategy
     if (config_.default_strategy == "llm_synthesize" && llm_client_) {
         agg.final_answer = aggregateLLMSynthesize(plan, results);
+        // aggregateLLMSynthesize may have fallen back to concat internally;
+        // detect this by checking if the answer matches a concat output
+        if (agg.final_answer.empty()) {
+            agg.final_answer = aggregateConcat(plan, results);
+            agg.strategy = "concat";
+        }
     } else {
         agg.final_answer = aggregateConcat(plan, results);
         agg.strategy = "concat";
@@ -120,7 +126,12 @@ std::string ResultAggregator::aggregateLLMSynthesize(
         "\n请综合以上内容，给出最终回答。";
 
     try {
-        return llm_client_->chat(system_prompt, user_message);
+        std::string answer = llm_client_->chat(system_prompt, user_message);
+        if (answer.empty()) {
+            // LLM returned empty response — fall back to concat
+            return aggregateConcat(plan, results);
+        }
+        return answer;
     } catch (const std::exception&) {
         // LLM synthesis failed — fall back to concat
         return aggregateConcat(plan, results);

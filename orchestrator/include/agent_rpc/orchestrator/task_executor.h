@@ -73,8 +73,8 @@ public:
      */
     std::unordered_map<std::string, SubTaskResult> execute(
         const ExecutionPlan& plan,
-        AgentCallFn call_agent,
-        ProgressCallback on_progress = nullptr);
+        const AgentCallFn& call_agent,
+        const ProgressCallback& on_progress = nullptr);
 
 private:
     // Topological sort into layers (same-layer = parallel, cross-layer = serial)
@@ -90,7 +90,7 @@ private:
     SubTaskResult executeSubtask(
         const SubTask& subtask,
         const std::string& enriched_prompt,
-        AgentCallFn& call_agent);
+        const AgentCallFn& call_agent);
 
     AgentRouter& router_;
     ExecutorConfig config_;
