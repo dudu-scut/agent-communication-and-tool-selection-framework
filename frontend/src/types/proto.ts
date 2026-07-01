@@ -103,6 +103,33 @@ export interface ExecutionPlan {
   tasks: SubTaskInfo[]
 }
 
+// === user.proto (认证) ===
+
+export interface RegisterRequest {
+  username: string
+  password: string
+  display_name: string
+}
+
+export interface RegisterResponse {
+  status: Status
+  user_id: string
+  username: string
+}
+
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  status: Status
+  user_id: string
+  username: string
+  token: string
+  expires_at: number
+}
+
 // === 前端内部类型 ===
 
 export interface ChatMessage {

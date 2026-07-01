@@ -3,6 +3,7 @@ set(PROTO_FILES
     common.proto
     agent_service.proto
     ai_query.proto
+    user.proto
 )
 
 foreach(PROTO_FILE ${PROTO_FILES})

@@ -1,6 +1,8 @@
 #include "agent_rpc/server/rpc_server.h"
 #include "agent_rpc/server/agent_service.h"
 #include "agent_rpc/server/ai_query_service.h"
+#include "agent_rpc/server/auth_service.h"
+#include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/message_converter.h"
@@ -15,6 +17,23 @@ namespace agent_rpc {
 namespace server {
 
 namespace {
+
+// Factory that creates AuthInterceptor instances for each RPC
+class AuthInterceptorFactory
+    : public grpc::experimental::ServerInterceptorFactoryInterface {
+public:
+    explicit AuthInterceptorFactory(AuthServiceImpl* auth_service)
+        : auth_service_(auth_service) {}
+
+    grpc::experimental::Interceptor* CreateServerInterceptor(
+        grpc::experimental::ServerRpcInfo* info) override {
+        return new AuthInterceptor(
+            auth_service_, info->server_context(), info->method());
+    }
+
+private:
+    AuthServiceImpl* auth_service_;
+};
 
 std::string stripScheme(const std::string& address, const std::string& scheme) {
     const auto prefix = scheme + "://";
@@ -66,6 +85,7 @@ RpcServer::~RpcServer() {
     service_impl_.reset();
     health_service_impl_.reset();
     ai_query_service_impl_.reset();
+    auth_service_impl_.reset();
     server_.reset();
     server_credentials_.reset();
     builders_.clear();
@@ -79,6 +99,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
     health_service_impl_ = std::make_shared<HealthServiceImpl>();
     ai_query_service_impl_ = std::make_shared<AIQueryServiceImpl>();
+    auth_service_impl_ = std::make_shared<AuthServiceImpl>();
     
     // 初始化序列化器
     common::MessageSerializer::getInstance().initialize(common::SerializerFactory::PROTOBUF_BINARY);
@@ -175,6 +196,10 @@ std::shared_ptr<AIQueryServiceImpl> RpcServer::getAIQueryService() {
     return ai_query_service_impl_;
 }
 
+std::shared_ptr<AuthServiceImpl> RpcServer::getAuthService() {
+    return auth_service_impl_;
+}
+
 void RpcServer::setA2AConfig(const a2a_adapter::A2AConfig& config) {
     a2a_config_ = config;
 }
@@ -253,6 +278,23 @@ void RpcServer::setupServer() {
     if (health_service_impl_) {
         builder.RegisterService(health_service_impl_.get());
         LOG_INFO("Health Service registered");
+    }
+
+    // 注册认证服务
+    if (auth_service_impl_) {
+        builder.RegisterService(auth_service_impl_.get());
+        LOG_INFO("User Auth Service registered");
+    }
+
+    // 注册认证拦截器 (Token验证)
+    if (auth_service_impl_) {
+        std::vector<std::unique_ptr<grpc::experimental::ServerInterceptorFactoryInterface>>
+            interceptor_creators;
+        interceptor_creators.push_back(
+            std::make_unique<AuthInterceptorFactory>(auth_service_impl_.get()));
+        builder.experimental().SetInterceptorCreators(
+            std::move(interceptor_creators));
+        LOG_INFO("Auth interceptor registered");
     }
     
     // 启用健康检查服务

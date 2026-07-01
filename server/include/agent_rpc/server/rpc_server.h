@@ -23,6 +23,7 @@ namespace server {
 class AgentCommunicationServiceImpl;
 class HealthServiceImpl;
 class AIQueryServiceImpl;
+class AuthServiceImpl;
 
 // RPC服务器类
 class RpcServer {
@@ -50,6 +51,9 @@ public:
     
     // 获取AI查询服务
     std::shared_ptr<AIQueryServiceImpl> getAIQueryService();
+
+    // 获取认证服务
+    std::shared_ptr<AuthServiceImpl> getAuthService();
     
     // 设置A2A配置
     void setA2AConfig(const a2a_adapter::A2AConfig& config);
@@ -80,6 +84,7 @@ private:
     std::shared_ptr<AgentCommunicationServiceImpl> service_impl_;
     std::shared_ptr<HealthServiceImpl> health_service_impl_;
     std::shared_ptr<AIQueryServiceImpl> ai_query_service_impl_;
+    std::shared_ptr<AuthServiceImpl> auth_service_impl_;
     
     // A2A配置
     a2a_adapter::A2AConfig a2a_config_;

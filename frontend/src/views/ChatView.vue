@@ -10,6 +10,7 @@
           新对话
         </button>
         <router-link to="/admin" class="btn-admin">管理</router-link>
+        <button class="btn-admin" @click="handleLogout">登出</button>
       </div>
     </div>
 
@@ -58,10 +59,14 @@
 
 <script setup lang="ts">
 import { ref, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
+import { useAuthStore } from '../stores/auth'
 import MessageBubble from '../components/MessageBubble.vue'
 
+const router = useRouter()
 const chatStore = useChatStore()
+const authStore = useAuthStore()
 const inputText = ref('')
 const messagesRef = ref<HTMLElement>()
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -74,6 +79,11 @@ function handleSend() {
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
   }
+}
+
+function handleLogout() {
+  authStore.logout()
+  router.push('/login')
 }
 
 function autoResize() {

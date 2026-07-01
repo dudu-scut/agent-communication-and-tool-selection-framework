@@ -12,6 +12,10 @@ import type {
   GetAgentsResponse,
   FindAgentsRequest,
   FindAgentsResponse,
+  RegisterRequest,
+  RegisterResponse,
+  LoginRequest,
+  LoginResponse,
 } from '../types/proto'
 
 const BASE_URL = import.meta.env.VITE_API_BASE || ''
@@ -19,6 +23,13 @@ const BASE_URL = import.meta.env.VITE_API_BASE || ''
 // AIQueryService 路径前缀
 const AI_QUERY = '/agent_communication.AIQueryService'
 const AGENT_COMM = '/agent_communication.AgentCommunicationService'
+const USER_AUTH = '/agent_communication.auth.UserService'
+
+// Auth token accessor (set by auth store)
+let _getAuthToken: (() => string | null) | null = null
+export function setAuthTokenGetter(getter: () => string | null) {
+  _getAuthToken = getter
+}
 
 /**
  * 一元 RPC 调用（JSON 序列化，通过 grpcwebproxy 转发）
@@ -30,9 +41,15 @@ async function unaryCall<TReq, TRes>(
 ): Promise<TRes> {
   const url = `${BASE_URL}${servicePath}/${method}`
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = _getAuthToken?.()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(request),
   })
 
@@ -87,9 +104,15 @@ export function queryStream(
 
   const url = `${BASE_URL}${AI_QUERY}/QueryStream`
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = _getAuthToken?.()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
   fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(req),
     signal,
   })
@@ -180,4 +203,27 @@ export async function findAgents(
     limit: 100,
     ...params,
   })
+}
+
+// ============================================================================
+// UserService (Auth)
+// ============================================================================
+
+/** 用户注册 */
+export async function register(
+  username: string,
+  password: string,
+  displayName = '',
+): Promise<RegisterResponse> {
+  const req: RegisterRequest = { username, password, display_name: displayName }
+  return unaryCall<RegisterRequest, RegisterResponse>(USER_AUTH, 'Register', req)
+}
+
+/** 用户登录 */
+export async function login(
+  username: string,
+  password: string,
+): Promise<LoginResponse> {
+  const req: LoginRequest = { username, password }
+  return unaryCall<LoginRequest, LoginResponse>(USER_AUTH, 'Login', req)
 }

@@ -6,6 +6,8 @@ set(SERVER_SOURCES
     src/rpc_server.cpp
     src/agent_service.cpp
     src/ai_query_service.cpp
+    src/auth_service.cpp
+    src/auth_interceptor.cpp
 )
 
 # 创建静态库
@@ -28,10 +30,12 @@ target_link_libraries(rpc_server
     pthread
     ${UUID_LIB}
     CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # 链接依赖
-target_link_libraries(agent_rpc_server 
+target_link_libraries(agent_rpc_server
     agent_rpc_common
     agent_rpc_registry
     orchestrator
@@ -43,6 +47,8 @@ target_link_libraries(agent_rpc_server
     grpc++_reflection
     pthread
     CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # 包含目录

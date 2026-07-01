@@ -34,6 +34,7 @@ set(UUID_LIB "uuid")
 
 # 查找CURL依赖 (A2A模块需要)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 # A2A模块包含目录

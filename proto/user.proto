@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package agent_communication.auth;
+
+import "common.proto";
+
+// ============================================================================
+// User Authentication Messages
+// ============================================================================
+
+// 注册请求
+message RegisterRequest {
+    string username = 1;
+    string password = 2;
+    string display_name = 3;       // 可选显示名
+}
+
+// 注册响应
+message RegisterResponse {
+    common.Status status = 1;
+    string user_id = 2;            // 服务端生成的 UUID
+    string username = 3;
+}
+
+// 登录请求
+message LoginRequest {
+    string username = 1;
+    string password = 2;
+}
+
+// 登录响应
+message LoginResponse {
+    common.Status status = 1;
+    string user_id = 2;
+    string username = 3;
+    string token = 4;              // 认证令牌 (UUID)
+    int64 expires_at = 5;          // 过期时间 (Unix timestamp)
+}
+
+// Token 验证请求 (内部使用 / 拦截器)
+message ValidateTokenRequest {
+    string token = 1;
+}
+
+// Token 验证响应
+message ValidateTokenResponse {
+    common.Status status = 1;
+    string user_id = 2;
+    string username = 3;
+    bool valid = 4;
+}
+
+// ============================================================================
+// User Service
+// ============================================================================
+
+// 用户认证服务
+service UserService {
+    // 注册新用户
+    rpc Register(RegisterRequest) returns (RegisterResponse);
+
+    // 用户登录
+    rpc Login(LoginRequest) returns (LoginResponse);
+
+    // 验证 Token (供拦截器内部调用)
+    rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+}
