@@ -53,7 +53,7 @@ export interface AIQueryResponse {
 
 export interface AIStreamEvent {
   event_id: string
-  event_type: 'partial' | 'status' | 'complete' | 'error'
+  event_type: 'partial' | 'status' | 'complete' | 'error' | 'plan' | 'subtask_start' | 'subtask_complete'
   content: string
   task_state: string
   context_id: string
@@ -87,6 +87,22 @@ export interface FindAgentsResponse {
   total_count: number
 }
 
+// === 多Agent执行计划 (P4-4) ===
+
+export interface SubTaskInfo {
+  id: string
+  description: string
+  skill: string
+  depends_on: string[]
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  result?: string
+}
+
+export interface ExecutionPlan {
+  original_query: string
+  tasks: SubTaskInfo[]
+}
+
 // === 前端内部类型 ===
 
 export interface ChatMessage {
@@ -98,6 +114,7 @@ export interface ChatMessage {
   processingTimeMs?: number
   streaming?: boolean
   error?: string
+  executionPlan?: ExecutionPlan
   timestamp: number
 }
 

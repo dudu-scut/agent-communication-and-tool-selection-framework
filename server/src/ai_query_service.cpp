@@ -10,8 +10,12 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/a2a_adapter/error_mapper.h"
+#include <a2a/llm_client.hpp>
+#include <a2a/client/a2a_client.hpp>
+#include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstdlib>
 #include <sstream>
 #include <iomanip>
 #ifdef _WIN32
@@ -52,6 +56,20 @@ bool AIQueryServiceImpl::initialize(
     // Initialize circuit breaker for A2A backend
     circuit_breaker_ = common::CircuitBreakerManager::getInstance()
         .getCircuitBreaker("a2a_backend");
+
+    // P4-4: Initialize multi-agent orchestrator if LLM_API_KEY is set
+    const char* api_key_env = std::getenv("LLM_API_KEY");
+    if (api_key_env && api_key_env[0] != '\0') {
+        std::string api_key(api_key_env);
+        std::string model = std::getenv("LLM_MODEL") ? std::getenv("LLM_MODEL") : "deepseek-v4-pro";
+        std::string api_url = std::getenv("LLM_API_URL") ? std::getenv("LLM_API_URL")
+            : "https://api.deepseek.com/v1/chat/completions";
+        if (initializeOrchestrator(api_key, model, api_url)) {
+            LOG_INFO("Multi-agent orchestrator enabled (LLM: " + model + ")");
+        } else {
+            LOG_WARN("Multi-agent orchestrator initialization failed, falling back to single-agent mode");
+        }
+    }
 
     initialized_ = true;
     LOG_INFO("AIQueryService initialized successfully");
@@ -99,7 +117,12 @@ grpc::Status AIQueryServiceImpl::Query(
     }
     
     LOG_INFO("Processing AI query: " + request_id);
-    
+
+    // P4-4: Multi-agent orchestrator path
+    if (orchestrator_enabled_) {
+        return handleMultiAgentQuery(context, request, response, request_id);
+    }
+
     // Check for cancellation
     if (context->IsCancelled()) {
         updateTaskStatus(request_id, "cancelled");
@@ -188,6 +211,11 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     }
     
     LOG_INFO("Processing streaming AI query: " + request_id);
+
+    // P4-4: Multi-agent orchestrator path
+    if (orchestrator_enabled_) {
+        return handleMultiAgentQueryStream(context, request, writer, request_id);
+    }
 
     // Check circuit breaker before calling A2A backend
     if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
@@ -423,6 +451,291 @@ void AIQueryServiceImpl::cleanupExpiredTasks() {
             ++it;
         }
     }
+}
+
+// ============================================================================
+// Multi-Agent Orchestration (P4-4)
+// ============================================================================
+
+bool AIQueryServiceImpl::initializeOrchestrator(
+    const std::string& api_key,
+    const std::string& model,
+    const std::string& api_url) {
+
+    try {
+        // AgentRouter: skill-based routing
+        agent_router_ = std::make_unique<orchestrator::AgentRouter>();
+        agent_router_->initialize(orchestrator::RoutingStrategy::SKILL_MATCH);
+
+        // Wire LLM client into AgentRouter for Tier 0 intent classification (P1-1)
+        auto router_llm = std::make_unique<LLMClient>(api_key, model, api_url);
+        agent_router_->setLLMClient(std::move(router_llm));
+
+        // TaskPlanner: decides single vs multi-agent, decomposes into DAG
+        // (creates its own LLMClient internally from config)
+        orchestrator::TaskPlannerConfig planner_config;
+        planner_config.api_key = api_key;
+        planner_config.model = model;
+        planner_config.api_url = api_url;
+        task_planner_ = std::make_unique<orchestrator::TaskPlanner>(planner_config);
+
+        // TaskExecutor: DAG execution engine (needs AgentRouter for skill→agent resolution)
+        orchestrator::ExecutorConfig exec_config;
+        exec_config.subtask_timeout_seconds = rpc_config_.timeout_seconds;
+        exec_config.global_timeout_seconds = rpc_config_.timeout_seconds * 2;
+        task_executor_ = std::make_unique<orchestrator::TaskExecutor>(*agent_router_, exec_config);
+
+        // ResultAggregator: merges subtask results
+        orchestrator::AggregatorConfig agg_config;
+        agg_config.api_key = api_key;
+        agg_config.model = model;
+        agg_config.api_url = api_url;
+        agg_config.default_strategy = "llm_synthesize";
+        result_aggregator_ = std::make_unique<orchestrator::ResultAggregator>(agg_config);
+
+        orchestrator_enabled_ = true;
+        return true;
+
+    } catch (const std::exception& e) {
+        LOG_ERROR(std::string("Orchestrator init failed: ") + e.what());
+        return false;
+    }
+}
+
+grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
+    grpc::ServerContext* context,
+    const agent_communication::AIQueryRequest* request,
+    agent_communication::AIQueryResponse* response,
+    const std::string& request_id) {
+
+    (void)context;  // TODO: use for deadline propagation
+    auto start_time = std::chrono::steady_clock::now();
+    std::string question = request->question();
+
+    // Step 1: Plan — decide single vs multi-agent
+    auto plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
+
+    // Single-agent fast path: fall back to normal A2A adapter flow
+    if (plan.is_single_agent) {
+        std::vector<std::string> skills;
+        if (!plan.single_agent_skill.empty()) {
+            skills.push_back(plan.single_agent_skill);
+        }
+        // Delegate to normal query with skill hint
+        bool success = a2a_adapter_->processQuery(*request, response);
+        if (success) {
+            updateTaskStatus(request_id, "completed",
+                             response->agent_id(), response->agent_name());
+        }
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        response->set_processing_time_ms(duration.count());
+        recordMetrics("Query", duration.count(), success);
+        return success ? grpc::Status::OK
+                       : grpc::Status(grpc::StatusCode::INTERNAL,
+                                      response->status().message());
+    }
+
+    // Multi-agent path
+    LOG_INFO("Multi-agent plan: " + std::to_string(plan.tasks.size()) + " subtasks");
+    updateTaskStatus(request_id, "working");
+
+    // Step 2: Build AgentCallFn — resolves skill → agent → A2A call
+    auto call_agent = [this](const std::string& skill,
+                             const std::string& prompt) -> std::string {
+        auto agent = agent_router_->selectAgent(prompt, {skill});
+        if (!agent.has_value()) {
+            throw std::runtime_error("No agent available for skill: " + skill);
+        }
+
+        a2a::A2AClient client(agent->url);
+        client.set_timeout(rpc_config_.timeout_seconds);
+
+        a2a::AgentMessage msg = a2a::AgentMessage::create()
+            .with_role(a2a::MessageRole::User)
+            .with_text(prompt);
+
+        auto params = a2a::MessageSendParams::create()
+            .with_message(msg);
+
+        auto a2a_response = client.send_message(params);
+        if (a2a_response.is_task()) {
+            const auto& task = a2a_response.as_task();
+            for (const auto& artifact : task.artifacts()) {
+                if (artifact.content().has_value()) {
+                    return artifact.content().value();
+                }
+            }
+        } else if (a2a_response.is_message()) {
+            return a2a_response.as_message().get_text();
+        }
+        return "";
+    };
+
+    // Step 3: Execute DAG
+    auto results = task_executor_->execute(plan, call_agent);
+
+    // Step 4: Aggregate results
+    auto aggregated = result_aggregator_->aggregate(plan, results);
+
+    // Populate response
+    response->set_request_id(request_id);
+    response->set_task_id(request_id);
+    response->set_answer(aggregated.final_answer);
+    response->set_context_id(request->context_id());
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_time - start_time);
+    response->set_processing_time_ms(duration.count());
+
+    auto* status = response->mutable_status();
+    status->set_code(0);
+    status->set_message("OK");
+
+    updateTaskStatus(request_id, "completed", "", "multi-agent");
+    recordMetrics("Query", duration.count(), true);
+
+    LOG_INFO("Multi-agent query completed in " +
+             std::to_string(duration.count()) + "ms (" +
+             std::to_string(plan.tasks.size()) + " subtasks)");
+
+    return grpc::Status::OK;
+}
+
+grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
+    grpc::ServerContext* context,
+    const agent_communication::AIQueryRequest* request,
+    grpc::ServerWriter<agent_communication::AIStreamEvent>* writer,
+    const std::string& request_id) {
+
+    (void)context;  // TODO: use for deadline/cancellation propagation
+    auto start_time = std::chrono::steady_clock::now();
+    std::string question = request->question();
+    std::string context_id = request->context_id();
+
+    // Step 1: Plan
+    auto plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
+
+    // Single-agent fast path
+    if (plan.is_single_agent) {
+        // Delegate to normal streaming
+        a2a_adapter_->processQueryStreaming(*request,
+            [writer](const agent_communication::AIStreamEvent& event) {
+                writer->Write(event);
+            });
+
+        agent_communication::AIStreamEvent complete;
+        complete.set_event_type("complete");
+        complete.set_context_id(context_id);
+        writer->Write(complete);
+
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time);
+        updateTaskStatus(request_id, "completed");
+        recordMetrics("QueryStream", duration.count(), true);
+        return grpc::Status::OK;
+    }
+
+    // Emit plan event
+    nlohmann::json plan_json;
+    plan_json["original_query"] = plan.original_query;
+    plan_json["tasks"] = nlohmann::json::array();
+    for (const auto& t : plan.tasks) {
+        nlohmann::json tj;
+        tj["id"] = t.id;
+        tj["description"] = t.description;
+        tj["skill"] = t.required_skill;
+        tj["depends_on"] = t.depends_on;
+        plan_json["tasks"].push_back(tj);
+    }
+
+    agent_communication::AIStreamEvent plan_event;
+    plan_event.set_event_type("plan");
+    plan_event.set_content(plan_json.dump());
+    plan_event.set_context_id(context_id);
+    writer->Write(plan_event);
+
+    updateTaskStatus(request_id, "working");
+
+    // Step 2: AgentCallFn (same as sync path)
+    auto call_agent = [this](const std::string& skill,
+                             const std::string& prompt) -> std::string {
+        auto agent = agent_router_->selectAgent(prompt, {skill});
+        if (!agent.has_value()) {
+            throw std::runtime_error("No agent available for skill: " + skill);
+        }
+        a2a::A2AClient client(agent->url);
+        client.set_timeout(rpc_config_.timeout_seconds);
+        a2a::AgentMessage msg = a2a::AgentMessage::create()
+            .with_role(a2a::MessageRole::User)
+            .with_text(prompt);
+        auto params = a2a::MessageSendParams::create().with_message(msg);
+        auto a2a_response = client.send_message(params);
+        if (a2a_response.is_task()) {
+            for (const auto& artifact : a2a_response.as_task().artifacts()) {
+                if (artifact.content().has_value()) {
+                    return artifact.content().value();
+                }
+            }
+        } else if (a2a_response.is_message()) {
+            return a2a_response.as_message().get_text();
+        }
+        return "";
+    };
+
+    // Step 3: Execute with progress callback emitting stream events
+    orchestrator::ProgressCallback progress_cb =
+        [writer, &context_id](const orchestrator::SubTaskEvent& event) {
+            agent_communication::AIStreamEvent stream_event;
+            stream_event.set_context_id(context_id);
+            if (event.type == orchestrator::SubTaskEventType::START) {
+                stream_event.set_event_type("subtask_start");
+                stream_event.set_task_state(event.subtask_id);
+                stream_event.set_content(event.detail);
+            } else if (event.type == orchestrator::SubTaskEventType::COMPLETE) {
+                stream_event.set_event_type("subtask_complete");
+                stream_event.set_task_state(event.subtask_id);
+                stream_event.set_content(event.detail);
+            } else if (event.type == orchestrator::SubTaskEventType::FAILED) {
+                stream_event.set_event_type("subtask_complete");
+                stream_event.set_task_state(event.subtask_id);
+                stream_event.set_content("FAILED: " + event.detail);
+            }
+            writer->Write(stream_event);
+        };
+
+    auto results = task_executor_->execute(plan, call_agent, progress_cb);
+
+    // Step 4: Aggregate
+    auto aggregated = result_aggregator_->aggregate(plan, results);
+
+    // Emit final answer
+    agent_communication::AIStreamEvent answer_event;
+    answer_event.set_event_type("partial");
+    answer_event.set_content(aggregated.final_answer);
+    answer_event.set_context_id(context_id);
+    writer->Write(answer_event);
+
+    // Complete
+    agent_communication::AIStreamEvent complete_event;
+    complete_event.set_event_type("complete");
+    complete_event.set_context_id(context_id);
+    writer->Write(complete_event);
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_time - start_time);
+    updateTaskStatus(request_id, "completed", "", "multi-agent");
+    recordMetrics("QueryStream", duration.count(), true);
+
+    LOG_INFO("Multi-agent stream completed in " +
+             std::to_string(duration.count()) + "ms (" +
+             std::to_string(plan.tasks.size()) + " subtasks)");
+
+    return grpc::Status::OK;
 }
 
 } // namespace server

@@ -64,6 +64,42 @@ export const useChatStore = defineStore('chat', () => {
         }
         break
 
+      case 'plan':
+        // 解析多Agent执行计划 JSON
+        try {
+          const plan = JSON.parse(event.content)
+          msg.executionPlan = {
+            original_query: plan.original_query,
+            tasks: (plan.tasks || []).map((t: any) => ({
+              id: t.id,
+              description: t.description,
+              skill: t.skill,
+              depends_on: t.depends_on || [],
+              status: 'pending' as const,
+            })),
+          }
+        } catch {
+          // malformed plan JSON, ignore
+        }
+        break
+
+      case 'subtask_start':
+        if (msg.executionPlan) {
+          const task = msg.executionPlan.tasks.find(t => t.id === event.task_state)
+          if (task) task.status = 'running'
+        }
+        break
+
+      case 'subtask_complete':
+        if (msg.executionPlan) {
+          const task = msg.executionPlan.tasks.find(t => t.id === event.task_state)
+          if (task) {
+            task.status = event.content.startsWith('FAILED:') ? 'failed' : 'completed'
+            task.result = event.content
+          }
+        }
+        break
+
       case 'complete':
         msg.streaming = false
         msg.processingTimeMs = event.timestamp

@@ -18,6 +18,12 @@
 #include <unordered_map>
 
 namespace agent_rpc {
+namespace orchestrator {
+    class AgentRouter;
+}
+}
+
+namespace agent_rpc {
 namespace server {
 
 // Agent通信服务 gRPC 实现
@@ -94,6 +100,14 @@ public:
     void setErrorHandler(common::ErrorHandler handler);
     void setHealthCheckHandler(common::HealthCheckHandler handler);
 
+    /**
+     * @brief Set AgentRouter for P0-2 registry unification
+     *
+     * When set, RegisterAgent/UnregisterAgent/Heartbeat will sync
+     * agent state to the orchestrator's AgentRouter.
+     */
+    void setAgentRouter(orchestrator::AgentRouter* router);
+
     std::vector<common::ServiceEndpoint> getAgentsList() const;
 
 private:
@@ -119,6 +133,9 @@ private:
     std::atomic<int> message_id_counter_{0};
     std::thread cleanup_thread_;
     std::atomic<bool> cleanup_running_{false};
+
+    // P0-2: Optional pointer to orchestrator's AgentRouter for registration sync
+    orchestrator::AgentRouter* router_ = nullptr;
 };
 
 // 健康检查服务 gRPC 实现

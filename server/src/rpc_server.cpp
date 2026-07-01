@@ -87,7 +87,15 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     if (!ai_query_service_impl_->initialize(config_, a2a_config_)) {
         LOG_WARN("Failed to initialize AI Query Service, continuing without it");
     }
-    
+
+    // P0-2: Wire AgentRouter to AgentCommunicationService for registration sync
+    if (ai_query_service_impl_ && service_impl_) {
+        auto* router = ai_query_service_impl_->getAgentRouter();
+        if (router) {
+            service_impl_->setAgentRouter(router);
+        }
+    }
+
     setupServer();
     initializeServiceRegistry();
     

@@ -19,6 +19,7 @@ target_link_libraries(rpc_server
     agent_rpc_server
     agent_rpc_common
     agent_rpc_registry
+    orchestrator
     a2a_adapter
     a2a
     proto_lib
@@ -33,6 +34,7 @@ target_link_libraries(rpc_server
 target_link_libraries(agent_rpc_server 
     agent_rpc_common
     agent_rpc_registry
+    orchestrator
     a2a_adapter
     a2a
     proto_lib
@@ -53,7 +55,7 @@ target_include_directories(agent_rpc_server PUBLIC
 target_compile_options(agent_rpc_server PRIVATE
     -Wall
     -Wextra
-    -std=c++17
+    -std=c++20
 )
 
 # 安装规则

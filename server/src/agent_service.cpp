@@ -1,6 +1,8 @@
 #include "agent_rpc/server/agent_service.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/orchestrator/agent_router.h"
+#include "agent_rpc/orchestrator/agent_info.h"
 #include <grpcpp/grpcpp.h>
 #include <sstream>
 #include <iomanip>
@@ -45,6 +47,13 @@ void AgentCommunicationServiceImpl::setErrorHandler(common::ErrorHandler handler
 
 void AgentCommunicationServiceImpl::setHealthCheckHandler(common::HealthCheckHandler handler) {
     health_check_handler_ = handler;
+}
+
+void AgentCommunicationServiceImpl::setAgentRouter(orchestrator::AgentRouter* router) {
+    router_ = router;
+    if (router_) {
+        LOG_INFO("AgentRouter connected to AgentCommunicationService (P0-2)");
+    }
 }
 
 std::string AgentCommunicationServiceImpl::generateMessageId() {
@@ -273,6 +282,31 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     common::Metrics::getInstance().recordConnection(agent_id, true);
     LOG_INFO("Agent registered: " + agent_id);
 
+    // P0-2: Sync to AgentRouter for orchestrator routing
+    if (router_) {
+        orchestrator::AgentInfo info;
+        info.id = agent_id;
+        info.name = endpoint.service_name;
+        info.url = "http://" + endpoint.host + ":" + std::to_string(endpoint.port);
+        info.skills = endpoint.skills;
+        info.tags = endpoint.tags;
+        info.is_healthy = true;
+        info.last_heartbeat = std::chrono::steady_clock::now();
+        // Extract description from metadata if available
+        auto desc_it = endpoint.metadata.find("description");
+        if (desc_it != endpoint.metadata.end()) {
+            info.description = desc_it->second;
+        }
+        auto ver_it = endpoint.metadata.find("version");
+        if (ver_it != endpoint.metadata.end()) {
+            info.version = ver_it->second;
+        } else {
+            info.version = endpoint.version;
+        }
+        router_->addAgent(info);
+        LOG_INFO("Agent synced to AgentRouter: " + agent_id);
+    }
+
     auto* status = response->mutable_status();
     status->set_code(0);
     status->set_message("OK");
@@ -298,6 +332,11 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
     common::Metrics::getInstance().recordDisconnection(agent_id);
     LOG_INFO("Agent unregistered: " + agent_id + " reason: " + request->reason());
 
+    // P0-2: Remove from AgentRouter
+    if (router_) {
+        router_->removeAgent(agent_id);
+    }
+
     auto* status = response->mutable_status();
     status->set_code(0);
     status->set_message("OK");
@@ -312,6 +351,11 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
     agent_communication::HeartbeatResponse* response) {
 
     updateAgentHeartbeat(request->agent_id());
+
+    // P0-2: Propagate heartbeat to AgentRouter
+    if (router_) {
+        router_->updateHeartbeat(request->agent_id());
+    }
 
     auto* status = response->mutable_status();
     status->set_code(0);

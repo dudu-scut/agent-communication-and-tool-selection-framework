@@ -8,6 +8,7 @@
     </div>
 
     <div class="message-content" :class="{ 'has-error': message.error }">
+      <ExecutionPlan v-if="message.executionPlan" :plan="message.executionPlan" />
       <template v-if="message.error">
         <span class="error-icon">!</span>
         {{ message.error }}
@@ -26,6 +27,7 @@
 import type { ChatMessage } from '../types/proto'
 import AgentBadge from './AgentBadge.vue'
 import StreamingText from './StreamingText.vue'
+import ExecutionPlan from './ExecutionPlan.vue'
 
 defineProps<{
   message: ChatMessage

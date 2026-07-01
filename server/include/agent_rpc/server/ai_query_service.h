@@ -14,6 +14,10 @@
 #include "agent_rpc/common/circuit_breaker.h"
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
+#include "agent_rpc/orchestrator/agent_router.h"
+#include "agent_rpc/orchestrator/task_planner.h"
+#include "agent_rpc/orchestrator/task_executor.h"
+#include "agent_rpc/orchestrator/result_aggregator.h"
 
 #include "ai_query.grpc.pb.h"
 #include "ai_query.pb.h"
@@ -108,6 +112,12 @@ public:
      */
     a2a_adapter::A2AAdapter* getA2AAdapter() { return a2a_adapter_.get(); }
 
+    /**
+     * @brief Get the AgentRouter (P0-2: for registry unification)
+     * @return Pointer to AgentRouter, or nullptr if orchestrator not enabled
+     */
+    orchestrator::AgentRouter* getAgentRouter() { return agent_router_.get(); }
+
 private:
     std::string generateRequestId();
     void recordMetrics(const std::string& method, int64_t duration_ms, bool success);
@@ -141,6 +151,32 @@ private:
     common::RpcConfig rpc_config_;
     std::atomic<bool> initialized_{false};
     std::atomic<uint64_t> request_counter_{0};
+
+    // ========================================================================
+    // Multi-Agent Orchestration (P4-4)
+    // ========================================================================
+
+    bool initializeOrchestrator(const std::string& api_key,
+                                const std::string& model,
+                                const std::string& api_url);
+
+    grpc::Status handleMultiAgentQuery(
+        grpc::ServerContext* context,
+        const agent_communication::AIQueryRequest* request,
+        agent_communication::AIQueryResponse* response,
+        const std::string& request_id);
+
+    grpc::Status handleMultiAgentQueryStream(
+        grpc::ServerContext* context,
+        const agent_communication::AIQueryRequest* request,
+        grpc::ServerWriter<agent_communication::AIStreamEvent>* writer,
+        const std::string& request_id);
+
+    std::unique_ptr<orchestrator::AgentRouter> agent_router_;
+    std::unique_ptr<orchestrator::TaskPlanner> task_planner_;
+    std::unique_ptr<orchestrator::TaskExecutor> task_executor_;
+    std::unique_ptr<orchestrator::ResultAggregator> result_aggregator_;
+    std::atomic<bool> orchestrator_enabled_{false};
 };
 
 } // namespace server
