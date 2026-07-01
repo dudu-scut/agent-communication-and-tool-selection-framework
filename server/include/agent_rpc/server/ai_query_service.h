@@ -27,6 +27,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <atomic>
 #include <unordered_map>
@@ -196,6 +197,7 @@ private:
     // Memory: LLM client for cross-agent summary generation
     std::unique_ptr<LLMClient> memory_llm_client_;
     std::mutex memory_llm_mutex_;
+    std::set<std::string> summary_in_progress_;  // context_ids with ongoing summary generation
 };
 
 } // namespace server

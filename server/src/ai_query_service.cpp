@@ -148,13 +148,12 @@ grpc::Status AIQueryServiceImpl::Query(
     // P4-4: Multi-agent orchestrator path
     if (orchestrator_enabled_) {
         auto status = handleMultiAgentQuery(context, &enriched_req, response, request_id);
-        // Memory: post-process response (store hints + conversation)
+        // Memory: post-process response (store conversation)
+        // NOTE: memory_hints not collected here — sub-agents return plain text via A2A, no structured hints
         if (!user_id.empty()) {
             std::string resp_agent = response->agent_id().empty() ? "multi-agent" : response->agent_id();
             // Detect agent switch and generate summary for future queries
             handleAgentSwitch(user_id, request->context_id(), resp_agent);
-            memory_service_.updateUserMemoryFromHints(
-                user_id, {response->memory_hints().begin(), response->memory_hints().end()});
             memory_service_.appendMessage(request->context_id(),
                 resp_agent, "user", request->question());
             memory_service_.appendMessage(request->context_id(),
@@ -575,6 +574,14 @@ void AIQueryServiceImpl::handleAgentSwitch(
         context_id, last_agent, 20);
 
     if (!old_history.empty() && memory_llm_client_) {
+        // Prevent concurrent summary generation for the same context
+        {
+            std::lock_guard<std::mutex> lock(memory_llm_mutex_);
+            if (!summary_in_progress_.insert(context_id).second) {
+                return;  // Another thread already generating for this context
+            }
+        }
+
         (void)std::async(std::launch::async,
             [this, context_id, old_history]() {
                 std::lock_guard<std::mutex> lock(memory_llm_mutex_);
@@ -588,6 +595,7 @@ void AIQueryServiceImpl::handleAgentSwitch(
                 } catch (const std::exception& e) {
                     LOG_WARN("Failed to generate cross-agent summary: " + std::string(e.what()));
                 }
+                summary_in_progress_.erase(context_id);
             });
     }
     // last_agent updated by subsequent appendMessage
