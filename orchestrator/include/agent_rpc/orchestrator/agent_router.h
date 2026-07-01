@@ -314,6 +314,18 @@ public:
     SkillMatchResult analyzeRequiredSkillHybrid(const std::string& question);
 
     /**
+     * @brief High-confidence embedding-only skill matching.
+     *
+     * Returns a skill only when embedding similarity >= high_threshold.
+     * Used as the first tier in the restructured routing pipeline:
+     *   Embedding(high) → LLM → Keyword → Fallback
+     *
+     * @param question User input text
+     * @return Skill name if high-confidence match found, empty string otherwise
+     */
+    std::string analyzeRequiredSkillEmbedding(const std::string& question);
+
+    /**
      * @brief Check if embedding routing is enabled
      */
     bool isEmbeddingEnabled() const;

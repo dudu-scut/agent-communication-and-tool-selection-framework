@@ -678,6 +678,9 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     // Step 1: Plan — decide single vs multi-agent
     auto plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
 
+    // Pre-resolve agents for all subtasks (eliminates redundant routing in executor)
+    task_planner_->resolveAgents(plan, *agent_router_);
+
     // Single-agent fast path: fall back to normal A2A adapter flow
     if (plan.is_single_agent) {
         std::vector<std::string> skills;
@@ -707,21 +710,16 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     // Memory: build context to inject into sub-agent prompts
     std::string memory_ctx = buildMemoryContext(request);
 
-    // Step 2: Build AgentCallFn — resolves skill → agent → A2A call
-    auto call_agent = [this, &memory_ctx](const std::string& skill,
+    // Step 2: Build AgentCallFn — receives pre-resolved agent_url, sends A2A call
+    auto call_agent = [this, &memory_ctx](const std::string& agent_url,
                              const std::string& prompt) -> std::string {
-        auto agent = agent_router_->selectAgent(prompt, {skill});
-        if (!agent.has_value()) {
-            throw std::runtime_error("No agent available for skill: " + skill);
-        }
-
         // Inject memory context into sub-agent prompt
         std::string enriched_prompt = prompt;
         if (!memory_ctx.empty()) {
             enriched_prompt = memory_ctx + "\n" + prompt;
         }
 
-        a2a::A2AClient client(agent->url);
+        a2a::A2AClient client(agent_url);
         client.set_timeout(rpc_config_.timeout_seconds);
 
         a2a::AgentMessage msg = a2a::AgentMessage::create()
@@ -802,6 +800,9 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
     // Step 1: Plan
     auto plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
 
+    // Pre-resolve agents for all subtasks
+    task_planner_->resolveAgents(plan, *agent_router_);
+
     // Single-agent fast path
     if (plan.is_single_agent) {
         // Delegate to normal streaming
@@ -833,6 +834,10 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         tj["description"] = t.description;
         tj["skill"] = t.required_skill;
         tj["depends_on"] = t.depends_on;
+        if (!t.preferred_agent_id.empty()) {
+            tj["agent_id"] = t.preferred_agent_id;
+            tj["agent_name"] = t.preferred_agent_name;
+        }
         plan_json["tasks"].push_back(tj);
     }
 
@@ -847,21 +852,16 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
     // Memory: build context to inject into sub-agent prompts
     std::string memory_ctx = buildMemoryContext(request);
 
-    // Step 2: AgentCallFn (same as sync path)
-    auto call_agent = [this, &memory_ctx](const std::string& skill,
+    // Step 2: AgentCallFn — receives pre-resolved agent_url, sends A2A call
+    auto call_agent = [this, &memory_ctx](const std::string& agent_url,
                              const std::string& prompt) -> std::string {
-        auto agent = agent_router_->selectAgent(prompt, {skill});
-        if (!agent.has_value()) {
-            throw std::runtime_error("No agent available for skill: " + skill);
-        }
-
         // Inject memory context into sub-agent prompt
         std::string enriched_prompt = prompt;
         if (!memory_ctx.empty()) {
             enriched_prompt = memory_ctx + "\n" + prompt;
         }
 
-        a2a::A2AClient client(agent->url);
+        a2a::A2AClient client(agent_url);
         client.set_timeout(rpc_config_.timeout_seconds);
         a2a::AgentMessage msg = a2a::AgentMessage::create()
             .with_role(a2a::MessageRole::User)

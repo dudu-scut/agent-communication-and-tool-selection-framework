@@ -152,33 +152,43 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
     const std::vector<std::string>& required_skills) {
 
     // Phase 1: Determine skills to match (intent analysis).
-    // Done BEFORE locking agents_mutex_ because analyzeRequiredSkillHybrid()
-    // acquires agents_mutex_ internally in its Tier 3 keyword fallback path.
+    // Restructured pipeline: Embedding → LLM → Keyword → Fallback
+    //   - Embedding first (cheapest, ~10ms vector search)
+    //   - LLM only when embedding uncertain (saves tokens)
+    //   - Keyword as local fallback (zero cost)
+    //   - Any healthy agent as last resort
     std::vector<std::string> skills_to_match = required_skills;
+    bool used_fallback = false;
+
     if (skills_to_match.empty() && strategy_ == RoutingStrategy::SKILL_MATCH) {
-        // Tier 0: LLM-based intent classification (P1-1)
-        // Uses buildDynamicIntentPrompt() + LLM for accurate classification.
-        if (llm_client_) {
+        // Tier 0: Embedding — high confidence only (≥ high_threshold)
+        if (isEmbeddingEnabled()) {
+            std::string emb_skill = analyzeRequiredSkillEmbedding(question);
+            if (!emb_skill.empty()) {
+                skills_to_match.push_back(emb_skill);
+            }
+        }
+
+        // Tier 1: LLM — only when embedding uncertain/unavailable (saves tokens)
+        if (skills_to_match.empty() && llm_client_) {
             std::string llm_skill = analyzeIntentWithLLM(question);
             if (!llm_skill.empty()) {
                 skills_to_match.push_back(llm_skill);
             }
         }
 
-        // Tier 1/2: Embedding or keyword fallback (only if LLM didn't match)
+        // Tier 2: Keyword IDF matching — pure local, zero cost
         if (skills_to_match.empty()) {
-            if (isEmbeddingEnabled()) {
-                SkillMatchResult match = analyzeRequiredSkillHybrid(question);
-                if (!match.skill_name.empty()) {
-                    skills_to_match.push_back(match.skill_name);
-                }
-            } else {
-                std::lock_guard<std::mutex> lock(agents_mutex_);
-                std::string detected_skill = analyzeRequiredSkill(question);
-                if (!detected_skill.empty()) {
-                    skills_to_match.push_back(detected_skill);
-                }
+            std::lock_guard<std::mutex> lock(agents_mutex_);
+            std::string detected_skill = analyzeRequiredSkill(question);
+            if (!detected_skill.empty()) {
+                skills_to_match.push_back(detected_skill);
             }
+        }
+
+        // Tier 3: Fallback — mark for Phase 2 to pick any healthy agent
+        if (skills_to_match.empty()) {
+            used_fallback = true;
         }
     }
 
@@ -191,29 +201,28 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
 
     // Build candidate list
     std::vector<AgentInfo> candidates;
-    
-    // Filter agents
-    for (const auto& [id, agent] : agents_) {
-        // Skip unhealthy agents
-        if (!agent.is_healthy) {
-            continue;
-        }
-        
-        // Check skill requirements
-        if (!skills_to_match.empty()) {
-            if (!agent.hasAnySkill(skills_to_match)) {
-                continue;
-            }
-        }
-        
-        candidates.push_back(agent);
-    }
-    
-    if (candidates.empty()) {
-        // No matching agents, try all healthy agents as fallback
+
+    if (used_fallback || skills_to_match.empty()) {
+        // Fallback or no skill requirements: use all healthy agents
         for (const auto& [id, agent] : agents_) {
             if (agent.is_healthy) {
                 candidates.push_back(agent);
+            }
+        }
+    } else {
+        // Filter agents by skill requirements
+        for (const auto& [id, agent] : agents_) {
+            if (!agent.is_healthy) continue;
+            if (!agent.hasAnySkill(skills_to_match)) continue;
+            candidates.push_back(agent);
+        }
+
+        // If no candidates found with required skills, fall back to all healthy agents
+        if (candidates.empty()) {
+            for (const auto& [id, agent] : agents_) {
+                if (agent.is_healthy) {
+                    candidates.push_back(agent);
+                }
             }
         }
     }
@@ -934,6 +943,47 @@ SkillMatchResult AgentRouter::analyzeRequiredSkillHybrid(const std::string& ques
     }
 
     return result;
+}
+
+std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string& question) {
+    if (!isEmbeddingEnabled()) return {};
+
+    embedding_query_count_.fetch_add(1);
+
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
+
+    try {
+        // Embed the question (check cache first)
+        std::vector<float> query_embedding;
+        if (embedding_cache_) {
+            auto cached = embedding_cache_->get(question);
+            if (cached.has_value()) {
+                query_embedding = cached.value();
+            }
+        }
+
+        if (query_embedding.empty()) {
+            query_embedding = embedding_service_->embed(question);
+            if (embedding_cache_ && !query_embedding.empty()) {
+                embedding_cache_->put(question, query_embedding);
+            }
+        }
+
+        // Search skill index
+        auto search_results = skill_index_->search(query_embedding, 1, 0.0f);
+
+        if (!search_results.empty()) {
+            const auto& best = search_results[0];
+            if (best.similarity >= embedding_config_.high_threshold) {
+                embedding_hit_count_.fetch_add(1);
+                return best.tool.name;
+            }
+        }
+    } catch (const std::exception&) {
+        // Embedding failed, caller falls through to next tier
+    }
+
+    return {};
 }
 
 } // namespace orchestrator

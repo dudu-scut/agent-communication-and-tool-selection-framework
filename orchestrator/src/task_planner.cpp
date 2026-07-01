@@ -4,6 +4,7 @@
  */
 
 #include "agent_rpc/orchestrator/task_planner.h"
+#include "agent_rpc/orchestrator/agent_router.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <stdexcept>
@@ -176,6 +177,35 @@ ExecutionPlan TaskPlanner::parsePlanResponse(
     }
 
     return plan;
+}
+
+void TaskPlanner::resolveAgents(ExecutionPlan& plan, AgentRouter& router) {
+    if (plan.is_single_agent) {
+        // Single-agent path: resolve the agent for the single skill
+        std::vector<std::string> skills;
+        if (!plan.single_agent_skill.empty()) {
+            skills.push_back(plan.single_agent_skill);
+        }
+        auto agent = router.selectAgent(plan.original_query, skills);
+        if (agent.has_value()) {
+            plan.single_agent_id = agent->id;
+            plan.single_agent_name = agent->name;
+        }
+        return;
+    }
+
+    // Multi-agent path: resolve agent for each subtask
+    for (auto& task : plan.tasks) {
+        std::vector<std::string> skills;
+        if (!task.required_skill.empty()) {
+            skills.push_back(task.required_skill);
+        }
+        auto agent = router.selectAgent(task.description, skills);
+        if (agent.has_value()) {
+            task.preferred_agent_id = agent->id;
+            task.preferred_agent_name = agent->name;
+        }
+    }
 }
 
 } // namespace orchestrator

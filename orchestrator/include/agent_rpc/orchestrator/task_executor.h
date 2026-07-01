@@ -52,10 +52,10 @@ struct SubTaskEvent {
 using ProgressCallback = std::function<void(const SubTaskEvent&)>;
 
 // ── Agent call function type ───────────────────────────────────────────────
-// Signature: (skill_name, prompt) → response_text
-// The Orchestrator wires this to its actual HTTP/gRPC agent-calling logic.
+// Signature: (agent_url, prompt) → response_text
+// The Orchestrator resolves agent_url from preferred_agent_id before calling.
 
-using AgentCallFn = std::function<std::string(const std::string& skill,
+using AgentCallFn = std::function<std::string(const std::string& agent_url,
                                                const std::string& prompt)>;
 
 // ── TaskExecutor class ─────────────────────────────────────────────────────

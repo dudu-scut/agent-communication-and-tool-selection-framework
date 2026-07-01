@@ -248,7 +248,33 @@ SubTaskResult TaskExecutor::executeSubtask(
     auto start = std::chrono::steady_clock::now();
 
     try {
-        std::string response = call_agent(subtask.required_skill, enriched_prompt);
+        // Resolve agent URL: prefer pre-resolved agent, fallback to skill routing
+        std::string agent_url;
+
+        if (!subtask.preferred_agent_id.empty()) {
+            auto agent = router_.getAgent(subtask.preferred_agent_id);
+            if (agent.has_value() && agent->is_healthy) {
+                agent_url = agent->url;
+            }
+        }
+
+        if (agent_url.empty()) {
+            // Fallback: route by skill (preferred agent unavailable or not set)
+            std::vector<std::string> skills;
+            if (!subtask.required_skill.empty()) {
+                skills.push_back(subtask.required_skill);
+            }
+            auto agent = router_.selectAgent(subtask.description, skills);
+            if (agent.has_value()) {
+                agent_url = agent->url;
+            } else {
+                throw std::runtime_error(
+                    "No agent available for subtask: " + subtask.id +
+                    " (skill: " + subtask.required_skill + ")");
+            }
+        }
+
+        std::string response = call_agent(agent_url, enriched_prompt);
 
         auto end = std::chrono::steady_clock::now();
         result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
