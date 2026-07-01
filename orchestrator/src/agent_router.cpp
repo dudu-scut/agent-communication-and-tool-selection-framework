@@ -9,7 +9,6 @@
 #include <agent_rpc/mcp/rag/embedding_service.h>
 #include <agent_rpc/mcp/rag/vector_index.h>
 #include <agent_rpc/mcp/rag/embedding_cache.h>
-#include <a2a/agent_registry.hpp>
 #include <a2a/llm_client.hpp>
 #include <algorithm>
 #include <cctype>
@@ -621,44 +620,6 @@ AgentInfo AgentRouter::selectLeastLoad(const std::vector<AgentInfo>& candidates)
 }
 
 // === Dynamic Intent Classification (P0-1 / P1-1) ===
-
-void AgentRouter::syncFromRegistry(const std::vector<AgentRegistration>& registrations) {
-    std::lock_guard<std::mutex> lock(agents_mutex_);
-    
-    // Track which agents we've seen in this sync
-    std::unordered_set<std::string> synced_ids;
-    
-    for (const auto& reg : registrations) {
-        synced_ids.insert(reg.id);
-        
-        // Convert AgentRegistration to AgentInfo (uses P0-3 bridge)
-        AgentInfo info = AgentInfo::from_registration(reg);
-        
-        // Preserve existing health/load state if agent already known
-        auto existing = agents_.find(reg.id);
-        if (existing != agents_.end()) {
-            info.is_healthy = existing->second.is_healthy;
-            info.current_load = existing->second.current_load;
-            info.last_heartbeat = existing->second.last_heartbeat;
-        }
-        
-        agents_[reg.id] = std::move(info);
-    }
-    
-    // Remove agents that are no longer in the registry
-    std::vector<std::string> to_remove;
-    for (const auto& [id, agent] : agents_) {
-        if (synced_ids.find(id) == synced_ids.end()) {
-            to_remove.push_back(id);
-        }
-    }
-    for (const auto& id : to_remove) {
-        agents_.erase(id);
-    }
-    
-    // Rebuild keyword index from updated agent list
-    rebuildSkillKeywordIndex();
-}
 
 std::string AgentRouter::buildDynamicIntentPrompt(const std::string& user_text) const {
     std::lock_guard<std::mutex> lock(agents_mutex_);

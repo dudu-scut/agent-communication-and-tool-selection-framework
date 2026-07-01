@@ -14,8 +14,6 @@
 #include <optional>
 #include <unordered_map>
 
-// Forward declaration to avoid circular dependency
-struct AgentRegistration;
 
 namespace agent_rpc {
 namespace orchestrator {
@@ -96,16 +94,6 @@ struct AgentInfo {
         return (it != skill_descriptions.end()) ? it->second : "";
     }
     
-    /**
-     * @brief Build AgentInfo from AgentRegistration JSON data
-     * 
-     * Parses the agent_card field to extract skills with full metadata.
-     * This bridges the HTTP Registry (AgentRegistration) to the routing layer (AgentInfo).
-     * 
-     * @param reg_json JSON representation of AgentRegistration
-     * @return Populated AgentInfo
-     */
-    static AgentInfo from_registration(const AgentRegistration& reg);
 };
 
 /**

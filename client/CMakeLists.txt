@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.15)
 set(CLIENT_SOURCES
     src/rpc_client.cpp
     src/ai_query_client.cpp
+    src/agent_auto_registrar.cpp
 )
 
 # 创建静态库

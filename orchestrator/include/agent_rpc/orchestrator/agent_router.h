@@ -27,9 +27,6 @@ namespace agent_rpc { namespace mcp { namespace rag {
     class EmbeddingCache;
 }}}
 
-// Forward declaration for syncFromRegistry parameter
-struct AgentRegistration;
-
 // Forward declaration for P1-1 LLM-based intent classification
 class LLMClient;
 
@@ -267,16 +264,6 @@ public:
     // === Dynamic Intent Classification (P0-1 / P1-1) ===
     
     /**
-     * @brief Synchronize agent list from HTTP Registry
-     * 
-     * Converts AgentRegistration objects to AgentInfo and updates the internal
-     * agent map. Call this periodically or on registry change events.
-     * 
-     * @param registrations List of agent registrations from the registry
-     */
-    void syncFromRegistry(const std::vector<AgentRegistration>& registrations);
-    
-    /**
      * @brief Build a dynamic intent classification prompt from registered agents
      * 
      * Constructs an LLM prompt that lists all registered skills dynamically.
@@ -365,7 +352,7 @@ private:
      * @brief Rebuild the skill keyword index from current agents
      * 
      * Extracts keywords from healthy agents' skill names and descriptions.
-     * Must be called while agents_mutex_ is held (e.g. from syncFromRegistry).
+     * Must be called while agents_mutex_ is held (e.g. from addAgent/removeAgent).
      */
     void rebuildSkillKeywordIndex();
 
@@ -396,7 +383,7 @@ private:
     bool initialized_ = false;
 
     // Inverted keyword index: keyword → list of (skill, IDF weight) entries.
-    // Rebuilt on syncFromRegistry() / addAgent() / removeAgent().
+    // Rebuilt on addAgent() / removeAgent().
     struct KeywordEntry {
         std::string skill_name;
         double weight;  // IDF: 1.0 / number of skills sharing this keyword
