@@ -10,6 +10,7 @@
 
 #include "agent_info.h"
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -28,6 +29,9 @@ namespace agent_rpc { namespace mcp { namespace rag {
 
 // Forward declaration for syncFromRegistry parameter
 struct AgentRegistration;
+
+// Forward declaration for P1-1 LLM-based intent classification
+class LLMClient;
 
 namespace agent_rpc {
 namespace orchestrator {
@@ -97,7 +101,45 @@ public:
     std::optional<AgentInfo> selectAgent(
         const std::string& question,
         const std::vector<std::string>& required_skills = {});
-    
+
+    /**
+     * @brief Callback type for agent invocation (P1-2 generic dispatch)
+     *
+     * Parameters: (agent_url, prompt)
+     * Returns: agent response text, or empty string on failure.
+     */
+    using AgentDispatchFn = std::function<std::string(
+        const std::string& agent_url, const std::string& prompt)>;
+
+    /**
+     * @brief Result of a dispatch() call
+     */
+    struct DispatchResult {
+        std::string response;          // Agent response text
+        std::string agent_id;          // Selected agent ID (empty if routing failed)
+        std::string agent_name;        // Selected agent name
+        std::string matched_skill;     // Skill that was matched
+        int64_t latency_ms = 0;        // Total dispatch latency
+        bool success = false;          // Whether the call succeeded
+    };
+
+    /**
+     * @brief Generic dispatch: route + call agent (P1-2)
+     *
+     * Combines selectAgent() with an injectable call function.
+     * Eliminates if/else dispatch — any registered agent is reachable
+     * through the same code path.
+     *
+     * @param question User input text
+     * @param call_fn  Injectable agent call function
+     * @param required_skills Optional skill filter
+     * @return DispatchResult with response and routing metadata
+     */
+    DispatchResult dispatch(
+        const std::string& question,
+        const AgentDispatchFn& call_fn,
+        const std::vector<std::string>& required_skills = {});
+
     /**
      * @brief Find agents by skill
      * @param skill Skill to search for
@@ -252,6 +294,16 @@ public:
      */
     std::unordered_map<std::string, std::string> getAllSkillDescriptions() const;
 
+    /**
+     * @brief Set LLM client for dynamic intent classification (P1-1)
+     *
+     * When set, selectAgent() will use LLM-based intent classification
+     * with buildDynamicIntentPrompt() before falling back to embedding/keyword routing.
+     *
+     * @param client LLMClient instance (caller transfers ownership)
+     */
+    void setLLMClient(std::unique_ptr<LLMClient> client);
+
     // === Embedding-based Routing (P3) ===
 
     /**
@@ -318,6 +370,17 @@ private:
     void rebuildSkillKeywordIndex();
 
     /**
+     * @brief LLM-based intent classification using buildDynamicIntentPrompt() (P1-1)
+     *
+     * Calls LLM with a dynamically built prompt, parses the response as a
+     * skill name, and does exact matching against registered skills.
+     *
+     * @param question User input text
+     * @return Matched skill name, or empty string on failure
+     */
+    std::string analyzeIntentWithLLM(const std::string& question);
+
+    /**
      * @brief Build/rebuild the skill embedding index from current agents
      *
      * Embeds each skill's "name + description" text and stores in skill_index_.
@@ -348,6 +411,9 @@ private:
     mutable std::mutex embedding_mutex_;
     std::atomic<uint64_t> embedding_query_count_{0};
     std::atomic<uint64_t> embedding_hit_count_{0};
+
+    // LLM-based intent classification (P1-1)
+    std::unique_ptr<LLMClient> llm_client_;
 };
 
 } // namespace orchestrator

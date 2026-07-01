@@ -42,6 +42,7 @@ bool A2AAdapter::initialize(const A2AConfig& config) {
     // Create A2A client
     try {
         a2a_client_ = std::make_unique<a2a::A2AClient>(config_.orchestrator_url);
+        a2a_client_->set_timeout(config_.request_timeout_seconds);
         initialized_ = true;
         return true;
     } catch (const std::exception& e) {
@@ -253,6 +254,25 @@ void A2AAdapter::processQueryStreaming(
         response_adapter_->buildStreamEvent(
             e.what(), request.context_id(), "error", &error_event);
         callback(error_event);
+    }
+}
+
+bool A2AAdapter::cancelTask(const std::string& task_id) {
+    if (!initialized_ || !a2a_client_ || task_id.empty()) {
+        return false;
+    }
+
+    try {
+        a2a_client_->cancel_task(task_id);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void A2AAdapter::setRequestTimeout(long seconds) {
+    if (a2a_client_ && seconds > 0) {
+        a2a_client_->set_timeout(seconds);
     }
 }
 

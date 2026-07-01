@@ -120,6 +120,14 @@ grpc::Status AIQueryServiceImpl::Query(
     }
 
     // Process query via A2A adapter
+    // P2-2: Propagate gRPC deadline to A2A HTTP timeout
+    if (context->deadline() != std::chrono::system_clock::time_point::max()) {
+        auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+            context->deadline() - std::chrono::system_clock::now());
+        long timeout_sec = std::max(1L, static_cast<long>(remaining.count()));
+        a2a_adapter_->setRequestTimeout(timeout_sec);
+    }
+
     bool success = a2a_adapter_->processQuery(*request, response);
 
     // Record circuit breaker result
@@ -195,6 +203,14 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     std::string error_message;
 
     // Process streaming query
+    // P2-2: Propagate gRPC deadline to A2A HTTP timeout
+    if (context->deadline() != std::chrono::system_clock::time_point::max()) {
+        auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+            context->deadline() - std::chrono::system_clock::now());
+        long timeout_sec = std::max(1L, static_cast<long>(remaining.count()));
+        a2a_adapter_->setRequestTimeout(timeout_sec);
+    }
+
     a2a_adapter_->processQueryStreaming(*request,
         [this, &context, &writer, &success, &error_message, &request_id](
             const agent_communication::AIStreamEvent& event) {
@@ -204,6 +220,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                 success = false;
                 error_message = "Request cancelled";
                 updateTaskStatus(request_id, "cancelled");
+                // P2-2: Cancel the downstream A2A task
+                a2a_adapter_->cancelTask(request_id);
                 return;
             }
 

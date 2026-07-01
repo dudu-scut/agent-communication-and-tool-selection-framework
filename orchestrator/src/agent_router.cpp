@@ -10,8 +10,10 @@
 #include <agent_rpc/mcp/rag/vector_index.h>
 #include <agent_rpc/mcp/rag/embedding_cache.h>
 #include <a2a/agent_registry.hpp>
+#include <a2a/llm_client.hpp>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <sstream>
 
@@ -85,6 +87,34 @@ bool isCJK(uint32_t cp) {
            (cp >= 0x3400 && cp <= 0x4DBF);      // CJK Extension A
 }
 
+// P1-3: Word-boundary keyword matching.
+// ASCII keywords require whole-word match (bounded by non-alnum or string edge).
+// CJK keywords (bigrams) use substring match since Chinese has no word boundaries.
+bool matchKeyword(const std::string& text, const std::string& keyword) {
+    if (keyword.empty()) return false;
+
+    size_t pos = 0;
+    while ((pos = text.find(keyword, pos)) != std::string::npos) {
+        // Check CJK: if the first byte is a UTF-8 multi-byte lead, treat as CJK keyword
+        unsigned char first = static_cast<unsigned char>(keyword[0]);
+        if (first >= 0x80) {
+            return true;  // CJK keyword — substring match is sufficient
+        }
+
+        // ASCII keyword — require word boundaries
+        bool left_ok = (pos == 0) || !std::isalnum(static_cast<unsigned char>(text[pos - 1]));
+        size_t end_pos = pos + keyword.size();
+        bool right_ok = (end_pos >= text.size()) || !std::isalnum(static_cast<unsigned char>(text[end_pos]));
+
+        if (left_ok && right_ok) {
+            return true;
+        }
+
+        pos++;
+    }
+    return false;
+}
+
 } // anonymous namespace
 
 namespace agent_rpc {
@@ -127,16 +157,28 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
     // acquires agents_mutex_ internally in its Tier 3 keyword fallback path.
     std::vector<std::string> skills_to_match = required_skills;
     if (skills_to_match.empty() && strategy_ == RoutingStrategy::SKILL_MATCH) {
-        if (isEmbeddingEnabled()) {
-            SkillMatchResult match = analyzeRequiredSkillHybrid(question);
-            if (!match.skill_name.empty()) {
-                skills_to_match.push_back(match.skill_name);
+        // Tier 0: LLM-based intent classification (P1-1)
+        // Uses buildDynamicIntentPrompt() + LLM for accurate classification.
+        if (llm_client_) {
+            std::string llm_skill = analyzeIntentWithLLM(question);
+            if (!llm_skill.empty()) {
+                skills_to_match.push_back(llm_skill);
             }
-        } else {
-            std::lock_guard<std::mutex> lock(agents_mutex_);
-            std::string detected_skill = analyzeRequiredSkill(question);
-            if (!detected_skill.empty()) {
-                skills_to_match.push_back(detected_skill);
+        }
+
+        // Tier 1/2: Embedding or keyword fallback (only if LLM didn't match)
+        if (skills_to_match.empty()) {
+            if (isEmbeddingEnabled()) {
+                SkillMatchResult match = analyzeRequiredSkillHybrid(question);
+                if (!match.skill_name.empty()) {
+                    skills_to_match.push_back(match.skill_name);
+                }
+            } else {
+                std::lock_guard<std::mutex> lock(agents_mutex_);
+                std::string detected_skill = analyzeRequiredSkill(question);
+                if (!detected_skill.empty()) {
+                    skills_to_match.push_back(detected_skill);
+                }
             }
         }
     }
@@ -182,6 +224,45 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
     }
     
     return selectByStrategy(candidates);
+}
+
+AgentRouter::DispatchResult AgentRouter::dispatch(
+    const std::string& question,
+    const AgentDispatchFn& call_fn,
+    const std::vector<std::string>& required_skills) {
+
+    auto start = std::chrono::steady_clock::now();
+    DispatchResult result;
+
+    // Route: select the best agent
+    auto agent = selectAgent(question, required_skills);
+    if (!agent.has_value()) {
+        result.response = "No available agent to handle this request.";
+        return result;
+    }
+
+    result.agent_id = agent->id;
+    result.agent_name = agent->name;
+
+    // Determine matched skill (first skill of selected agent, or first required_skill)
+    if (!required_skills.empty()) {
+        result.matched_skill = required_skills.front();
+    } else if (!agent->skills.empty()) {
+        result.matched_skill = agent->skills.front();
+    }
+
+    // Call: invoke agent via the injected callback
+    try {
+        result.response = call_fn(agent->url, question);
+        result.success = !result.response.empty();
+    } catch (const std::exception& e) {
+        result.response = std::string("Agent call failed: ") + e.what();
+    }
+
+    auto end = std::chrono::steady_clock::now();
+    result.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    return result;
 }
 
 std::vector<AgentInfo> AgentRouter::findAgentsBySkill(const std::string& skill) {
@@ -373,7 +454,7 @@ std::string AgentRouter::analyzeRequiredSkill(const std::string& question) {
     std::unordered_map<std::string, double> skill_scores;
 
     for (const auto& [keyword, entries] : skill_keywords_) {
-        if (lower_question.find(keyword) != std::string::npos) {
+        if (matchKeyword(lower_question, keyword)) {
             for (const auto& entry : entries) {
                 skill_scores[entry.skill_name] += entry.weight;
             }
@@ -646,6 +727,61 @@ std::unordered_map<std::string, std::string> AgentRouter::getAllSkillDescription
     }
 
     return result;
+}
+
+void AgentRouter::setLLMClient(std::unique_ptr<LLMClient> client) {
+    llm_client_ = std::move(client);
+}
+
+std::string AgentRouter::analyzeIntentWithLLM(const std::string& question) {
+    if (!llm_client_) return {};
+
+    // Build dynamic prompt from registered agents (no agents_mutex_ needed here —
+    // buildDynamicIntentPrompt() acquires it internally)
+    std::string prompt = buildDynamicIntentPrompt(question);
+    if (prompt.empty()) return {};
+
+    // Call LLM for intent classification
+    std::string response;
+    try {
+        response = llm_client_->chat(
+            "你是一个意图分类器。只回答列出的技能名称之一，不要解释。",
+            prompt);
+    } catch (...) {
+        return {};
+    }
+
+    // Trim whitespace and lowercase
+    while (!response.empty() && std::isspace(static_cast<unsigned char>(response.front()))) {
+        response.erase(response.begin());
+    }
+    while (!response.empty() && std::isspace(static_cast<unsigned char>(response.back()))) {
+        response.pop_back();
+    }
+    std::string lower_response;
+    for (char c : response) {
+        lower_response += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    // "none" means no match
+    if (lower_response == "none" || lower_response.empty()) return {};
+
+    // Exact match against registered skill names (case-insensitive)
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    for (const auto& [id, agent] : agents_) {
+        if (!agent.is_healthy) continue;
+        for (const auto& skill : agent.skills) {
+            std::string lower_skill;
+            for (char c : skill) {
+                lower_skill += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (lower_response == lower_skill) {
+                return skill;
+            }
+        }
+    }
+
+    return {};  // LLM returned a skill that's not registered
 }
 
 // === Embedding-based Routing (P3) ===

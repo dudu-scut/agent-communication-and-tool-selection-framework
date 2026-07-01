@@ -80,7 +80,24 @@ public:
      * @return true if adapter is initialized and ready
      */
     bool isAvailable() const;
-    
+
+    /**
+     * @brief Cancel an in-flight task (P2-2)
+     * @param task_id Task identifier to cancel
+     * @return true if cancellation request was sent successfully
+     */
+    bool cancelTask(const std::string& task_id);
+
+    /**
+     * @brief Set per-request timeout (P2-2)
+     *
+     * Call before processQuery() to override the default timeout
+     * for the next request. Useful for propagating gRPC deadlines.
+     *
+     * @param seconds Timeout in seconds
+     */
+    void setRequestTimeout(long seconds);
+
     /**
      * @brief Get the current configuration
      * @return Current A2A configuration
