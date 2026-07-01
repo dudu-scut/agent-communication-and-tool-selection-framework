@@ -6,6 +6,9 @@
  */
 
 #include "agent_rpc/orchestrator/agent_router.h"
+#include <agent_rpc/mcp/rag/embedding_service.h>
+#include <agent_rpc/mcp/rag/vector_index.h>
+#include <agent_rpc/mcp/rag/embedding_cache.h>
 #include <a2a/examples/agent_registry.hpp>
 #include <algorithm>
 #include <cctype>
@@ -683,10 +686,28 @@ bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
         return false;
     }
 
-    // Build initial embedding index outside embedding_mutex_ scope.
-    // buildSkillEmbeddingIndex() locks embedding_mutex_ internally and
-    // also iterates agents_ (needs agents_mutex_ which callers may hold).
-    buildSkillEmbeddingIndex();
+    // Validate thresholds
+    if (config.high_threshold <= config.low_threshold) {
+        embedding_service_.reset();
+        skill_index_.reset();
+        embedding_cache_.reset();
+        embedding_config_.enabled = false;
+        return false;
+    }
+
+    // Build initial embedding index.
+    // Must hold agents_mutex_ to protect agents_ iteration inside
+    // buildSkillEmbeddingIndex(). Lock order: agents_mutex_ → embedding_mutex_.
+    try {
+        std::lock_guard<std::mutex> agents_lock(agents_mutex_);
+        buildSkillEmbeddingIndex();
+    } catch (const std::exception&) {
+        embedding_service_.reset();
+        skill_index_.reset();
+        embedding_cache_.reset();
+        embedding_config_.enabled = false;
+        return false;
+    }
 
     return true;
 }

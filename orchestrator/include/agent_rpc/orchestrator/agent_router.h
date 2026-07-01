@@ -9,15 +9,22 @@
 #pragma once
 
 #include "agent_info.h"
-#include <agent_rpc/mcp/rag/embedding_service.h>
-#include <agent_rpc/mcp/rag/vector_index.h>
-#include <agent_rpc/mcp/rag/embedding_cache.h>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
+
+// Forward declarations for MCP RAG types (P3 embedding routing)
+namespace agent_rpc { namespace mcp { namespace rag {
+    class EmbeddingService;
+    class VectorIndex;
+    class EmbeddingCache;
+}}}
 
 // Forward declaration for syncFromRegistry parameter
 struct AgentRegistration;
