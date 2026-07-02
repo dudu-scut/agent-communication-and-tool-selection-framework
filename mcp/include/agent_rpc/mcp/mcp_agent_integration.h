@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "agent_rpc/common/env_loader.h"
+
 #include "mcp_client.h"
 #include "agent_rpc/common/logger.h"
 
@@ -40,9 +42,9 @@ namespace mcp {
 struct RAGConfig {
     bool enabled = false;                  ///< 是否启用 RAG-MCP
     std::string api_key;                   ///< API Key（可从环境变量 LLM_API_KEY 读取）
-    std::string model = "deepseek-v4-pro"; ///< Embedding 模型
-    int top_k = 5;                         ///< 返回工具数量
-    float similarity_threshold = 0.3f;     ///< 相似度阈值
+    std::string model = agent_rpc::common::envOrDefault("EMBEDDING_MODEL", agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro"));
+    int top_k = agent_rpc::common::envOrInt("RAG_TOP_K", 5);
+    float similarity_threshold = agent_rpc::common::envOrFloat("RAG_THRESHOLD", 0.3f);
     std::string index_path;                ///< 索引文件路径
     bool enable_cache = true;              ///< 是否启用缓存
     size_t cache_max_size = 1000;          ///< 缓存最大条目

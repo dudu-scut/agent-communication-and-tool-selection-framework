@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "agent_rpc/common/env_loader.h"
+
 #include <string>
 #include <vector>
 #include <memory>
@@ -23,12 +25,12 @@ namespace rag {
  */
 struct EmbeddingConfig {
     std::string api_key;                          ///< API Key（Bearer Token 认证）
-    std::string model = "deepseek-v4-pro";        ///< 模型名称
+    std::string model = agent_rpc::common::envOrDefault("EMBEDDING_MODEL", agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro"));
     int dimension = 1024;                         ///< 向量维度
     int max_retries = 3;                          ///< 最大重试次数
     int timeout_ms = 10000;                       ///< 超时时间 (毫秒)
     int initial_retry_delay_ms = 1000;            ///< 初始重试延迟 (毫秒)
-    std::string api_url = "https://api.deepseek.com/v1/embeddings";
+    std::string api_url = agent_rpc::common::envOrDefault("EMBEDDING_API_URL", "https://api.deepseek.com/v1/embeddings");
 
     /**
      * @brief 从环境变量加载 API Key

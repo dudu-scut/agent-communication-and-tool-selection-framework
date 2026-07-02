@@ -10,6 +10,7 @@
 #include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/a2a_adapter/error_mapper.h"
 #include <a2a/llm_client.hpp>
 #include <a2a/client/a2a_client.hpp>
@@ -67,9 +68,8 @@ bool AIQueryServiceImpl::initialize(
     const char* api_key_env = std::getenv("LLM_API_KEY");
     if (api_key_env && api_key_env[0] != '\0') {
         std::string api_key(api_key_env);
-        std::string model = std::getenv("LLM_MODEL") ? std::getenv("LLM_MODEL") : "deepseek-v4-pro";
-        std::string api_url = std::getenv("LLM_API_URL") ? std::getenv("LLM_API_URL")
-            : "https://api.deepseek.com/v1/chat/completions";
+        std::string model = agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro");
+        std::string api_url = agent_rpc::common::envOrDefault("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions");
 
         // Memory: LLM client for cross-agent summary generation
         memory_llm_client_ = std::make_unique<LLMClient>(api_key, model, api_url);

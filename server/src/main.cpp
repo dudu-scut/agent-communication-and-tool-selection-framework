@@ -15,6 +15,7 @@
 #include "agent_rpc/server/ai_query_service.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/common/logger.h"
+#include "agent_rpc/common/env_loader.h"
 #include <iostream>
 #include <signal.h>
 #include <thread>
@@ -63,6 +64,9 @@ void printUsage(const char* program) {
 }
 
 int main(int argc, char* argv[]) {
+    // 加载 .env 文件（必须在所有 getenv 之前）
+    agent_rpc::common::loadEnvFile(".env");
+
     // 默认配置
     std::string port = "50051";
     std::string orchestrator_url = "http://localhost:5000";

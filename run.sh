@@ -30,6 +30,14 @@ FRONTEND_DIR="$PROJECT_ROOT/frontend"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
 
+# 自动加载 .env 文件（如存在）
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$PROJECT_ROOT/.env"
+    set +a
+fi
+
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 

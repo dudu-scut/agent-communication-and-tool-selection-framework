@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/orchestrator/task_planner.h"
 #include "agent_rpc/orchestrator/task_executor.h"
 #include <a2a/llm_client.hpp>
@@ -33,8 +34,8 @@ struct AggregatedResult {
 struct AggregatorConfig {
     std::string default_strategy = "concat";   // "concat" | "llm_synthesize"
     std::string api_key;
-    std::string model    = "deepseek-v4-pro";
-    std::string api_url  = "https://api.deepseek.com/v1/chat/completions";
+    std::string model    = agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro");
+    std::string api_url  = agent_rpc::common::envOrDefault("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions");
 };
 
 // ── ResultAggregator class ─────────────────────────────────────────────────

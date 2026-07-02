@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <cstdlib>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -17,11 +18,11 @@ using json = nlohmann::json;
 class LLMClient {
 public:
     explicit LLMClient(const std::string& api_key,
-                       const std::string& model = "deepseek-v4-pro",
-                       const std::string& api_url = "https://api.deepseek.com/v1/chat/completions")
+                       const std::string& model = "",
+                       const std::string& api_url = "")
         : api_key_(api_key)
-        , model_(model)
-        , api_url_(api_url) {
+        , model_(model.empty() ? (std::getenv("LLM_MODEL") ? std::getenv("LLM_MODEL") : "deepseek-v4-pro") : model)
+        , api_url_(api_url.empty() ? (std::getenv("LLM_API_URL") ? std::getenv("LLM_API_URL") : "https://api.deepseek.com/v1/chat/completions") : api_url) {
         curl_global_init(CURL_GLOBAL_DEFAULT);
     }
 

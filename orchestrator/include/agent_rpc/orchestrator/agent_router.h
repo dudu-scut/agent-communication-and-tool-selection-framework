@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "agent_rpc/common/env_loader.h"
 #include "agent_info.h"
 #include <atomic>
 #include <functional>
@@ -38,12 +39,12 @@ namespace orchestrator {
  */
 struct EmbeddingRouterConfig {
     bool enabled = false;
-    float high_threshold = 0.85f;   // similarity > this → direct route
-    float low_threshold = 0.50f;    // similarity < this → no match
+    float high_threshold = agent_rpc::common::envOrFloat("ROUTING_HIGH_THRESHOLD", 0.85f);
+    float low_threshold = agent_rpc::common::envOrFloat("ROUTING_LOW_THRESHOLD", 0.50f);
     std::string api_key;            // embedding API key (falls back to LLM_API_KEY env)
-    std::string model = "deepseek-v4-pro";
+    std::string model = agent_rpc::common::envOrDefault("EMBEDDING_MODEL", agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro"));
     int dimension = 1024;
-    std::string api_url = "https://api.deepseek.com/v1/embeddings";
+    std::string api_url = agent_rpc::common::envOrDefault("EMBEDDING_API_URL", "https://api.deepseek.com/v1/embeddings");
 };
 
 /**
