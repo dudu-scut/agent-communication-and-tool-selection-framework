@@ -3,3 +3,5 @@ logs/
 pids/
 docs/
 .env
+node_modules/
+*.log

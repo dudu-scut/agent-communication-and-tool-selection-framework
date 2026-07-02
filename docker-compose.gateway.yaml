@@ -58,7 +58,6 @@ services:
       - gateway-net
     depends_on:
       - envoy
-      - redis
     restart: unless-stopped
 
 networks:
