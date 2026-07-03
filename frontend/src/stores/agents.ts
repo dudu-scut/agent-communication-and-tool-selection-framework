@@ -47,7 +47,7 @@ export const useAgentsStore = defineStore('agents', () => {
       version: info.version,
       tags: info.tags || [],
       skills: cardSkills.length > 0 ? cardSkills : info.skills || [],
-      healthy: true, // 能从 GetAgents 返回的默认是健康的
+      healthy: true, // Agent returned from GetAgents = currently registered and reachable
     }
   }
 

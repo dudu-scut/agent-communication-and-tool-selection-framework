@@ -94,7 +94,7 @@ export const useChatStore = defineStore('chat', () => {
         if (msg.executionPlan) {
           const task = msg.executionPlan.tasks.find(t => t.id === event.task_state)
           if (task) {
-            task.status = event.content.startsWith('FAILED:') ? 'failed' : 'completed'
+            task.status = event.content?.startsWith('FAILED:') ? 'failed' : 'completed'
             task.result = event.content
           }
         }

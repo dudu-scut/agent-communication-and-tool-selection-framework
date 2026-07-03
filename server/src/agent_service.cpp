@@ -1,4 +1,5 @@
 #include "agent_rpc/server/agent_service.h"
+#include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/orchestrator/agent_router.h"
@@ -110,6 +111,10 @@ grpc::Status AgentCommunicationServiceImpl::SendMessage(
     const agent_communication::SendMessageRequest* request,
     agent_communication::SendMessageResponse* response) {
 
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
+
     auto start = std::chrono::steady_clock::now();
     const auto& target = request->target_agent();
 
@@ -138,6 +143,10 @@ grpc::Status AgentCommunicationServiceImpl::ReceiveMessage(
     grpc::ServerContext* /*context*/,
     const agent_communication::ReceiveMessageRequest* request,
     agent_communication::ReceiveMessageResponse* response) {
+
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
 
     const auto& agent_id = request->agent_id();
     int max_messages = request->max_messages();
@@ -169,6 +178,10 @@ grpc::Status AgentCommunicationServiceImpl::BroadcastMessage(
     grpc::ServerContext* /*context*/,
     const agent_communication::BroadcastMessageRequest* request,
     agent_communication::BroadcastMessageResponse* response) {
+
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
 
     std::lock_guard<std::mutex> lock(agents_mutex_);
     int success_count = 0;
@@ -204,6 +217,10 @@ grpc::Status AgentCommunicationServiceImpl::GetAgents(
     grpc::ServerContext* /*context*/,
     const agent_communication::GetAgentsRequest* request,
     agent_communication::GetAgentsResponse* response) {
+
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
 
     std::lock_guard<std::mutex> lock(agents_mutex_);
     int offset = request->offset();
@@ -252,6 +269,23 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     agent_communication::RegisterAgentResponse* response) {
 
     const auto& info = request->agent_info();
+
+    // B-02: Validate required fields
+    if (info.service_name().empty()) {
+        auto* status = response->mutable_status();
+        status->set_code(3); // INVALID_ARGUMENT
+        status->set_message("agent_info.service_name is required");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "agent_info.service_name is required");
+    }
+    if (info.host().empty() || info.port() <= 0) {
+        auto* status = response->mutable_status();
+        status->set_code(3);
+        status->set_message("agent_info.host and port are required");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "agent_info.host and port are required");
+    }
+
     std::string agent_id = info.service_name() + "-" + info.host() + "-" + std::to_string(info.port());
 
     common::ServiceEndpoint endpoint;
@@ -370,6 +404,10 @@ grpc::Status AgentCommunicationServiceImpl::ListenMessages(
     const agent_communication::ReceiveMessageRequest* request,
     grpc::ServerWriter<agent_communication::Message>* writer) {
 
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
+
     const auto& agent_id = request->agent_id();
     int timeout_seconds = request->timeout_seconds();
     if (timeout_seconds <= 0) timeout_seconds = 30;
@@ -398,6 +436,10 @@ grpc::Status AgentCommunicationServiceImpl::BatchSendMessages(
     grpc::ServerReader<agent_communication::SendMessageRequest>* reader,
     agent_communication::SendMessageResponse* response) {
 
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
+
     agent_communication::SendMessageRequest req;
     int count = 0;
     while (reader->Read(&req)) {
@@ -420,6 +462,10 @@ grpc::Status AgentCommunicationServiceImpl::RealTimeCommunication(
     grpc::ServerContext* context,
     grpc::ServerReaderWriter<agent_communication::Message,
                              agent_communication::Message>* stream) {
+
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
 
     agent_communication::Message msg;
     while (!context->IsCancelled() && stream->Read(&msg)) {
@@ -467,6 +513,10 @@ grpc::Status AgentCommunicationServiceImpl::FindAgents(
     grpc::ServerContext* /*context*/,
     const agent_communication::FindAgentsRequest* request,
     agent_communication::FindAgentsResponse* response) {
+
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
+    }
 
     std::lock_guard<std::mutex> lock(agents_mutex_);
     int limit = request->limit();

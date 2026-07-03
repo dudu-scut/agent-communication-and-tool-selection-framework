@@ -103,6 +103,26 @@ bool AIQueryServiceImpl::isAvailable() const {
     return initialized_ && a2a_adapter_ && a2a_adapter_->isAvailable();
 }
 
+// B-03: Sanitize raw CURL errors into user-friendly messages
+static std::string sanitizeErrorMessage(const std::string& msg) {
+    if (msg.find("CURL error") != std::string::npos) {
+        if (msg.find("Couldn't connect") != std::string::npos ||
+            msg.find("couldn't connect") != std::string::npos) {
+            return "Agent service is currently unreachable. Please verify the agent is running and try again later.";
+        }
+        if (msg.find("timeout") != std::string::npos ||
+            msg.find("Timeout") != std::string::npos) {
+            return "Agent service did not respond in time. Please try again later.";
+        }
+        if (msg.find("URL using bad") != std::string::npos ||
+            msg.find("missing URL") != std::string::npos) {
+            return "Invalid agent endpoint configuration. Please contact the administrator.";
+        }
+        return "Failed to connect to agent service. Please try again later.";
+    }
+    return msg;
+}
+
 grpc::Status AIQueryServiceImpl::Query(
     grpc::ServerContext* context,
     const agent_communication::AIQueryRequest* request,
@@ -239,7 +259,7 @@ grpc::Status AIQueryServiceImpl::Query(
         grpc::StatusCode grpc_code = a2a_adapter::ErrorMapper::mapIntToGrpcStatus(
             response->status().code());
         LOG_ERROR("AI query failed: " + request_id);
-        return grpc::Status(grpc_code, response->status().message());
+        return grpc::Status(grpc_code, sanitizeErrorMessage(response->status().message()));
     }
 }
 
@@ -712,7 +732,7 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
         recordMetrics("Query", duration.count(), success);
         return success ? grpc::Status::OK
                        : grpc::Status(grpc::StatusCode::INTERNAL,
-                                      response->status().message());
+                                      sanitizeErrorMessage(response->status().message()));
     }
 
     // Multi-agent path
@@ -794,7 +814,7 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
         updateTaskStatus(request_id, "failed", "", "", e.what());
         recordMetrics("Query", duration.count(), false);
         return grpc::Status(grpc::StatusCode::INTERNAL,
-                           std::string("Multi-agent orchestration failed: ") + e.what());
+                           sanitizeErrorMessage(std::string("Multi-agent orchestration failed: ") + e.what()));
     }
 }
 

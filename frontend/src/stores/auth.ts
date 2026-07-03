@@ -1,6 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as apiLogin, register as apiRegister, setAuthTokenGetter } from '../services/grpc-client'
+import { login as apiLogin, register as apiRegister, setAuthTokenGetter, setOnUnauthorized } from '../services/grpc-client'
+import { useChatStore } from './chat'
+import { useAgentsStore } from './agents'
+
+const AUTH_STORAGE_KEY = 'nexusai_auth'
 
 export const useAuthStore = defineStore('auth', () => {
   const userId = ref<string | null>(null)
@@ -8,17 +12,41 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(null)
   const expiresAt = ref<number>(0)
 
+  // Hydrate from localStorage on store init
+  try {
+    const saved = localStorage.getItem(AUTH_STORAGE_KEY)
+    if (saved) {
+      const data = JSON.parse(saved)
+      userId.value = data.userId ?? null
+      username.value = data.username ?? null
+      token.value = data.token ?? null
+      expiresAt.value = data.expiresAt ?? 0
+    }
+  } catch {
+    // ignore corrupt localStorage data
+  }
+
   const isAuthenticated = computed(() => {
     if (!token.value) return false
     if (Date.now() > expiresAt.value) return false
     return true
   })
 
+  function saveToStorage() {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      userId: userId.value,
+      username: username.value,
+      token: token.value,
+      expiresAt: expiresAt.value,
+    }))
+  }
+
   function setAuth(data: { user_id: string; username: string; token: string; expires_at: number }) {
     userId.value = data.user_id
     username.value = data.username
     token.value = data.token
     expiresAt.value = data.expires_at * 1000 // server returns seconds, JS uses ms
+    saveToStorage()
   }
 
   function clearAuth() {
@@ -26,6 +54,7 @@ export const useAuthStore = defineStore('auth', () => {
     username.value = null
     token.value = null
     expiresAt.value = 0
+    localStorage.removeItem(AUTH_STORAGE_KEY)
   }
 
   async function login(user: string, pass: string): Promise<string | null> {
@@ -55,10 +84,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   function logout() {
     clearAuth()
+    useChatStore().newConversation()
+    useAgentsStore().stopPolling()
   }
 
   // Wire token getter so all gRPC calls include auth header
   setAuthTokenGetter(() => token.value)
+
+  // Wire unauthorized callback so 401 responses trigger logout
+  setOnUnauthorized(() => logout())
 
   return {
     userId,

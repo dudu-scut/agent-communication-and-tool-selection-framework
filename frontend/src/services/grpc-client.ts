@@ -31,6 +31,10 @@ export function setAuthTokenGetter(getter: () => string | null) {
   _getAuthToken = getter
 }
 
+// Unauthorized callback (set by auth store to trigger logout on 401)
+let _onUnauthorized: (() => void) | null = null
+export function setOnUnauthorized(cb: () => void) { _onUnauthorized = cb }
+
 /**
  * 一元 RPC 调用（JSON 序列化，通过 grpcwebproxy 转发）
  */
@@ -54,6 +58,9 @@ async function unaryCall<TReq, TRes>(
   })
 
   if (!resp.ok) {
+    if (resp.status === 401) {
+      _onUnauthorized?.()
+    }
     throw new Error(`RPC ${method} failed: ${resp.status} ${resp.statusText}`)
   }
 
@@ -92,7 +99,7 @@ export function queryStream(
   onEvent: (event: AIStreamEvent) => void,
   contextId?: string,
   signal?: AbortSignal,
-): void {
+): Promise<void> {
   const req: AIQueryRequest = {
     request_id: crypto.randomUUID(),
     question,
@@ -110,13 +117,20 @@ export function queryStream(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  fetch(url, {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 130_000)
+  if (signal) {
+    signal.addEventListener('abort', () => controller.abort())
+  }
+
+  return fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(req),
-    signal,
+    signal: controller.signal,
   })
     .then(async (resp) => {
+      clearTimeout(timeoutId)
       if (!resp.ok) {
         throw new Error(`QueryStream failed: ${resp.status}`)
       }
@@ -163,6 +177,7 @@ export function queryStream(
       }
     })
     .catch((err) => {
+      clearTimeout(timeoutId)
       if (err.name !== 'AbortError') {
         onEvent({
           event_id: '',

@@ -2,6 +2,8 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/registry/service_registry.h"
 #include "agent_rpc/server/rpc_server.h"
+#include "agent_rpc/server/auth_interceptor.h"
+#include "agent_rpc/common/circuit_breaker.h"
 
 #include <gtest/gtest.h>
 
@@ -33,6 +35,9 @@ common::ServiceEndpoint makeAgent(const std::string& host,
 class AgentCommunicationIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // Reset circuit breakers from prior test suites
+        common::CircuitBreakerManager::getInstance().resetAll();
+
         common::LogConfig log_config;
         log_config.level = common::LogLevel::Level_ERROR;
         log_config.async_logging = false;
@@ -50,6 +55,9 @@ protected:
         server_ = std::make_unique<server::RpcServer>();
         ASSERT_TRUE(server_->initialize(server_config));
         ASSERT_TRUE(server_->start());
+
+        // Disable auth enforcement AFTER initialize() which may force-enable it
+        server::AuthInterceptor::setAuthEnabled(false);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }

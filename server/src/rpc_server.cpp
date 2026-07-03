@@ -297,6 +297,7 @@ void RpcServer::setupServer() {
 
     // 注册认证拦截器 (Token验证)
     if (auth_service_impl_) {
+        AuthInterceptor::setAuthEnabled(true);
         std::vector<std::unique_ptr<grpc::experimental::ServerInterceptorFactoryInterface>>
             interceptor_creators;
         interceptor_creators.push_back(

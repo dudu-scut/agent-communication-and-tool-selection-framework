@@ -41,6 +41,7 @@
         </div>
 
         <p v-if="error" class="error-message">{{ error }}</p>
+        <p v-if="success" class="success-message">{{ success }}</p>
 
         <button type="submit" class="btn-submit" :disabled="loading">
           {{ loading ? '请稍候...' : (isRegister ? '注册' : '登录') }}
@@ -70,6 +71,7 @@ const auth = useAuthStore()
 const isRegister = ref(false)
 const loading = ref(false)
 const error = ref('')
+const success = ref('')
 
 const form = reactive({
   username: '',
@@ -80,11 +82,13 @@ const form = reactive({
 function switchToLogin() {
   isRegister.value = false
   error.value = ''
+  success.value = ''
 }
 
 function switchToRegister() {
   isRegister.value = true
   error.value = ''
+  success.value = ''
 }
 
 async function handleSubmit() {
@@ -93,8 +97,14 @@ async function handleSubmit() {
     return
   }
 
+  if (form.password.length < 6) {
+    error.value = '密码长度不能少于6位'
+    return
+  }
+
   loading.value = true
   error.value = ''
+  success.value = ''
 
   try {
     if (isRegister.value) {
@@ -105,10 +115,8 @@ async function handleSubmit() {
       }
       // Registration successful — switch to login
       isRegister.value = false
-      error.value = ''
       form.password = ''
-      // Show success message via error field (reuse UI)
-      error.value = '注册成功，请登录'
+      success.value = '注册成功，请登录'
     } else {
       const err = await auth.login(form.username.trim(), form.password)
       if (err) {
@@ -197,6 +205,12 @@ async function handleSubmit() {
 .error-message {
   font-size: 0.8125rem;
   color: #dc2626;
+  text-align: center;
+}
+
+.success-message {
+  font-size: 0.8125rem;
+  color: #16a34a;
   text-align: center;
 }
 

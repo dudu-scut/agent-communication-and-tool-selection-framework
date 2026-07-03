@@ -1,6 +1,7 @@
 #pragma once
 
 #include <grpcpp/grpcpp.h>
+#include <atomic>
 #include <string>
 
 namespace agent_rpc {
@@ -41,6 +42,10 @@ public:
     static bool isAuthenticated();
     static std::string currentUserId();
 
+    // Auth enable flag: when false, isAuthenticated() returns true (no enforcement)
+    static void setAuthEnabled(bool enabled);
+    static bool isAuthEnabled();
+
 private:
     static std::string extractBearerToken(
         const std::multimap<grpc::string_ref, grpc::string_ref>& metadata);
@@ -50,6 +55,7 @@ private:
     std::string method_path_;
 
     static thread_local AuthContext tls_auth_;
+    static std::atomic<bool> auth_enabled_;
 };
 
 }  // namespace server

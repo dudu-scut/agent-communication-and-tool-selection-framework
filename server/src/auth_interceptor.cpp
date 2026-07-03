@@ -6,6 +6,7 @@ namespace agent_rpc {
 namespace server {
 
 thread_local AuthInterceptor::AuthContext AuthInterceptor::tls_auth_;
+std::atomic<bool> AuthInterceptor::auth_enabled_{false};
 
 AuthInterceptor::AuthInterceptor(AuthServiceImpl* auth_service,
                                   grpc::ServerContextBase* context,
@@ -61,11 +62,21 @@ const AuthInterceptor::AuthContext& AuthInterceptor::currentAuth() {
 }
 
 bool AuthInterceptor::isAuthenticated() {
+    // When no auth service is configured, all requests are allowed (backward compat)
+    if (!auth_enabled_.load(std::memory_order_relaxed)) return true;
     return tls_auth_.authenticated;
 }
 
 std::string AuthInterceptor::currentUserId() {
     return tls_auth_.user_id;
+}
+
+void AuthInterceptor::setAuthEnabled(bool enabled) {
+    auth_enabled_.store(enabled, std::memory_order_relaxed);
+}
+
+bool AuthInterceptor::isAuthEnabled() {
+    return auth_enabled_.load(std::memory_order_relaxed);
 }
 
 std::string AuthInterceptor::extractBearerToken(

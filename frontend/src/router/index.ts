@@ -20,11 +20,21 @@ const router = createRouter({
       name: 'admin',
       component: () => import('../views/AdminView.vue'),
     },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/',
+    },
   ],
 })
 
 router.beforeEach((to) => {
-  if (to.meta.public) return true
+  if (to.meta.public) {
+    const auth = useAuthStore()
+    if (to.name === 'login' && auth.isAuthenticated) {
+      return { name: 'chat' }
+    }
+    return true
+  }
 
   const auth = useAuthStore()
   if (!auth.isAuthenticated) {

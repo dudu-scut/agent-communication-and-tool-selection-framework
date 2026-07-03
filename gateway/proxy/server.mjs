@@ -90,6 +90,21 @@ function buildMetadata(headers) {
   return meta;
 }
 
+// ── Helper: Convert Buffer fields to base64 ─────────────────────────────
+// B-04: protobuf bytes fields come back as Buffer objects from grpc-js.
+// JSON.stringify renders them as {"type":"Buffer","data":[...]}.
+// This function recursively walks the object and converts Buffers to base64.
+function sanitizeBuffers(obj) {
+  if (obj == null || typeof obj !== 'object') return obj;
+  if (Buffer.isBuffer(obj)) return obj.toString('base64');
+  if (Array.isArray(obj)) return obj.map(sanitizeBuffers);
+  const result = {};
+  for (const key of Object.keys(obj)) {
+    result[key] = sanitizeBuffers(obj[key]);
+  }
+  return result;
+}
+
 // ── Unary RPC Handler ───────────────────────────────────────────────────
 function unaryCall(serviceName, methodName, body, metadata) {
   return new Promise((resolve, reject) => {
@@ -140,7 +155,7 @@ function streamCall(serviceName, methodName, body, metadata, res) {
   const stream = client[grpcMethod](body, metadata);
 
   stream.on('data', (event) => {
-    const json = JSON.stringify(event);
+    const json = JSON.stringify(sanitizeBuffers(event));
     res.write(`data: ${json}\n\n`);
   });
 
@@ -225,7 +240,7 @@ function handleRequest(req, res) {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
       });
-      res.end(JSON.stringify(response));
+      res.end(JSON.stringify(sanitizeBuffers(response)));
     } catch (err) {
       const status = err.code === grpc.status.UNAUTHENTICATED ? 401
         : err.code === grpc.status.NOT_FOUND ? 404
