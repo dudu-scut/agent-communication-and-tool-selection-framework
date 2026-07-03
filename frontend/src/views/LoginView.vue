@@ -102,6 +102,11 @@ async function handleSubmit() {
     return
   }
 
+  if (isRegister.value && form.username.trim().length < 3) {
+    error.value = '用户名长度不能少于3位'
+    return
+  }
+
   loading.value = true
   error.value = ''
   success.value = ''
