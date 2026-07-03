@@ -696,7 +696,13 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     std::string question = request->question();
 
     // Step 1: Plan — decide single vs multi-agent
-    auto plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
+    orchestrator::ExecutionPlan plan;
+    try {
+        plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
+    } catch (const std::exception& e) {
+        LOG_ERROR("Planning failed for sync query: " + request_id + " - " + e.what());
+        plan.is_single_agent = true;
+    }
 
     // Pre-resolve agents for all subtasks (eliminates redundant routing in executor)
     task_planner_->resolveAgents(plan, *agent_router_);
@@ -829,8 +835,26 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
     std::string question = request->question();
     std::string context_id = request->context_id();
 
-    // Step 1: Plan
-    auto plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
+    // Send "thinking" status event immediately so frontend gets feedback
+    // during the potentially slow LLM planning call
+    {
+        agent_communication::AIStreamEvent thinking_event;
+        thinking_event.set_event_type("status");
+        thinking_event.set_content("thinking");
+        thinking_event.set_task_state("planning");
+        thinking_event.set_context_id(context_id);
+        writer->Write(thinking_event);
+    }
+
+    // Step 1: Plan — decide single vs multi-agent
+    // Wrapped in try-catch: LLM call may fail (timeout, unreachable API, etc.)
+    orchestrator::ExecutionPlan plan;
+    try {
+        plan = task_planner_->plan(question, agent_router_->getAllSkillDescriptions());
+    } catch (const std::exception& e) {
+        LOG_ERROR("Planning failed for query: " + request_id + " - " + e.what());
+        plan.is_single_agent = true;
+    }
 
     // Pre-resolve agents for all subtasks
     task_planner_->resolveAgents(plan, *agent_router_);
@@ -850,11 +874,30 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
             }
         }
 
-        if (!agent_url.empty()) {
-            a2a_adapter_->processQueryStreamingDirect(*request, write_cb, agent_url);
-        } else {
-            // Fallback: adapter does its own routing
-            a2a_adapter_->processQueryStreaming(*request, write_cb);
+        try {
+            if (!agent_url.empty()) {
+                LOG_INFO("Single-agent stream: routing to " + plan.single_agent_skill +
+                         " via " + agent_url);
+                a2a_adapter_->processQueryStreamingDirect(*request, write_cb, agent_url);
+            } else {
+                LOG_INFO("Single-agent stream: no pre-resolved agent, using adapter routing");
+                a2a_adapter_->processQueryStreaming(*request, write_cb);
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("Single-agent streaming failed: " + request_id + " - " + e.what());
+            agent_communication::AIStreamEvent error_event;
+            error_event.set_event_type("error");
+            error_event.set_content(std::string("Agent communication failed: ") + e.what());
+            error_event.set_context_id(context_id);
+            writer->Write(error_event);
+
+            auto end_time = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                end_time - start_time);
+            updateTaskStatus(request_id, "failed", "", "", e.what());
+            recordMetrics("QueryStream", duration.count(), false);
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                               sanitizeErrorMessage(std::string("Agent streaming failed: ") + e.what()));
         }
 
         agent_communication::AIStreamEvent complete;

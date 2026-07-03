@@ -66,8 +66,12 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'status':
-        // 从 status 事件中提取 Agent 名称
-        if (event.content) {
+        // "thinking" during planning phase, or agent name from A2A
+        if (event.task_state === 'planning') {
+          if (!msg.content) {
+            msg.content = '正在分析请求...'
+          }
+        } else if (event.content && event.content !== 'thinking') {
           msg.agentName = event.content
         }
         break

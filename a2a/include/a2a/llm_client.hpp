@@ -23,11 +23,19 @@ public:
         : api_key_(api_key)
         , model_(model.empty() ? (std::getenv("LLM_MODEL") ? std::getenv("LLM_MODEL") : "deepseek-v4-pro") : model)
         , api_url_(api_url.empty() ? (std::getenv("LLM_API_URL") ? std::getenv("LLM_API_URL") : "https://api.deepseek.com/v1/chat/completions") : api_url) {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
+        // Use static flag to ensure curl_global_init is called exactly once,
+        // regardless of how many LLMClient instances are created.
+        static bool curl_initialized = []() {
+            curl_global_init(CURL_GLOBAL_DEFAULT);
+            return true;
+        }();
+        (void)curl_initialized;
     }
 
     ~LLMClient() {
-        curl_global_cleanup();
+        // Never call curl_global_cleanup in destructor:
+        // multiple instances share the process-global curl state,
+        // and cleanup is handled at process exit.
     }
 
     /**
@@ -125,7 +133,8 @@ private:
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
 
         // 执行请求
         CURLcode res = curl_easy_perform(curl);
