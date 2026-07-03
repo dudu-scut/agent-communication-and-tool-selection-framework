@@ -69,17 +69,6 @@ function initClients() {
   console.log(`gRPC clients initialized → ${GRPC_TARGET}`);
 }
 
-// ── Helper: Check if method is server-streaming ─────────────────────────
-function isServerStreaming(serviceName, methodName) {
-  const client = clients[serviceName];
-  if (!client) return false;
-  const method = client[methodName[0].toLowerCase() + methodName.slice(1)];
-  if (!method) return false;
-  // grpc-js stores method metadata
-  return method.responseStream === true ||
-    (client.service && client.service[methodName] && client.service[methodName].responseStream);
-}
-
 // ── Helper: Extract auth metadata ───────────────────────────────────────
 function buildMetadata(headers) {
   const meta = new grpc.Metadata();

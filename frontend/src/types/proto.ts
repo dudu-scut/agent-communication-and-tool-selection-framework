@@ -57,8 +57,15 @@ export interface AIQueryResponse {
   agent_name: string
   task_id: string
   context_id: string
-  processing_time_ms: number
+  processing_time_ms: number | string  // proto-loader returns string for int64
   memory_hints?: Record<string, string>
+  artifacts?: Artifact[]
+}
+
+export interface Artifact {
+  name: string
+  mime_type: string
+  content: string
 }
 
 export interface AIStreamEvent {
@@ -89,6 +96,7 @@ export interface FindAgentsRequest {
   skill: string
   keyword: string
   limit: number
+  required_skills?: string[]
 }
 
 export interface FindAgentsResponse {
