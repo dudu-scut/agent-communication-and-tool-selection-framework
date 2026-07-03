@@ -22,7 +22,7 @@ const router = createRouter({
     },
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/',
+      redirect: '/login',
     },
   ],
 })
@@ -38,7 +38,8 @@ router.beforeEach((to) => {
 
   const auth = useAuthStore()
   if (!auth.isAuthenticated) {
-    auth.logout() // Clean up stale token (expired or missing)
+    // Only cleanup if there was actually a stale token
+    if (auth.token) auth.logout()
     return { name: 'login' }
   }
   return true

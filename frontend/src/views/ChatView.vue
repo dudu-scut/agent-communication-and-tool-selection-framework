@@ -33,6 +33,8 @@
           :placeholder="chatStore.isStreaming ? 'Agent 正在回答...' : '输入你的问题...'"
           :disabled="chatStore.isStreaming"
           @keydown.enter.exact.prevent="handleSend"
+          @compositionstart="composing = true"
+          @compositionend="composing = false"
           rows="1"
           @input="autoResize"
           ref="textareaRef"
@@ -68,10 +70,12 @@ const router = useRouter()
 const chatStore = useChatStore()
 const authStore = useAuthStore()
 const inputText = ref('')
+const composing = ref(false)
 const messagesRef = ref<HTMLElement>()
 const textareaRef = ref<HTMLTextAreaElement>()
 
 function handleSend() {
+  if (composing.value) return
   const text = inputText.value.trim()
   if (!text) return
   chatStore.sendQuestion(text)

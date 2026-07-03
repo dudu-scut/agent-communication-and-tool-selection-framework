@@ -214,10 +214,28 @@ function handleRequest(req, res) {
     return res.end(JSON.stringify({ error: `Unknown service: ${serviceName}` }));
   }
 
-  // Read JSON body
+  // Read JSON body (with 1MB size limit to prevent DoS)
+  const MAX_BODY_SIZE = 1024 * 1024; // 1MB
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (contentLength > MAX_BODY_SIZE) {
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Request body too large (max 1MB)' }));
+  }
+
   let body = '';
-  req.on('data', (chunk) => { body += chunk; });
+  let bodySize = 0;
+  req.on('data', (chunk) => {
+    bodySize += chunk.length;
+    if (bodySize > MAX_BODY_SIZE) {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request body too large (max 1MB)' }));
+      req.destroy();
+      return;
+    }
+    body += chunk;
+  });
   req.on('end', async () => {
+    if (bodySize > MAX_BODY_SIZE) return; // already responded
     let parsed;
     try {
       parsed = body ? JSON.parse(body) : {};

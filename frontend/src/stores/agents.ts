@@ -15,6 +15,9 @@ export const useAgentsStore = defineStore('agents', () => {
 
     try {
       const resp = await getAgents()
+      if (resp.status.code !== 0) {
+        throw new Error(resp.status.message || 'Failed to fetch agents')
+      }
       agents.value = resp.agents.map(toAgentDisplayInfo)
       lastFetched.value = Date.now()
     } catch (err: unknown) {

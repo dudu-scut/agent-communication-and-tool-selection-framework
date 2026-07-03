@@ -6,6 +6,10 @@ import { useAgentsStore } from './agents'
 
 const AUTH_STORAGE_KEY = 'nexusai_auth'
 
+// Periodic token expiry check — runs once, shared across store instances
+let _expiryTimer: ReturnType<typeof setInterval> | null = null
+let _expiryCheckFn: (() => void) | null = null
+
 export const useAuthStore = defineStore('auth', () => {
   const userId = ref<string | null>(null)
   const username = ref<string | null>(null)
@@ -33,12 +37,16 @@ export const useAuthStore = defineStore('auth', () => {
   })
 
   function saveToStorage() {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
-      userId: userId.value,
-      username: username.value,
-      token: token.value,
-      expiresAt: expiresAt.value,
-    }))
+    try {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+        userId: userId.value,
+        username: username.value,
+        token: token.value,
+        expiresAt: expiresAt.value,
+      }))
+    } catch {
+      // localStorage full or disabled — auth still works in-memory
+    }
   }
 
   function setAuth(data: { user_id: string; username: string; token: string; expires_at: number }) {
@@ -92,7 +100,21 @@ export const useAuthStore = defineStore('auth', () => {
   setAuthTokenGetter(() => token.value)
 
   // Wire unauthorized callback so 401 responses trigger logout
-  setOnUnauthorized(() => logout())
+  // Only fire when user actually had a session (prevents 401 during login triggering logout)
+  setOnUnauthorized(() => {
+    if (token.value) logout()
+  })
+
+  // Periodic token expiry check — proactively logout when token expires
+  // (Date.now() in computed isn't time-reactive, so we poll)
+  _expiryCheckFn = () => {
+    if (token.value && Date.now() > expiresAt.value) {
+      logout()
+    }
+  }
+  if (!_expiryTimer) {
+    _expiryTimer = setInterval(() => _expiryCheckFn?.(), 30_000)
+  }
 
   return {
     userId,

@@ -118,7 +118,8 @@ export function queryStream(
   }
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 130_000)
+  let timedOut = false
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort() }, 130_000)
   if (signal) {
     signal.addEventListener('abort', () => controller.abort())
   }
@@ -178,16 +179,16 @@ export function queryStream(
     })
     .catch((err) => {
       clearTimeout(timeoutId)
-      if (err.name !== 'AbortError') {
-        onEvent({
-          event_id: '',
-          event_type: 'error',
-          content: err.message || 'Stream failed',
-          task_state: 'failed',
-          context_id: contextId || 'default',
-          timestamp: Date.now(),
-        })
-      }
+      // Emit error for timeout abort or non-abort errors; skip only user-initiated abort
+      if (err.name === 'AbortError' && !timedOut) return
+      onEvent({
+        event_id: '',
+        event_type: 'error',
+        content: timedOut ? '请求超时，请稍后重试' : (err.message || 'Stream failed'),
+        task_state: 'failed',
+        context_id: contextId || 'default',
+        timestamp: Date.now(),
+      })
     })
 }
 

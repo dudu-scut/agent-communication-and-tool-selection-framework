@@ -60,6 +60,13 @@ grpc::Status AuthServiceImpl::Register(
                             "Username and password required");
     }
 
+    if (request->username().size() < 3 || request->password().size() < 6) {
+        response->mutable_status()->set_code(400);
+        response->mutable_status()->set_message("Username min 3 chars, password min 6 chars");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "Username min 3 chars, password min 6 chars");
+    }
+
     if (request->username().size() > 64 || request->password().size() > 128) {
         response->mutable_status()->set_code(400);
         response->mutable_status()->set_message("Username or password too long");

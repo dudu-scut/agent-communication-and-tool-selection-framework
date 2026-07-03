@@ -48,7 +48,15 @@ export const useChatStore = defineStore('chat', () => {
       (event: AIStreamEvent) => handleStreamEvent(event, agentMsg),
       contextId.value,
       ac.signal,
-    )
+    ).finally(() => {
+      // Safety net: if server disconnects without a complete/error event
+      if (agentMsg.streaming) {
+        agentMsg.streaming = false
+        agentMsg.content += '\n[连接断开]'
+      }
+      isStreaming.value = false
+      abortController.value = null
+    })
   }
 
   function handleStreamEvent(event: AIStreamEvent, msg: ChatMessage) {
@@ -124,11 +132,14 @@ export const useChatStore = defineStore('chat', () => {
       abortController.value = null
     }
     isStreaming.value = false
-    // 标记最后一条消息为停止
-    const last = messages.value[messages.value.length - 1]
-    if (last?.streaming) {
-      last.streaming = false
-      last.content += '\n[已停止]'
+    // Find the last streaming agent message (not just the last in array)
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const msg = messages.value[i]
+      if (msg.role === 'agent' && msg.streaming) {
+        msg.streaming = false
+        msg.content += '\n[已停止]'
+        break
+      }
     }
   }
 

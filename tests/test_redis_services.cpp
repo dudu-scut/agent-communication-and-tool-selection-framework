@@ -494,13 +494,13 @@ TEST_F(AuthFixture, AtomicRegistrationPreventsRace) {
     agent_communication::auth::RegisterRequest req;
     agent_communication::auth::RegisterResponse resp;
     req.set_username(username);
-    req.set_password("pw1");
+    req.set_password("pw1test");
 
     auto s1 = auth->Register(&ctx, &req, &resp);
     EXPECT_TRUE(s1.ok());
     auto first_uid = resp.user_id();
 
-    req.set_password("pw2");
+    req.set_password("pw2test");
     auto s2 = auth->Register(&ctx, &req, &resp);
     EXPECT_EQ(s2.error_code(), grpc::StatusCode::ALREADY_EXISTS);
 
