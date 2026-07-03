@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Math Agent — 数学计算 Demo Agent
 
-支持基础算术和方程求解，用于验证 NexusAI 路由匹配（math/equation skill）。
+支持基础算术和方程求解，验证 NexusAI 路由匹配（math/equation skill）。
+纯标准库实现，sympy 可选（方程求解时自动检测）。
 
 用法:
-    pip install flask requests sympy
-    python math_agent.py
+    python3 math_agent.py
 """
 
 import json
@@ -15,14 +15,14 @@ import sys
 import threading
 import time
 import uuid
-
-from flask import Flask, request as flask_request, jsonify, Response
-import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.request import Request, urlopen
 
 # ── 配置 ─────────────────────────────────────────────────────────────────
 AGENT_NAME = "math-agent"
 AGENT_VERSION = "1.0.0"
-AGENT_HOST = "127.0.0.1"
+import os
+AGENT_HOST = os.environ.get("AGENT_HOST", "127.0.0.1")
 AGENT_PORT = 9091
 NEXUSAI_PROXY = "http://127.0.0.1:8081"
 HEARTBEAT_INTERVAL = 15
@@ -38,7 +38,15 @@ AGENT_CARD = {
     ],
 }
 
-# ── 注册（与 echo_agent 相同逻辑） ───────────────────────────────────────
+# ── HTTP 工具 ────────────────────────────────────────────────────────────
+
+def http_post_json(url, data, timeout=10):
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"})
+    resp = urlopen(req, timeout=timeout)
+    return json.loads(resp.read().decode("utf-8"))
+
+# ── 注册 ─────────────────────────────────────────────────────────────────
 
 _agent_id = None
 _heartbeat_running = False
@@ -46,27 +54,29 @@ _heartbeat_running = False
 
 def register():
     global _agent_id
-    resp = requests.post(
-        f"{NEXUSAI_PROXY}/agent_communication.AgentCommunicationService/RegisterAgent",
-        json={
-            "agent_info": {
-                "host": AGENT_HOST, "port": AGENT_PORT,
-                "service_name": AGENT_NAME, "version": AGENT_VERSION,
-                "skills": [s["name"] for s in AGENT_CARD["skills"]],
-                "metadata": {"type": "demo"},
-                "agent_card": json.dumps(AGENT_CARD, ensure_ascii=False),
+    try:
+        data = http_post_json(
+            f"{NEXUSAI_PROXY}/agent_communication.AgentCommunicationService/RegisterAgent",
+            {
+                "agent_info": {
+                    "host": AGENT_HOST, "port": AGENT_PORT,
+                    "service_name": AGENT_NAME, "version": AGENT_VERSION,
+                    "skills": [s["name"] for s in AGENT_CARD["skills"]],
+                    "metadata": {"type": "demo"},
+                    "agent_card": json.dumps(AGENT_CARD, ensure_ascii=False),
+                },
+                "heartbeat_interval": HEARTBEAT_INTERVAL,
             },
-            "heartbeat_interval": HEARTBEAT_INTERVAL,
-        },
-        timeout=10,
-    )
-    data = resp.json()
-    if "error" in data:
-        print(f"  注册失败: {data['error']}")
+        )
+        if "error" in data:
+            print(f"  注册失败: {data['error']}")
+            return False
+        _agent_id = data.get("agent_id", "")
+        print(f"  注册成功, agent_id={_agent_id}")
+        return True
+    except Exception as e:
+        print(f"  注册失败: {e}")
         return False
-    _agent_id = data.get("agent_id", "")
-    print(f"  注册成功, agent_id={_agent_id}")
-    return True
 
 
 def _heartbeat_loop():
@@ -75,9 +85,9 @@ def _heartbeat_loop():
         if not _heartbeat_running or not _agent_id:
             break
         try:
-            requests.post(
+            http_post_json(
                 f"{NEXUSAI_PROXY}/agent_communication.AgentCommunicationService/Heartbeat",
-                json={"agent_id": _agent_id, "agent_info": {
+                {"agent_id": _agent_id, "agent_info": {
                     "host": AGENT_HOST, "port": AGENT_PORT,
                     "service_name": AGENT_NAME, "version": AGENT_VERSION,
                 }},
@@ -92,9 +102,9 @@ def unregister():
     _heartbeat_running = False
     if _agent_id:
         try:
-            requests.post(
+            http_post_json(
                 f"{NEXUSAI_PROXY}/agent_communication.AgentCommunicationService/UnregisterAgent",
-                json={"agent_id": _agent_id, "reason": "shutdown"},
+                {"agent_id": _agent_id, "reason": "shutdown"},
                 timeout=5,
             )
             print("  已注销")
@@ -106,16 +116,13 @@ def unregister():
 
 def solve_math(text):
     """尝试解析并计算用户输入的数学表达式"""
-
     # 尝试 sympy 方程求解
     eq_match = re.search(r'(?:解方程|solve|求解)\s*[:：]?\s*(.+)', text, re.IGNORECASE)
     if eq_match:
         try:
             from sympy import symbols, solve as sym_solve, sympify, Eq
             x = symbols('x')
-            expr_text = eq_match.group(1).strip()
-            # 处理 "x^2 - 4 = 0" 形式
-            expr_text = expr_text.replace('^', '**')
+            expr_text = eq_match.group(1).strip().replace('^', '**')
             if '=' in expr_text:
                 lhs, rhs = expr_text.split('=', 1)
                 eq = Eq(sympify(lhs.strip()), sympify(rhs.strip()))
@@ -128,10 +135,8 @@ def solve_math(text):
         except Exception as e:
             return f"方程求解失败: {e}"
 
-    # 尝试直接算术计算
-    # 安全的算术表达式：只允许数字和基本运算符
-    safe_expr = text.strip()
-    safe_expr = safe_expr.replace('^', '**').replace('×', '*').replace('÷', '/')
+    # 安全的算术表达式
+    safe_expr = text.strip().replace('^', '**').replace('×', '*').replace('÷', '/')
     if re.match(r'^[\d\s+\-*/().%]+$', safe_expr):
         try:
             result = eval(safe_expr, {"__builtins__": {}}, {})
@@ -149,68 +154,97 @@ def solve_math(text):
 
 # ── A2A HTTP 接口 ────────────────────────────────────────────────────────
 
-app = Flask(__name__)
+class A2AHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
 
+    def do_GET(self):
+        if self.path == "/.well-known/agent-card.json":
+            self._send_json(AGENT_CARD)
+        else:
+            self.send_error(404)
 
-@app.route("/.well-known/agent-card.json")
-def agent_card_endpoint():
-    return jsonify(AGENT_CARD)
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        method = body.get("method", "")
+        req_id = body.get("id", "")
+        params = body.get("params", {})
 
+        if method == "message/send":
+            self._handle_send(req_id, params)
+        elif method == "message/stream":
+            self._handle_stream(req_id, params)
+        else:
+            self._send_json({
+                "jsonrpc": "2.0", "id": req_id,
+                "error": {"code": -32601, "message": f"Unknown method: {method}"},
+            }, status=400)
 
-@app.route("/", methods=["POST"])
-def a2a_handler():
-    body = flask_request.get_json()
-    method = body.get("method", "")
-    req_id = body.get("id", "")
-    params = body.get("params", {})
+    def _extract_text(self, params):
+        for part in params.get("message", {}).get("parts", []):
+            if part.get("type") == "text" or part.get("kind") == "text":
+                return part.get("text", "")
+        return ""
 
-    if method == "message/send":
-        return _handle_send(req_id, params)
-    elif method == "message/stream":
-        return _handle_stream(req_id, params)
-    else:
-        return jsonify({
+    def _handle_send(self, req_id, params):
+        user_text = self._extract_text(params)
+        answer = solve_math(user_text)
+        print(f"  <- send: {user_text[:60]} -> {answer[:60]}")
+        self._send_json({
             "jsonrpc": "2.0", "id": req_id,
-            "error": {"code": -32601, "message": f"Unknown method: {method}"},
-        }), 400
-
-
-def _extract_text(params):
-    for part in params.get("message", {}).get("parts", []):
-        if part.get("type") == "text":
-            return part.get("text", "")
-    return ""
-
-
-def _handle_send(req_id, params):
-    user_text = _extract_text(params)
-    answer = solve_math(user_text)
-    print(f"  ← send: {user_text[:60]} → {answer[:60]}")
-    return jsonify({
-        "jsonrpc": "2.0", "id": req_id,
-        "result": {
-            "type": "message",
-            "message": {
-                "message_id": str(uuid.uuid4()),
-                "context_id": params.get("context_id", ""),
-                "role": "agent",
-                "parts": [{"type": "text", "text": answer}],
+            "result": {
+                "type": "message",
+                "message": {
+                    "message_id": str(uuid.uuid4()),
+                    "context_id": params.get("context_id", ""),
+                    "role": "agent",
+                    "parts": [{"type": "text", "text": answer}],
+                },
             },
-        },
-    })
+        })
 
+    def _handle_stream(self, req_id, params):
+        user_text = self._extract_text(params)
+        print(f"  <- stream: {user_text[:60]}")
 
-def _handle_stream(req_id, params):
-    user_text = _extract_text(params)
-    print(f"  ← stream: {user_text[:60]}")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
 
-    def generate():
-        yield f'data: {json.dumps({"jsonrpc":"2.0","id":req_id,"result":{"type":"status","status":{"state":"working","message":{"message_id":str(uuid.uuid4()),"role":"agent","parts":[{"type":"text","text":"正在计算..."}]}}}})}\n\n'
+        working = {
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {"type": "status", "status": {
+                "state": "working",
+                "message": {"message_id": str(uuid.uuid4()), "role": "agent",
+                            "parts": [{"type": "text", "text": "正在计算..."}]},
+            }},
+        }
+        self.wfile.write(f"data: {json.dumps(working)}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
         time.sleep(0.5)
         answer = solve_math(user_text)
-        yield f'data: {json.dumps({"jsonrpc":"2.0","id":req_id,"result":{"type":"status","status":{"state":"completed","message":{"message_id":str(uuid.uuid4()),"role":"agent","parts":[{"type":"text","text":answer}]}}}})}\n\n'
 
-    return Response(generate(), mimetype="text/event-stream")
+        completed = {
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {"type": "status", "status": {
+                "state": "completed",
+                "message": {"message_id": str(uuid.uuid4()), "role": "agent",
+                            "parts": [{"type": "text", "text": answer}]},
+            }},
+        }
+        self.wfile.write(f"data: {json.dumps(completed)}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
+    def _send_json(self, data, status=200):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 # ── 主程序 ────────────────────────────────────────────────────────────────
@@ -234,7 +268,8 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
 
     print(f"[{AGENT_NAME}] A2A 监听 http://0.0.0.0:{AGENT_PORT}")
-    app.run(host="0.0.0.0", port=AGENT_PORT)
+    server = HTTPServer(("0.0.0.0", AGENT_PORT), A2AHandler)
+    server.serve_forever()
 
 
 if __name__ == "__main__":

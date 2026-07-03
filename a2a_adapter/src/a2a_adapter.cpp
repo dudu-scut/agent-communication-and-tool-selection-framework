@@ -235,6 +235,38 @@ void A2AAdapter::processQueryStreaming(
                             response_adapter_->buildStreamEvent(
                                 "Intent: " + intent, context_id, "status", &event);
                             callback(event);
+                        } else if (type == "status") {
+                            // A2A 标准状态事件
+                            if (result.contains("status")) {
+                                auto& status_obj = result["status"];
+                                std::string state = status_obj.value("state", "");
+                                if (state == "working") {
+                                    agent_communication::AIStreamEvent event;
+                                    response_adapter_->buildStreamEvent(
+                                        "", context_id, "status", &event);
+                                    event.set_task_state("processing");
+                                    callback(event);
+                                } else if (state == "completed") {
+                                    // 提取完成消息中的文本内容
+                                    if (status_obj.contains("message")) {
+                                        auto& message = status_obj["message"];
+                                        if (message.contains("parts")) {
+                                            std::string content;
+                                            for (auto& part : message["parts"]) {
+                                                if (part.value("type", "") == "text") {
+                                                    content += part.value("text", "");
+                                                }
+                                            }
+                                            if (!content.empty()) {
+                                                agent_communication::AIStreamEvent event;
+                                                response_adapter_->buildStreamEvent(
+                                                    content, context_id, "partial", &event);
+                                                callback(event);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } catch (const std::exception& e) {
@@ -408,6 +440,38 @@ void A2AAdapter::processQueryStreamingDirect(
                             response_adapter_->buildStreamEvent(
                                 "Intent: " + intent, context_id, "status", &event);
                             callback(event);
+                        } else if (type == "status") {
+                            // A2A 标准状态事件
+                            if (result.contains("status")) {
+                                auto& status_obj = result["status"];
+                                std::string state = status_obj.value("state", "");
+                                if (state == "working") {
+                                    agent_communication::AIStreamEvent event;
+                                    response_adapter_->buildStreamEvent(
+                                        "", context_id, "status", &event);
+                                    event.set_task_state("processing");
+                                    callback(event);
+                                } else if (state == "completed") {
+                                    // 提取完成消息中的文本内容
+                                    if (status_obj.contains("message")) {
+                                        auto& message = status_obj["message"];
+                                        if (message.contains("parts")) {
+                                            std::string content;
+                                            for (auto& part : message["parts"]) {
+                                                if (part.value("type", "") == "text") {
+                                                    content += part.value("text", "");
+                                                }
+                                            }
+                                            if (!content.empty()) {
+                                                agent_communication::AIStreamEvent event;
+                                                response_adapter_->buildStreamEvent(
+                                                    content, context_id, "partial", &event);
+                                                callback(event);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } catch (const std::exception&) {

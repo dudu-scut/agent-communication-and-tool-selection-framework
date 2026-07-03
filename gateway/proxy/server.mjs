@@ -142,18 +142,24 @@ function streamCall(serviceName, methodName, body, metadata, res) {
   });
 
   const stream = client[grpcMethod](body, metadata);
+  let ended = false;
 
   stream.on('data', (event) => {
+    if (ended) return;
     const json = JSON.stringify(sanitizeBuffers(event));
     res.write(`data: ${json}\n\n`);
   });
 
   stream.on('end', () => {
+    if (ended) return;
+    ended = true;
     res.write(`data: ${JSON.stringify({ event_type: 'complete' })}\n\n`);
     res.end();
   });
 
   stream.on('error', (err) => {
+    if (ended) return;
+    ended = true;
     const errJson = JSON.stringify({
       event_type: 'error',
       content: err.message || 'Stream error',
@@ -164,7 +170,10 @@ function streamCall(serviceName, methodName, body, metadata, res) {
 
   // Handle client disconnect
   res.on('close', () => {
-    stream.cancel();
+    if (!ended) {
+      ended = true;
+      stream.cancel();
+    }
   });
 }
 
