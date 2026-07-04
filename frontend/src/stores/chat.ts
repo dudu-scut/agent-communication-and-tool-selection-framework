@@ -38,6 +38,9 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
     }
     messages.value.push(agentMsg)
+    // 获取响应式代理对象——闭包中必须使用 proxy 而非原始对象，
+    // 否则 Vue 无法检测到属性变更
+    const reactiveMsg = messages.value[messages.value.length - 1]
     isStreaming.value = true
 
     const ac = new AbortController()
@@ -45,14 +48,14 @@ export const useChatStore = defineStore('chat', () => {
 
     queryStream(
       text,
-      (event: AIStreamEvent) => handleStreamEvent(event, agentMsg),
+      (event: AIStreamEvent) => handleStreamEvent(event, reactiveMsg),
       contextId.value,
       ac.signal,
     ).finally(() => {
       // Safety net: if server disconnects without a complete/error event
-      if (agentMsg.streaming) {
-        agentMsg.streaming = false
-        agentMsg.content += '\n[连接断开]'
+      if (reactiveMsg.streaming) {
+        reactiveMsg.streaming = false
+        reactiveMsg.content += '\n[连接断开]'
       }
       isStreaming.value = false
       abortController.value = null
@@ -62,6 +65,10 @@ export const useChatStore = defineStore('chat', () => {
   function handleStreamEvent(event: AIStreamEvent, msg: ChatMessage) {
     switch (event.event_type) {
       case 'partial':
+        // 清除规划阶段的占位文本，替换为真实内容
+        if (msg.content === '正在分析请求...') {
+          msg.content = ''
+        }
         msg.content += event.content
         break
 
