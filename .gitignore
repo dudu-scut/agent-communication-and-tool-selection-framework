@@ -4,10 +4,16 @@ docs/
 # Build output
 build/
 cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*~
 
 # OS
 .DS_Store
@@ -17,8 +23,19 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 .venv/
 venv/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Runtime artifacts
+logs/
+pids/
+*.log
+*.pid
 
 # Secrets
 .env
