@@ -761,57 +761,64 @@ std::string AgentRouter::analyzeIntentWithLLM(const std::string& question) {
 // === Embedding-based Routing (P3) ===
 
 bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
-    std::lock_guard<std::mutex> lock(embedding_mutex_);
+    // Step 1: Initialize/deinit embedding service under embedding_mutex_ only.
+    // This avoids holding embedding_mutex_ while later acquiring agents_mutex_,
+    // which would violate the documented lock order: agents_mutex_ → embedding_mutex_.
+    {
+        std::lock_guard<std::mutex> lock(embedding_mutex_);
 
-    embedding_config_ = config;
+        embedding_config_ = config;
 
-    if (!config.enabled) {
-        embedding_service_.reset();
-        skill_index_.reset();
-        embedding_cache_.reset();
-        return true;
+        if (!config.enabled) {
+            embedding_service_.reset();
+            skill_index_.reset();
+            embedding_cache_.reset();
+            return true;
+        }
+
+        try {
+            agent_rpc::mcp::rag::EmbeddingConfig emb_config;
+            emb_config.api_key = config.api_key;
+            emb_config.model = config.model;
+            emb_config.dimension = config.dimension;
+            emb_config.api_url = config.api_url;
+
+            embedding_service_ = std::make_unique<agent_rpc::mcp::rag::EmbeddingService>(emb_config);
+            skill_index_ = std::make_unique<agent_rpc::mcp::rag::VectorIndex>();
+            skill_index_->setVersion(config.model);
+
+            agent_rpc::mcp::rag::CacheConfig cache_config;
+            cache_config.max_size = 500;
+            cache_config.ttl_seconds = 3600;
+            embedding_cache_ = std::make_unique<agent_rpc::mcp::rag::EmbeddingCache>(cache_config);
+
+        } catch (const std::exception&) {
+            embedding_service_.reset();
+            skill_index_.reset();
+            embedding_cache_.reset();
+            embedding_config_.enabled = false;
+            return false;
+        }
+
+        // Validate thresholds
+        if (config.high_threshold <= config.low_threshold) {
+            embedding_service_.reset();
+            skill_index_.reset();
+            embedding_cache_.reset();
+            embedding_config_.enabled = false;
+            return false;
+        }
     }
+    // embedding_mutex_ released here — safe to acquire agents_mutex_ first
 
-    try {
-        agent_rpc::mcp::rag::EmbeddingConfig emb_config;
-        emb_config.api_key = config.api_key;
-        emb_config.model = config.model;
-        emb_config.dimension = config.dimension;
-        emb_config.api_url = config.api_url;
-
-        embedding_service_ = std::make_unique<agent_rpc::mcp::rag::EmbeddingService>(emb_config);
-        skill_index_ = std::make_unique<agent_rpc::mcp::rag::VectorIndex>();
-        skill_index_->setVersion(config.model);
-
-        agent_rpc::mcp::rag::CacheConfig cache_config;
-        cache_config.max_size = 500;
-        cache_config.ttl_seconds = 3600;
-        embedding_cache_ = std::make_unique<agent_rpc::mcp::rag::EmbeddingCache>(cache_config);
-
-    } catch (const std::exception&) {
-        embedding_service_.reset();
-        skill_index_.reset();
-        embedding_cache_.reset();
-        embedding_config_.enabled = false;
-        return false;
-    }
-
-    // Validate thresholds
-    if (config.high_threshold <= config.low_threshold) {
-        embedding_service_.reset();
-        skill_index_.reset();
-        embedding_cache_.reset();
-        embedding_config_.enabled = false;
-        return false;
-    }
-
-    // Build initial embedding index.
-    // Must hold agents_mutex_ to protect agents_ iteration inside
-    // buildSkillEmbeddingIndex(). Lock order: agents_mutex_ → embedding_mutex_.
+    // Step 2: Build initial embedding index.
+    // Lock order: agents_mutex_ → embedding_mutex_ (correct per documentation).
     try {
         std::lock_guard<std::mutex> agents_lock(agents_mutex_);
+        std::lock_guard<std::mutex> emb_lock(embedding_mutex_);
         buildSkillEmbeddingIndex();
     } catch (const std::exception&) {
+        std::lock_guard<std::mutex> lock(embedding_mutex_);
         embedding_service_.reset();
         skill_index_.reset();
         embedding_cache_.reset();

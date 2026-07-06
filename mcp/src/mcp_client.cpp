@@ -464,8 +464,8 @@ void MCPClient::processNotificationsStdio() {
                     MCPResponse response = parseJSONRPCResponse(message);
 
                     // 检查是否是通知
-                    if (response.id.empty() && !response.error.empty()) {
-                        // 这是一个通知
+                    if (response.id.empty()) {
+                        // 这是一个通知（MCP notifications have no id, with or without error）
                         if (notification_callback_) {
                             // 解析通知内容
                             try {
@@ -639,8 +639,7 @@ MCPResponse MCPClient::parseJSONRPCResponse(const std::string& response) {
 // ============================================================================
 
 bool MCPClient::connectSSE() {
-    // 初始化 CURL
-    curl_global_init(CURL_GLOBAL_ALL);
+    // curl_global_init is called once in server/src/main.cpp
     curl_handle_ = curl_easy_init();
     
     if (!curl_handle_) {
@@ -683,7 +682,10 @@ bool MCPClient::connectSSE() {
     }
     
     // 执行请求获取 session
-    sse_response_buffer_.clear();
+    {
+        std::lock_guard<std::mutex> lock(sse_buffer_mutex_);
+        sse_response_buffer_.clear();
+    }
     CURLcode res = curl_easy_perform(curl);
     
     curl_slist_free_all(headers);
@@ -698,6 +700,7 @@ bool MCPClient::connectSSE() {
     // 解析 session ID
     if (sse_session_id_.empty()) {
         // 尝试从响应中解析
+        std::lock_guard<std::mutex> lock(sse_buffer_mutex_);
         try {
             Json::Value root;
             Json::Reader reader;
@@ -731,8 +734,8 @@ void MCPClient::disconnectSSE() {
         curl_easy_cleanup(static_cast<CURL*>(curl_handle_));
         curl_handle_ = nullptr;
     }
-    
-    curl_global_cleanup();
+
+    // curl_global_cleanup is called once in server/src/main.cpp
     sse_session_id_.clear();
     
     LOG_INFO("SSE connection closed");
@@ -899,13 +902,20 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
     size_t total_size = size * nmemb;
     
     std::string data(ptr, total_size);
-    client->sse_response_buffer_ += data;
-    
-    // 解析 SSE 事件
+
+    // Lock to protect sse_response_buffer_ from concurrent CURL I/O thread access
+    {
+        std::lock_guard<std::mutex> lock(client->sse_buffer_mutex_);
+        client->sse_response_buffer_ += data;
+    }
+
+    // 解析 SSE 事件 (processing under lock for thread safety)
     size_t pos = 0;
-    while ((pos = client->sse_response_buffer_.find("\n\n")) != std::string::npos) {
-        std::string event = client->sse_response_buffer_.substr(0, pos);
-        client->sse_response_buffer_.erase(0, pos + 2);
+    {
+        std::lock_guard<std::mutex> lock(client->sse_buffer_mutex_);
+        while ((pos = client->sse_response_buffer_.find("\n\n")) != std::string::npos) {
+            std::string event = client->sse_response_buffer_.substr(0, pos);
+            client->sse_response_buffer_.erase(0, pos + 2);
         
         // 解析事件数据
         std::string event_data;

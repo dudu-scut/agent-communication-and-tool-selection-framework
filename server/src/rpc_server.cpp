@@ -262,10 +262,19 @@ void RpcServer::unregisterService() {
 }
 
 void RpcServer::setupServer() {
+    // Initialize SSL credentials if configured
+    setupSslCredentials();
+
     grpc::ServerBuilder builder;
-    
-    // 设置服务器地址和端口
-    builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
+
+    // Use SSL credentials if available, otherwise fallback to insecure
+    if (server_credentials_) {
+        builder.AddListeningPort(address_, server_credentials_);
+        LOG_INFO("RPC server listening on " + address_ + " with SSL/TLS");
+    } else {
+        builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
+        LOG_WARN("RPC server listening on " + address_ + " WITHOUT SSL/TLS (insecure)");
+    }
     
     // 设置最大消息大小
     builder.SetMaxReceiveMessageSize(config_.max_receive_message_size);

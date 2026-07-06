@@ -7,6 +7,7 @@
 
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/error_mapper.h"
+#include "agent_rpc/common/circuit_breaker.h"
 #include "ai_query.pb.h"
 #include <a2a/core/exception.hpp>
 #include <nlohmann/json.hpp>
@@ -83,27 +84,43 @@ bool A2AAdapter::processQuery(
     }
     
     auto start_time = std::chrono::steady_clock::now();
-    
+
+    // Circuit breaker: check if orchestrator is healthy before attempting call
+    auto cb = common::CircuitBreakerManager::getInstance().getCircuitBreaker("a2a_orchestrator");
+
     try {
         // Convert RPC request to A2A format
         a2a::MessageSendParams params = request_adapter_->convertToA2A(request);
-        
+
+        // Check circuit breaker before making the call
+        if (!cb->isRequestAllowed()) {
+            auto* status = response->mutable_status();
+            status->set_code(static_cast<int>(grpc::StatusCode::UNAVAILABLE));
+            status->set_message("Circuit breaker is OPEN — orchestrator is unavailable");
+            return false;
+        }
+
         // Send message via A2A client
         a2a::A2AResponse a2a_response = a2a_client_->send_message(params);
-        
+
+        // Record success
+        cb->recordSuccess();
+
         // Convert A2A response to RPC format
         response_adapter_->convertFromA2A(a2a_response, request.request_id(), response);
-        
+
         // Calculate processing time
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             end_time - start_time);
         response->set_processing_time_ms(duration.count());
-        
+
         // Success if we got any valid response (Task or Message)
         return true;
-        
+
     } catch (const a2a::A2AException& e) {
+        // Record failure to circuit breaker
+        cb->recordFailure();
         // Handle A2A protocol errors via ErrorMapper
         auto* status = response->mutable_status();
         grpc::StatusCode grpc_code = ErrorMapper::mapToGrpcStatus(
@@ -117,6 +134,8 @@ bool A2AAdapter::processQuery(
         status->set_message(error_msg);
         return false;
     } catch (const std::exception& e) {
+        // Record failure to circuit breaker
+        cb->recordFailure();
         // Handle network and general errors via ErrorMapper
         auto* status = response->mutable_status();
         grpc::StatusCode grpc_code = ErrorMapper::mapNetworkException(e);

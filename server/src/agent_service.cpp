@@ -5,6 +5,7 @@
 #include "agent_rpc/orchestrator/agent_router.h"
 #include "agent_rpc/orchestrator/agent_info.h"
 #include <grpcpp/grpcpp.h>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
@@ -86,6 +87,10 @@ void AgentCommunicationServiceImpl::cleanupOfflineAgents() {
             removeFromIndexes(it->first);
             agent_message_queues_.erase(it->first);
             common::Metrics::getInstance().recordDisconnection(it->first);
+            // P0-44: Also remove from router to prevent routing to dead agents
+            if (router_) {
+                router_->removeAgent(it->first);
+            }
             it = agents_.erase(it);
         } else {
             ++it;
@@ -337,6 +342,22 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
         } else {
             info.version = endpoint.version;
         }
+        // P1-45: Parse skill descriptions from AgentCard JSON for routing accuracy
+        if (!endpoint.agent_card.empty()) {
+            try {
+                auto card = nlohmann::json::parse(endpoint.agent_card);
+                if (card.contains("skills") && card["skills"].is_array()) {
+                    for (const auto& skill : card["skills"]) {
+                        if (skill.contains("name") && skill.contains("description")) {
+                            info.skill_descriptions[skill["name"].get<std::string>()] =
+                                skill["description"].get<std::string>();
+                        }
+                    }
+                }
+            } catch (const nlohmann::json::exception&) {
+                // AgentCard JSON parse failed — skills will route by name only
+            }
+        }
         router_->addAgent(info);
         LOG_INFO("Agent synced to AgentRouter: " + agent_id);
     }
@@ -416,17 +437,22 @@ grpc::Status AgentCommunicationServiceImpl::ListenMessages(
 
     while (!context->IsCancelled() && std::chrono::steady_clock::now() < deadline) {
         agent_communication::Message msg;
+        bool got_message = false;
         {
             std::lock_guard<std::mutex> lock(agents_mutex_);
             auto it = agent_message_queues_.find(agent_id);
             if (it == agent_message_queues_.end()) {
                 return grpc::Status(grpc::StatusCode::NOT_FOUND, "Agent not found");
             }
-            if (!it->second.try_pop(msg, std::chrono::milliseconds(100))) {
-                continue;
-            }
+            // Use non-blocking pop to avoid holding the global lock during wait
+            got_message = it->second.try_pop(msg, std::chrono::milliseconds(0));
         }
-        if (!writer->Write(msg)) break;
+        if (got_message) {
+            if (!writer->Write(msg)) break;
+        } else {
+            // Sleep outside the lock to avoid blocking all agent operations
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
     return grpc::Status::OK;
 }

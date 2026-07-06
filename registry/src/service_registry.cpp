@@ -11,12 +11,12 @@ namespace registry {
 
 // ConsulServiceRegistry 实现
 ConsulServiceRegistry::ConsulServiceRegistry() {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    // curl_global_init is now called once in server/src/main.cpp
 }
 
 ConsulServiceRegistry::~ConsulServiceRegistry() {
     stopHealthCheck();
-    curl_global_cleanup();
+    // curl_global_cleanup is now called once in server/src/main.cpp
 }
 
 bool ConsulServiceRegistry::initialize(const std::string& consul_address) {

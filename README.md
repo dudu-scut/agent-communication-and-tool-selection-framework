@@ -312,7 +312,7 @@ Vue 3 + TypeScript + Vite 单页应用，通过 gRPC-Web 与后端通信。
 4. 维持心跳（建议 15 秒间隔）
 5. 下线时调用 `UnregisterAgent` 注销
 
-详细接入指南和 Python 完整示例见 [Agent 接入指南](docs/agent-integration-guide.md)。
+详细接入指南和 Python 完整示例见 [Agent 接入指南](agent-integration-guide.md)。
 
 C++ Agent 可直接使用项目提供的 `AgentAutoRegistrar` SDK，封装了注册 → 心跳 → 注销的完整生命周期。
 

@@ -66,11 +66,11 @@ EmbeddingService::EmbeddingService(const EmbeddingConfig& config)
         config_.loadApiKeyFromEnv();
     }
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    // curl_global_init is called once in server/src/main.cpp
 }
 
 EmbeddingService::~EmbeddingService() {
-    curl_global_cleanup();
+    // curl_global_cleanup is called once in server/src/main.cpp
 }
 
 std::vector<float> EmbeddingService::embed(const std::string& text) {

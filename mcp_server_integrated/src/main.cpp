@@ -264,8 +264,8 @@ int main(int argc, char **argv) {
                             // --- Free the allocated memory ---
                             delete[] res_ptr;
                         }
+                        return response;  // Return immediately when matching prompt is found
                     }
-                    return response;
                 }
             }
         }

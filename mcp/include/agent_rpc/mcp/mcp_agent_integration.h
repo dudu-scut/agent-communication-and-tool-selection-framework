@@ -287,6 +287,7 @@ private:
     // 工具缓存
     std::vector<ToolInfo> tool_cache_;
     mutable std::mutex tool_cache_mutex_;
+    std::shared_ptr<std::atomic<bool>> alive_flag_;  // 防止异步调用 use-after-free
     
     // RAG-MCP
     std::unique_ptr<rag::ToolRetriever> tool_retriever_;

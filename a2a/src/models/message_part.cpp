@@ -116,8 +116,11 @@ std::string DataPart::to_json() const {
 std::unique_ptr<Part> Part::from_json(const std::string& json) {
     // Simplified parsing - in production use nlohmann/json
     
-    // Determine kind
+    // Determine kind — accept "kind" (C++/camelCase) or "type" (Python/snake_case)
     size_t kind_pos = json.find("\"kind\":");
+    if (kind_pos == std::string::npos) {
+        kind_pos = json.find("\"type\":");
+    }
     if (kind_pos == std::string::npos) {
         return nullptr;
     }

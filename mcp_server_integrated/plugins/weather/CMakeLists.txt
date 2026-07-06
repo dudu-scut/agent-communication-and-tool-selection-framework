@@ -14,7 +14,7 @@ endif()
 
 # Add this to your CMakeLists.txt
 add_library(weather SHARED
-    ${PROJECT_SOURCE_DIR}/plugins/weather/Weather.cpp
+    Weather.cpp
 )
 
 # For Linux/Unix, ensure we're building with PIC

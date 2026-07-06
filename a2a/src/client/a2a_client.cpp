@@ -22,7 +22,7 @@ public:
         : base_url_(base_url)
         , http_client_() {
         
-        if (base_url_.back() == '/') {
+        if (!base_url_.empty() && base_url_.back() == '/') {
             base_url_.pop_back();
         }
     }
@@ -89,7 +89,34 @@ A2AResponse A2AClient::send_message(const MessageSendParams& params) {
     }
     
     const std::string& result_json = *response.result_json();
-    
+
+    // Unwrap A2A JSON-RPC envelope if present.
+    // Python agents return: {"type":"message","message":{...}}
+    // The actual message fields (messageId, role, parts) are nested inside "message".
+    std::string effective_json = result_json;
+    if (result_json.find("\"message\":") != std::string::npos &&
+        result_json.find("\"type\":") != std::string::npos) {
+        // Extract the inner message object from the A2A envelope
+        size_t msg_pos = result_json.find("\"message\":");
+        size_t obj_start = result_json.find("{", msg_pos + 10);
+        if (obj_start != std::string::npos) {
+            // Find matching closing brace
+            int depth = 0;
+            size_t obj_end = obj_start;
+            for (size_t i = obj_start; i < result_json.length(); ++i) {
+                if (result_json[i] == '{') depth++;
+                else if (result_json[i] == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        obj_end = i;
+                        break;
+                    }
+                }
+            }
+            effective_json = result_json.substr(obj_start, obj_end - obj_start + 1);
+        }
+    }
+
     // Determine if result is Task or Message
     // Check for "kind" field or "status" field to distinguish
     if (result_json.find("\"status\":") != std::string::npos) {

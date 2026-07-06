@@ -22,7 +22,9 @@ using json = nlohmann::json;
 namespace agent_rpc {
 namespace mcp {
 
-MCPAgentIntegration::MCPAgentIntegration() = default;
+MCPAgentIntegration::MCPAgentIntegration()
+    : alive_flag_(std::make_shared<std::atomic<bool>>(true)) {
+}
 
 MCPAgentIntegration::~MCPAgentIntegration() {
     shutdown();
@@ -76,10 +78,13 @@ void MCPAgentIntegration::shutdown() {
     if (!initialized_) {
         return;
     }
-    
+
+    // Signal all pending async calls to stop (prevents use-after-free)
+    alive_flag_->store(false);
+
     // 关闭 RAG-MCP
     shutdownRAG();
-    
+
     disconnectFromMCPServer();
     
     {
@@ -215,10 +220,16 @@ void MCPAgentIntegration::callToolAsync(const std::string& tool_name,
         return;
     }
     
-    // 在新线程中执行工具调用
-    std::thread([this, tool_name, arguments, callback]() {
+    // Execute tool call in background thread with alive flag to prevent use-after-free
+    auto alive = alive_flag_;  // shared_ptr copy keeps flag alive
+    std::thread([this, alive, tool_name, arguments, callback]() {
+        if (!alive->load()) {
+            return;  // Object was shut down before thread started
+        }
         ToolCallResult result = callTool(tool_name, arguments);
-        callback(result);
+        if (alive->load()) {
+            callback(result);
+        }
     }).detach();
 }
 

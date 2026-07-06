@@ -16,6 +16,7 @@
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/env_loader.h"
+#include <curl/curl.h>
 #include <iostream>
 #include <signal.h>
 #include <thread>
@@ -64,6 +65,12 @@ void printUsage(const char* program) {
 }
 
 int main(int argc, char* argv[]) {
+    // Initialize CURL globally once before any threads are created.
+    // This avoids the undefined behavior of calling curl_global_init from
+    // multiple modules concurrently. Subsequent calls from individual modules
+    // are safe (libcurl >= 7.36.0 uses reference counting).
+    curl_global_init(CURL_GLOBAL_ALL);
+
     // 加载 .env 文件（必须在所有 getenv 之前）
     agent_rpc::common::loadEnvFile(".env");
 
@@ -192,6 +199,8 @@ int main(int argc, char* argv[]) {
     server.stop();
     LOG_INFO("RPC Server 已停止");
     std::cout << "RPC 服务器已停止" << std::endl;
-    
+
+    curl_global_cleanup();
+
     return 0;
 }

@@ -35,10 +35,16 @@ std::string AgentMessage::to_json() const {
 AgentMessage AgentMessage::from_json(const std::string& json) {
     AgentMessage msg;
     
-    // Extract messageId
+    // Extract messageId (camelCase) or message_id (snake_case)
     size_t msg_id_pos = json.find("\"messageId\":");
+    if (msg_id_pos == std::string::npos) {
+        msg_id_pos = json.find("\"message_id\":");
+    }
     if (msg_id_pos != std::string::npos) {
         size_t start = json.find("\"", msg_id_pos + 12) + 1;
+        // Re-calculate start based on which variant was found
+        size_t field_end = json.find("\":", msg_id_pos);
+        start = json.find("\"", field_end + 2) + 1;
         size_t end = json.find("\"", start);
         msg.message_id_ = json.substr(start, end - start);
     }
@@ -52,18 +58,26 @@ AgentMessage AgentMessage::from_json(const std::string& json) {
         msg.role_ = message_role_from_string(role_str);
     }
     
-    // Extract contextId (optional)
+    // Extract contextId (camelCase) or context_id (snake_case) - optional
     size_t ctx_id_pos = json.find("\"contextId\":");
+    if (ctx_id_pos == std::string::npos) {
+        ctx_id_pos = json.find("\"context_id\":");
+    }
     if (ctx_id_pos != std::string::npos) {
-        size_t start = json.find("\"", ctx_id_pos + 12) + 1;
+        size_t field_end = json.find("\":", ctx_id_pos);
+        size_t start = json.find("\"", field_end + 2) + 1;
         size_t end = json.find("\"", start);
         msg.context_id_ = json.substr(start, end - start);
     }
     
-    // Extract taskId (optional)
+    // Extract taskId (camelCase) or task_id (snake_case) - optional
     size_t task_id_pos = json.find("\"taskId\":");
+    if (task_id_pos == std::string::npos) {
+        task_id_pos = json.find("\"task_id\":");
+    }
     if (task_id_pos != std::string::npos) {
-        size_t start = json.find("\"", task_id_pos + 9) + 1;
+        size_t field_end = json.find("\":", task_id_pos);
+        size_t start = json.find("\"", field_end + 2) + 1;
         size_t end = json.find("\"", start);
         msg.task_id_ = json.substr(start, end - start);
     }

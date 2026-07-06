@@ -175,6 +175,7 @@ private:
     void* curl_multi_{nullptr};         // CURL multi handle for SSE
     std::string sse_session_id_;        // SSE 会话 ID
     std::string sse_response_buffer_;   // SSE 响应缓冲
+    mutable std::mutex sse_buffer_mutex_; // 保护 sse_response_buffer_ 的并发读写
     std::thread sse_event_thread_;      // SSE 事件监听线程
     
     // 消息队列
@@ -225,6 +226,7 @@ private:
     std::map<std::string, MCPTool> tool_map_;
     mutable std::mutex tools_mutex_;
     std::atomic<bool> initialized_{false};
+    std::shared_ptr<std::atomic<bool>> alive_flag_;  // 防止异步调用 use-after-free
 };
 
 // MCP服务集成器

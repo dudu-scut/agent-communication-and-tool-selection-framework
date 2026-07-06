@@ -7,8 +7,9 @@ namespace agent_rpc {
 namespace mcp {
 
 // MCPToolManager 实现
-MCPToolManager::MCPToolManager(std::shared_ptr<IMCPClient> mcp_client) 
-    : mcp_client_(mcp_client) {
+MCPToolManager::MCPToolManager(std::shared_ptr<IMCPClient> mcp_client)
+    : mcp_client_(mcp_client)
+    , alive_flag_(std::make_shared<std::atomic<bool>>(true)) {
 }
 
 MCPToolManager::~MCPToolManager() {
@@ -38,12 +39,15 @@ void MCPToolManager::shutdown() {
     if (!initialized_) {
         return;
     }
-    
+
+    // Signal all pending async calls to stop (prevents use-after-free)
+    alive_flag_->store(false);
+
     std::lock_guard<std::mutex> lock(tools_mutex_);
     available_tools_.clear();
     tool_map_.clear();
     initialized_ = false;
-    
+
     LOG_INFO("MCP tool manager shutdown");
 }
 
@@ -95,10 +99,16 @@ void MCPToolManager::executeToolAsync(const std::string& tool_name,
         return;
     }
     
-    // 在单独线程中执行工具调用
-    std::thread([this, tool_name, arguments, callback]() {
+    // Execute tool call in background thread with alive flag to prevent use-after-free
+    auto alive = alive_flag_;  // shared_ptr copy keeps flag alive
+    std::thread([this, alive, tool_name, arguments, callback]() {
+        if (!alive->load()) {
+            return;  // Object was shut down before thread started
+        }
         MCPResponse response = mcp_client_->callTool(tool_name, arguments);
-        callback(response);
+        if (alive->load()) {
+            callback(response);
+        }
     }).detach();
 }
 

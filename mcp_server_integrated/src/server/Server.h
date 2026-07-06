@@ -39,9 +39,9 @@ using json = nlohmann::json;
 namespace vx::mcp {
 
     enum Capabilities {
-        RESOURCES = 0 << 1,
-        TOOLS = 0 << 2,
-        PROMPTS = 0 << 3,
+        RESOURCES = 1 << 0,
+        TOOLS = 1 << 1,
+        PROMPTS = 1 << 2,
     };
 
     class Server {
