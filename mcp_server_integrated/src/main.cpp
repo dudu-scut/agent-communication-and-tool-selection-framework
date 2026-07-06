@@ -153,11 +153,14 @@ int main(int argc, char **argv) {
     }
 
     //============================================================================================
-    // enable notification system
+    // enable notification system (fix #14: track for cleanup on shutdown)
     //============================================================================================
+    std::vector<NotificationSystem*> notifications;
     for (auto& plugin : loader->GetPlugins()) {
-        plugin.instance->notifications = new NotificationSystem();
-        plugin.instance->notifications->SendToClient = ClientNotificationCallbackImpl;
+        auto* ns = new NotificationSystem();
+        ns->SendToClient = ClientNotificationCallbackImpl;
+        plugin.instance->notifications = ns;
+        notifications.push_back(ns);
     }
 
     //============================================================================================
@@ -322,6 +325,11 @@ int main(int argc, char **argv) {
     });
 
     server->Connect(transport);
+
+    // Fix #14: Clean up notification systems to prevent memory leak
+    for (auto* ns : notifications) {
+        delete ns;
+    }
 
     return 0;
 }

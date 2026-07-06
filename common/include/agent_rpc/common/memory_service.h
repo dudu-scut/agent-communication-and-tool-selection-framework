@@ -17,7 +17,7 @@ namespace common {
  */
 class MemoryService {
 public:
-    explicit MemoryService(RedisClient* redis);
+    explicit MemoryService(std::shared_ptr<RedisClient> redis);
     ~MemoryService() = default;
 
     struct Message {
@@ -87,7 +87,7 @@ private:
 
     static constexpr int kMaxHistoryPerAgent = 50;
 
-    RedisClient* redis_;  // not owned
+    std::shared_ptr<RedisClient> redis_;  // Fix #12: shared ownership prevents use-after-free
 
     static std::string formatHistory(const std::vector<std::string>& raw_messages,
                                       int max_messages);

@@ -11,6 +11,7 @@ set(COMMON_SOURCES
     src/load_balancer.cpp
     src/memory_service.cpp
     src/redis_client.cpp
+    src/rpc_framework.cpp
 )
 
 # 创建静态库
@@ -37,7 +38,7 @@ target_include_directories(agent_rpc_common PUBLIC
 target_compile_options(agent_rpc_common PRIVATE
     -Wall
     -Wextra
-    -std=c++17
+    -std=c++20  # Fix #53: consistent with root CMakeLists.txt
 )
 
 # 安装规则

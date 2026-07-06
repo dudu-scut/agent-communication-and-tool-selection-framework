@@ -115,7 +115,7 @@ ExecutionPlan TaskPlanner::parsePlanResponse(
     json j;
     try {
         j = json::parse(clean);
-    } catch (const json::parse_error&) {
+    } catch (const json::exception&) {
         plan.is_single_agent = true;
         return plan;
     }

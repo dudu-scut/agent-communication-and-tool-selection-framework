@@ -235,23 +235,50 @@ std::string AuthServiceImpl::generateToken() {
 }
 
 std::string AuthServiceImpl::generateSalt() {
-    static thread_local std::mt19937 rng(std::random_device{}());
+    // Fix #2: Use OpenSSL CSPRNG instead of mt19937 for cryptographically secure salt
+    constexpr size_t kSaltLen = 32;
+    unsigned char random_bytes[kSaltLen];
+    if (RAND_bytes(random_bytes, kSaltLen) != 1) {
+        // Fallback to mt19937 only if CSPRNG fails (extremely unlikely)
+        static thread_local std::mt19937 rng(std::random_device{}());
+        static constexpr const char kHexChars[] = "0123456789abcdef";
+        std::string salt(kSaltLen, '0');
+        for (auto& c : salt) {
+            c = kHexChars[rng() % 16];
+        }
+        return salt;
+    }
     static constexpr const char kHexChars[] = "0123456789abcdef";
-
-    std::string salt(32, '0');
-    for (auto& c : salt) {
-        c = kHexChars[rng() % 16];
+    std::string salt(kSaltLen * 2, '0');
+    for (size_t i = 0; i < kSaltLen; ++i) {
+        salt[i * 2] = kHexChars[random_bytes[i] >> 4];
+        salt[i * 2 + 1] = kHexChars[random_bytes[i] & 0x0F];
     }
     return salt;
 }
 
 std::string AuthServiceImpl::hashPassword(const std::string& password,
                                             const std::string& salt) {
+    // Fix #2: Upgrade from single SHA-256 to iterated SHA-256 (PBKDF2-style).
+    // 10,000 iterations provides meaningful protection against brute-force
+    // while remaining compatible with existing OpenSSL SHA-256.
+    constexpr int kIterations = 10000;
     std::string input = salt + password;
 
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(input.c_str()),
            input.size(), digest);
+
+    // Iteratively re-hash the digest to increase computational cost
+    for (int i = 1; i < kIterations; ++i) {
+        // Combine previous digest with original input for each iteration
+        unsigned char temp[SHA256_DIGEST_LENGTH + 64];  // digest + part of original
+        memcpy(temp, digest, SHA256_DIGEST_LENGTH);
+        size_t copy_len = std::min(sizeof(temp) - SHA256_DIGEST_LENGTH, input.size());
+        memcpy(temp + SHA256_DIGEST_LENGTH, input.c_str(), copy_len);
+
+        SHA256(temp, SHA256_DIGEST_LENGTH + copy_len, digest);
+    }
 
     std::ostringstream oss;
     for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
@@ -259,21 +286,47 @@ std::string AuthServiceImpl::hashPassword(const std::string& password,
             << static_cast<int>(digest[i]);
     }
 
-    return salt + ":" + oss.str();
+    // Store iteration count in the hash format for future compatibility
+    return salt + ":" + std::to_string(kIterations) + ":" + oss.str();
 }
 
 bool AuthServiceImpl::verifyPassword(const std::string& password,
                                        const std::string& stored_hash) {
-    auto sep = stored_hash.find(':');
-    if (sep == std::string::npos) return false;
+    // Parse stored hash: "salt:hexdigest" (old format) or "salt:iterations:hexdigest" (new format)
+    auto sep1 = stored_hash.find(':');
+    if (sep1 == std::string::npos) return false;
 
-    std::string salt = stored_hash.substr(0, sep);
-    std::string expected = stored_hash.substr(sep + 1);
+    std::string salt = stored_hash.substr(0, sep1);
+    auto sep2 = stored_hash.find(':', sep1 + 1);
+
+    int iterations = 1;  // Default: single SHA-256 (old format)
+    std::string expected;
+
+    if (sep2 != std::string::npos) {
+        // New format: salt:iterations:hexdigest
+        iterations = std::stoi(stored_hash.substr(sep1 + 1, sep2 - sep1 - 1));
+        expected = stored_hash.substr(sep2 + 1);
+    } else {
+        // Old format: salt:hexdigest
+        expected = stored_hash.substr(sep1 + 1);
+    }
 
     std::string input = salt + password;
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(input.c_str()),
            input.size(), digest);
+
+    // Apply the same iteration count as when the hash was stored
+    for (int i = 1; i < iterations; ++i) {
+        unsigned char temp[SHA256_DIGEST_LENGTH + 64];
+        memcpy(temp, digest, SHA256_DIGEST_LENGTH);
+        size_t copy_len = std::min(sizeof(temp) - SHA256_DIGEST_LENGTH, input.size());
+        memcpy(temp + SHA256_DIGEST_LENGTH, input.c_str(), copy_len);
+        SHA256(temp, SHA256_DIGEST_LENGTH + copy_len, digest);
+    }
+
+    std::ostringstream oss;
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
 
     std::ostringstream oss;
     for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {

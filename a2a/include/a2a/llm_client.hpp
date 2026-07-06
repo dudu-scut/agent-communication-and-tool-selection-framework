@@ -23,13 +23,8 @@ public:
         : api_key_(api_key)
         , model_(model.empty() ? (std::getenv("LLM_MODEL") ? std::getenv("LLM_MODEL") : "deepseek-v4-pro") : model)
         , api_url_(api_url.empty() ? (std::getenv("LLM_API_URL") ? std::getenv("LLM_API_URL") : "https://api.deepseek.com/v1/chat/completions") : api_url) {
-        // Use static flag to ensure curl_global_init is called exactly once,
-        // regardless of how many LLMClient instances are created.
-        static bool curl_initialized = []() {
-            curl_global_init(CURL_GLOBAL_DEFAULT);
-            return true;
-        }();
-        (void)curl_initialized;
+        // curl_global_init is now called once in server/src/main.cpp.
+        // This module no longer calls it independently.
     }
 
     ~LLMClient() {

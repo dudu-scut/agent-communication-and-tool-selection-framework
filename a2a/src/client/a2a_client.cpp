@@ -7,9 +7,9 @@
 
 namespace a2a {
 
-// Helper to generate UUID (simplified)
+// Helper to generate UUID (simplified, thread-safe)
 static std::string generate_uuid() {
-    static int counter = 0;
+    static std::atomic<uint64_t> counter{0};
     std::ostringstream oss;
     oss << "req-" << ++counter << "-" << std::time(nullptr);
     return oss.str();

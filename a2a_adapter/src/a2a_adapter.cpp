@@ -107,7 +107,7 @@ bool A2AAdapter::processQuery(
         cb->recordSuccess();
 
         // Convert A2A response to RPC format
-        response_adapter_->convertFromA2A(a2a_response, request.request_id(), response);
+        response_adapter_->convertFromA2A(a2a_response, request.request_id(), "", response);
 
         // Calculate processing time
         auto end_time = std::chrono::steady_clock::now();
@@ -354,7 +354,7 @@ bool A2AAdapter::processQueryDirect(
         client.set_timeout(config_.request_timeout_seconds);
         a2a::A2AResponse a2a_response = client.send_message(params);
 
-        response_adapter_->convertFromA2A(a2a_response, request.request_id(), response);
+        response_adapter_->convertFromA2A(a2a_response, request.request_id(), "", response);
 
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(

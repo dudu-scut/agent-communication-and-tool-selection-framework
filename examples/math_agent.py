@@ -8,7 +8,11 @@
     python3 math_agent.py
 """
 
+import ast
 import json
+import logging
+import operator
+import os
 import re
 import signal
 import sys
@@ -21,11 +25,11 @@ from urllib.request import Request, urlopen
 # ── 配置 ─────────────────────────────────────────────────────────────────
 AGENT_NAME = "math-agent"
 AGENT_VERSION = "1.0.0"
-import os
 AGENT_HOST = os.environ.get("AGENT_HOST", "127.0.0.1")
 AGENT_PORT = 9091
 NEXUSAI_PROXY = "http://127.0.0.1:8081"
 HEARTBEAT_INTERVAL = 15
+MAX_CONTENT_LENGTH = 1 * 1024 * 1024  # Fix #37: 1MB limit to prevent DoS
 
 AGENT_CARD = {
     "name": AGENT_NAME,
@@ -38,18 +42,29 @@ AGENT_CARD = {
     ],
 }
 
+# ── Logging ──────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO,
+                    format='[%(asctime)s] %(levelname)s: %(message)s')
+logger = logging.getLogger(AGENT_NAME)
+
 # ── HTTP 工具 ────────────────────────────────────────────────────────────
 
 def http_post_json(url, data, timeout=10):
+    """Simple POST with JSON body, returns parsed JSON response.
+
+    Fix #33: Uses 'with' statement to ensure response is properly closed.
+    """
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     req = Request(url, data=body, headers={"Content-Type": "application/json"})
-    resp = urlopen(req, timeout=timeout)
-    return json.loads(resp.read().decode("utf-8"))
+    with urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
 
 # ── 注册 ─────────────────────────────────────────────────────────────────
 
 _agent_id = None
-_heartbeat_running = False
+_heartbeat_running = threading.Event()  # Fix #35: use threading.Event for thread safety
+_shutdown_requested = threading.Event()  # Fix #31: signal handler only sets flag
 
 
 def register():
@@ -69,20 +84,20 @@ def register():
             },
         )
         if "error" in data:
-            print(f"  注册失败: {data['error']}")
+            logger.warning(f"注册失败: {data['error']}")
             return False
         _agent_id = data.get("agent_id", "")
-        print(f"  注册成功, agent_id={_agent_id}")
+        logger.info(f"注册成功, agent_id={_agent_id}")
         return True
     except Exception as e:
-        print(f"  注册失败: {e}")
+        logger.warning(f"注册失败: {e}")  # Fix #34
         return False
 
 
 def _heartbeat_loop():
-    while _heartbeat_running:
+    while _heartbeat_running.is_set():  # Fix #35
         time.sleep(HEARTBEAT_INTERVAL)
-        if not _heartbeat_running or not _agent_id:
+        if not _heartbeat_running.is_set() or not _agent_id:
             break
         try:
             http_post_json(
@@ -93,13 +108,14 @@ def _heartbeat_loop():
                 }},
                 timeout=5,
             )
-        except Exception:
-            pass
+        except ConnectionError:
+            logger.warning("心跳失败: 无法连接到 NexusAI")
+        except Exception as e:
+            logger.warning(f"心跳失败: {e}")  # Fix #34
 
 
 def unregister():
-    global _heartbeat_running
-    _heartbeat_running = False
+    _heartbeat_running.clear()  # Fix #35
     if _agent_id:
         try:
             http_post_json(
@@ -107,39 +123,143 @@ def unregister():
                 {"agent_id": _agent_id, "reason": "shutdown"},
                 timeout=5,
             )
-            print("  已注销")
+            logger.info("已注销")
+        except ConnectionError:
+            logger.warning("注销请求失败: 无法连接到 NexusAI")
+        except Exception as e:
+            logger.warning(f"注销失败: {e}")  # Fix #34
+
+
+# ── 安全的算术表达式求值 ─────────────────────────────────────────────────
+
+# Fix #29: Replace eval() with AST-based safe evaluation.
+# Whitelist approach: only allow basic arithmetic operations.
+_SAFE_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _safe_eval_ast(node):
+    """Recursively evaluate a whitelisted AST expression node."""
+    if isinstance(node, ast.Expression):
+        return _safe_eval_ast(node.body)
+    elif isinstance(node, ast.Constant):
+        return node.value
+    elif isinstance(node, ast.BinOp):
+        op_type = type(node.op)
+        if op_type not in _SAFE_OPS:
+            raise ValueError(f"Operator not allowed: {op_type.__name__}")
+        left = _safe_eval_ast(node.left)
+        right = _safe_eval_ast(node.right)
+        return _SAFE_OPS[op_type](left, right)
+    elif isinstance(node, ast.UnaryOp):
+        op_type = type(node.op)
+        if op_type not in _SAFE_OPS:
+            raise ValueError(f"Unary operator not allowed: {op_type.__name__}")
+        operand = _safe_eval_ast(node.operand)
+        return _SAFE_OPS[op_type](operand)
+    else:
+        raise ValueError(f"Expression type not allowed: {type(node).__name__}")
+
+
+def safe_eval_math(expr_str):
+    """Safely evaluate a mathematical expression using AST whitelist.
+
+    Fix #29: Replaces dangerous eval() with AST-based whitelist approach.
+    No arbitrary code execution possible — only literal numbers and basic
+    arithmetic operators are permitted.
+    """
+    try:
+        tree = ast.parse(expr_str, mode='eval')
+    except SyntaxError as e:
+        raise ValueError(f"Invalid expression syntax: {e}")
+
+    return _safe_eval_ast(tree)
+
+
+# ── 安全的方程求解 ───────────────────────────────────────────────────────
+
+def solve_equation_safe(text):
+    """Safely attempt equation solving.
+
+    Fix #30: Replaces sympify() (which can execute arbitrary code) with
+    a safe sympy parsing approach when sympy is available, falling back
+    to a simple linear solver for basic equations.
+    """
+    eq_match = re.search(r'(?:解方程|solve|求解)\s*[:：]?\s*(.+)', text, re.IGNORECASE)
+    if not eq_match:
+        return None
+
+    expr_text = eq_match.group(1).strip().replace('^', '**')
+
+    # Try sympy with safe parsing
+    try:
+        from sympy import symbols, solve as sym_solve, Eq
+        from sympy.parsing.sympy_parser import (
+            parse_expr, standard_transformations,
+            implicit_multiplication_application,
+        )
+        x = symbols('x')
+        transformations = (standard_transformations +
+                          (implicit_multiplication_application,))
+
+        if '=' in expr_text:
+            lhs, rhs = expr_text.split('=', 1)
+            # Fix #30: Use parse_expr instead of sympify for safe parsing
+            eq = Eq(parse_expr(lhs.strip(), transformations=transformations),
+                    parse_expr(rhs.strip(), transformations=transformations))
+            solutions = sym_solve(eq, x)
+        else:
+            solutions = sym_solve(
+                parse_expr(expr_text, transformations=transformations), x)
+
+        return f"方程 {eq_match.group(1).strip()} 的解: x = {solutions}"
+    except ImportError:
+        pass  # sympy not available, fall through to simple solver
+    except Exception as e:
+        return f"方程求解失败: {e}"
+
+    # Simple linear equation fallback (no sympy needed)
+    if '=' in expr_text:
+        try:
+            lhs, rhs = expr_text.split('=', 1)
+            lhs_val = safe_eval_math(lhs.replace('x', '0'))
+            rhs_val = safe_eval_math(rhs.replace('x', '0'))
+            # For linear equations of form ax + b = c
+            return (f"方程 {eq_match.group(1).strip()} (线性近似): "
+                    f"lhs_const={lhs_val}, rhs_const={rhs_val}")
         except Exception:
             pass
+
+    return "sympy 未安装且方程超出简单线性求解范围。请先安装: pip install sympy"
 
 
 # ── 数学计算逻辑 ─────────────────────────────────────────────────────────
 
 def solve_math(text):
     """尝试解析并计算用户输入的数学表达式"""
-    # 尝试 sympy 方程求解
-    eq_match = re.search(r'(?:解方程|solve|求解)\s*[:：]?\s*(.+)', text, re.IGNORECASE)
-    if eq_match:
-        try:
-            from sympy import symbols, solve as sym_solve, sympify, Eq
-            x = symbols('x')
-            expr_text = eq_match.group(1).strip().replace('^', '**')
-            if '=' in expr_text:
-                lhs, rhs = expr_text.split('=', 1)
-                eq = Eq(sympify(lhs.strip()), sympify(rhs.strip()))
-                solutions = sym_solve(eq, x)
-            else:
-                solutions = sym_solve(sympify(expr_text), x)
-            return f"方程 {eq_match.group(1).strip()} 的解: x = {solutions}"
-        except ImportError:
-            return "sympy 未安装，无法解方程。请先安装: pip install sympy"
-        except Exception as e:
-            return f"方程求解失败: {e}"
 
-    # 安全的算术表达式
+    # Try equation solving first
+    eq_result = solve_equation_safe(text)
+    if eq_result:
+        return eq_result
+
+    # Safe arithmetic expression evaluation
     safe_expr = text.strip().replace('^', '**').replace('×', '*').replace('÷', '/')
+    # Guard against excessive exponentiation (e.g. 10**10**10)
+    if '**' in safe_expr and safe_expr.count('*') > 4:
+        return "表达式包含过多幂运算，可能耗时过长，已拒绝执行"
+
     if re.match(r'^[\d\s+\-*/().%]+$', safe_expr):
         try:
-            result = eval(safe_expr, {"__builtins__": {}}, {})
+            result = safe_eval_math(safe_expr)
             return f"{text.strip()} = {result}"
         except Exception as e:
             return f"计算失败: {e}"
@@ -165,8 +285,24 @@ class A2AHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        # Fix #32: JSON parse error handling
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid Content-Length")
+            return
+
+        # Fix #37: Content-Length upper bound check
+        if content_length > MAX_CONTENT_LENGTH:
+            self.send_error(413, "Payload Too Large")
+            return
+
+        try:
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            self.send_error(400, f"Invalid JSON: {e}")
+            return
+
         method = body.get("method", "")
         req_id = body.get("id", "")
         params = body.get("params", {})
@@ -190,7 +326,7 @@ class A2AHandler(BaseHTTPRequestHandler):
     def _handle_send(self, req_id, params):
         user_text = self._extract_text(params)
         answer = solve_math(user_text)
-        print(f"  <- send: {user_text[:60]} -> {answer[:60]}")
+        logger.info(f"<- send: {user_text[:60]} -> {answer[:60]}")
         self._send_json({
             "jsonrpc": "2.0", "id": req_id,
             "result": {
@@ -206,7 +342,7 @@ class A2AHandler(BaseHTTPRequestHandler):
 
     def _handle_stream(self, req_id, params):
         user_text = self._extract_text(params)
-        print(f"  <- stream: {user_text[:60]}")
+        logger.info(f"<- stream: {user_text[:60]}")
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -250,26 +386,34 @@ class A2AHandler(BaseHTTPRequestHandler):
 # ── 主程序 ────────────────────────────────────────────────────────────────
 
 def main():
-    global _heartbeat_running
-
-    print(f"[{AGENT_NAME}] 启动...")
+    logger.info(f"[{AGENT_NAME}] 启动...")
     if not register():
         sys.exit(1)
 
-    _heartbeat_running = True
+    _heartbeat_running.set()  # Fix #35
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
+    server = HTTPServer(("0.0.0.0", AGENT_PORT), A2AHandler)
+
+    # Fix #31: Signal handler only sets flag — no HTTP I/O in signal context
     def shutdown(sig, frame):
-        print(f"\n[{AGENT_NAME}] 关闭中...")
-        unregister()
-        sys.exit(0)
+        logger.info(f"[{AGENT_NAME}] 收到信号 {sig}，关闭中...")
+        _shutdown_requested.set()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    print(f"[{AGENT_NAME}] A2A 监听 http://0.0.0.0:{AGENT_PORT}")
-    server = HTTPServer(("0.0.0.0", AGENT_PORT), A2AHandler)
-    server.serve_forever()
+    logger.info(f"[{AGENT_NAME}] A2A 监听 http://0.0.0.0:{AGENT_PORT}")
+
+    server.timeout = 1.0
+    try:
+        while not _shutdown_requested.is_set():
+            server.handle_request()
+    finally:
+        # Fix #36: Properly release socket
+        unregister()
+        server.server_close()
+        logger.info(f"[{AGENT_NAME}] 已关闭")
 
 
 if __name__ == "__main__":

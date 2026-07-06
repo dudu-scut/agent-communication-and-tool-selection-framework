@@ -691,7 +691,18 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQuery(
     agent_communication::AIQueryResponse* response,
     const std::string& request_id) {
 
-    (void)context;  // TODO: use for deadline propagation
+    // Fix #15: Propagate gRPC deadline to A2A call timeouts
+    auto gpr_deadline = context->deadline();
+    int effective_timeout_seconds = rpc_config_.timeout_seconds;
+    if (gpr_deadline != std::chrono::system_clock::time_point::max()) {
+        auto now = std::chrono::system_clock::now();
+        auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+            gpr_deadline - now);
+        if (remaining.count() > 0 && remaining.count() < effective_timeout_seconds) {
+            effective_timeout_seconds = static_cast<int>(remaining.count());
+        }
+    }
+
     auto start_time = std::chrono::steady_clock::now();
     std::string question = request->question();
 

@@ -24,8 +24,14 @@ bool AIInterface::initialize() {
     mcp_integrator_ = std::make_shared<mcp::MCPServiceIntegrator>();
     
     // 初始化MCP服务集成器
-    if (!mcp_integrator_->initialize("/root/mcp_server/build/mcp_server", 
-                                    {"-n", "ai-server", "-l", "/tmp/mcp_logs", "-p", "/root/mcp_server/plugins"})) {
+    // Fix #13: Read MCP server path from environment variable with sensible default
+    const char* mcp_server_path = std::getenv("MCP_SERVER_PATH");
+    std::string server_path = mcp_server_path ? mcp_server_path : "./mcp_server";
+    const char* plugin_path = std::getenv("MCP_PLUGIN_PATH");
+    std::string plugin_dir = plugin_path ? plugin_path : "./plugins";
+
+    if (!mcp_integrator_->initialize(server_path,
+                                    {"-n", "ai-server", "-l", "/tmp/mcp_logs", "-p", plugin_dir})) {
         LOG_ERROR("Failed to initialize MCP service integrator");
         return false;
     }

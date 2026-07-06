@@ -17,60 +17,81 @@ namespace a2a_adapter {
 void ResponseAdapter::convertFromA2A(
     const a2a::A2AResponse& a2a_response,
     const std::string& request_id,
+    const std::string& agent_name,
     agent_communication::AIQueryResponse* rpc_response) {
-    
+
     if (!rpc_response) return;
-    
+
     // Set request ID
     rpc_response->set_request_id(request_id);
-    
+
     // Set status - assume success if we got a response
     auto* status = rpc_response->mutable_status();
     status->set_code(0);
     status->set_message("Success");
-    
+
     if (a2a_response.is_task()) {
         // Extract answer from task result
         const auto& task = a2a_response.as_task();
-        
+
         // Set task ID
         rpc_response->set_task_id(task.id());
-        
+
         // Set context ID
         rpc_response->set_context_id(task.context_id());
-        
+
+        // Set agent name if provided
+        if (!agent_name.empty()) {
+            rpc_response->set_agent_name(agent_name);
+        }
+
         // Extract answer from the last agent message in history
         const auto& history = task.history();
         for (auto it = history.rbegin(); it != history.rend(); ++it) {
             if (it->role() == a2a::MessageRole::Agent) {
                 rpc_response->set_answer(extractTextContent(*it));
+                // Also try to extract agent_name from the first agent message
+                if (agent_name.empty()) {
+                    rpc_response->set_agent_name("agent-" + task.id());
+                }
                 break;
             }
         }
-        
-        // Copy artifacts
+
+        // Copy artifacts with content (fixes #47: artifact data was silently dropped)
         for (const auto& artifact : task.artifacts()) {
             auto* proto_artifact = rpc_response->add_artifacts();
             proto_artifact->set_name(artifact.name());
             if (artifact.mime_type().has_value()) {
                 proto_artifact->set_mime_type(artifact.mime_type().value());
             }
-            // Note: artifact data would need proper handling
+            // Copy artifact content (the data field, previously skipped)
+            if (artifact.content().has_value()) {
+                proto_artifact->set_data(artifact.content().value());
+            }
+            if (artifact.description().has_value()) {
+                (*proto_artifact->mutable_metadata())["description"] = artifact.description().value();
+            }
         }
     } else if (a2a_response.is_message()) {
         // Extract answer from message response
         const auto& message = a2a_response.as_message();
-        
+
         // Set context ID if available
         if (message.context_id().has_value()) {
             rpc_response->set_context_id(message.context_id().value());
         }
-        
+
         // Set task ID if available
         if (message.task_id().has_value()) {
             rpc_response->set_task_id(message.task_id().value());
         }
-        
+
+        // Set agent name (fixes #46: non-streaming response missing agent_name)
+        if (!agent_name.empty()) {
+            rpc_response->set_agent_name(agent_name);
+        }
+
         // Extract text content from message parts
         rpc_response->set_answer(extractTextContent(message));
     }

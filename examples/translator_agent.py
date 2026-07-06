@@ -9,6 +9,8 @@
 """
 
 import json
+import logging
+import os
 import re
 import signal
 import sys
@@ -21,11 +23,11 @@ from urllib.request import Request, urlopen
 # ── 配置 ─────────────────────────────────────────────────────────────────
 AGENT_NAME = "translator-agent"
 AGENT_VERSION = "1.0.0"
-import os
 AGENT_HOST = os.environ.get("AGENT_HOST", "127.0.0.1")
 AGENT_PORT = 9092
 NEXUSAI_PROXY = "http://127.0.0.1:8081"
 HEARTBEAT_INTERVAL = 15
+MAX_CONTENT_LENGTH = 1 * 1024 * 1024  # Fix #37: 1MB limit to prevent DoS
 
 AGENT_CARD = {
     "name": AGENT_NAME,
@@ -37,18 +39,29 @@ AGENT_CARD = {
     ],
 }
 
+# ── Logging ──────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO,
+                    format='[%(asctime)s] %(levelname)s: %(message)s')
+logger = logging.getLogger(AGENT_NAME)
+
 # ── HTTP 工具 ────────────────────────────────────────────────────────────
 
 def http_post_json(url, data, timeout=10):
+    """Simple POST with JSON body, returns parsed JSON response.
+
+    Fix #33: Uses 'with' statement to ensure response is properly closed.
+    """
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     req = Request(url, data=body, headers={"Content-Type": "application/json"})
-    resp = urlopen(req, timeout=timeout)
-    return json.loads(resp.read().decode("utf-8"))
+    with urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
 
 # ── 注册 ─────────────────────────────────────────────────────────────────
 
 _agent_id = None
-_heartbeat_running = False
+_heartbeat_running = threading.Event()  # Fix #35: use threading.Event for thread safety
+_shutdown_requested = threading.Event()  # Fix #31: signal handler only sets flag
 
 
 def register():
@@ -68,20 +81,20 @@ def register():
             },
         )
         if "error" in data:
-            print(f"  注册失败: {data['error']}")
+            logger.warning(f"注册失败: {data['error']}")
             return False
         _agent_id = data.get("agent_id", "")
-        print(f"  注册成功, agent_id={_agent_id}")
+        logger.info(f"注册成功, agent_id={_agent_id}")
         return True
     except Exception as e:
-        print(f"  注册失败: {e}")
+        logger.warning(f"注册失败: {e}")  # Fix #34
         return False
 
 
 def _heartbeat_loop():
-    while _heartbeat_running:
+    while _heartbeat_running.is_set():  # Fix #35
         time.sleep(HEARTBEAT_INTERVAL)
-        if not _heartbeat_running or not _agent_id:
+        if not _heartbeat_running.is_set() or not _agent_id:
             break
         try:
             http_post_json(
@@ -92,13 +105,14 @@ def _heartbeat_loop():
                 }},
                 timeout=5,
             )
-        except Exception:
-            pass
+        except ConnectionError:
+            logger.warning("心跳失败: 无法连接到 NexusAI")
+        except Exception as e:
+            logger.warning(f"心跳失败: {e}")  # Fix #34
 
 
 def unregister():
-    global _heartbeat_running
-    _heartbeat_running = False
+    _heartbeat_running.clear()  # Fix #35
     if _agent_id:
         try:
             http_post_json(
@@ -106,9 +120,11 @@ def unregister():
                 {"agent_id": _agent_id, "reason": "shutdown"},
                 timeout=5,
             )
-            print("  已注销")
-        except Exception:
-            pass
+            logger.info("已注销")
+        except ConnectionError:
+            logger.warning("注销请求失败: 无法连接到 NexusAI")
+        except Exception as e:
+            logger.warning(f"注销失败: {e}")  # Fix #34
 
 
 # ── 翻译逻辑（规则匹配演示用） ──────────────────────────────────────────
@@ -125,7 +141,7 @@ _EN_TO_ZH = {v.lower(): k for k, v in _ZH_TO_EN.items()}
 
 
 def _has_chinese(text):
-    return bool(re.search(r'[\u4e00-\u9fff]', text))
+    return bool(re.search(r'[一-鿿]', text))
 
 
 def translate(text):
@@ -160,8 +176,24 @@ class A2AHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        # Fix #32: JSON parse error handling
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid Content-Length")
+            return
+
+        # Fix #37: Content-Length upper bound check
+        if content_length > MAX_CONTENT_LENGTH:
+            self.send_error(413, "Payload Too Large")
+            return
+
+        try:
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            self.send_error(400, f"Invalid JSON: {e}")
+            return
+
         method = body.get("method", "")
         req_id = body.get("id", "")
         params = body.get("params", {})
@@ -185,7 +217,7 @@ class A2AHandler(BaseHTTPRequestHandler):
     def _handle_send(self, req_id, params):
         user_text = self._extract_text(params)
         answer = translate(user_text)
-        print(f"  <- send: {user_text[:60]} -> {answer[:60]}")
+        logger.info(f"<- send: {user_text[:60]} -> {answer[:60]}")
         self._send_json({
             "jsonrpc": "2.0", "id": req_id,
             "result": {
@@ -201,7 +233,7 @@ class A2AHandler(BaseHTTPRequestHandler):
 
     def _handle_stream(self, req_id, params):
         user_text = self._extract_text(params)
-        print(f"  <- stream: {user_text[:60]}")
+        logger.info(f"<- stream: {user_text[:60]}")
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -245,26 +277,34 @@ class A2AHandler(BaseHTTPRequestHandler):
 # ── 主程序 ────────────────────────────────────────────────────────────────
 
 def main():
-    global _heartbeat_running
-
-    print(f"[{AGENT_NAME}] 启动...")
+    logger.info(f"[{AGENT_NAME}] 启动...")
     if not register():
         sys.exit(1)
 
-    _heartbeat_running = True
+    _heartbeat_running.set()  # Fix #35
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
+    server = HTTPServer(("0.0.0.0", AGENT_PORT), A2AHandler)
+
+    # Fix #31: Signal handler only sets flag — no HTTP I/O in signal context
     def shutdown(sig, frame):
-        print(f"\n[{AGENT_NAME}] 关闭中...")
-        unregister()
-        sys.exit(0)
+        logger.info(f"[{AGENT_NAME}] 收到信号 {sig}，关闭中...")
+        _shutdown_requested.set()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    print(f"[{AGENT_NAME}] A2A 监听 http://0.0.0.0:{AGENT_PORT}")
-    server = HTTPServer(("0.0.0.0", AGENT_PORT), A2AHandler)
-    server.serve_forever()
+    logger.info(f"[{AGENT_NAME}] A2A 监听 http://0.0.0.0:{AGENT_PORT}")
+
+    server.timeout = 1.0
+    try:
+        while not _shutdown_requested.is_set():
+            server.handle_request()
+    finally:
+        # Fix #36: Properly release socket
+        unregister()
+        server.server_close()
+        logger.info(f"[{AGENT_NAME}] 已关闭")
 
 
 if __name__ == "__main__":

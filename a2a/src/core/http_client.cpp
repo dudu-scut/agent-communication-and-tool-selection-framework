@@ -6,6 +6,23 @@
 
 namespace a2a {
 
+// Fix #27: RAII wrappers for CURL resources to prevent leaks on exception paths.
+// These ensure curl_easy handles and slist are cleaned up even when exceptions
+// are thrown between init and cleanup calls.
+struct CurlHandle {
+    CURL* h = nullptr;
+    CurlHandle() : h(curl_easy_init()) {}
+    ~CurlHandle() { if (h) curl_easy_cleanup(h); }
+    operator CURL*() const { return h; }
+};
+
+struct CurlSList {
+    curl_slist* h = nullptr;
+    ~CurlSList() { if (h) curl_slist_free_all(h); }
+    void append(const char* s) { h = curl_slist_append(h, s); }
+    operator curl_slist*() const { return h; }
+};
+
 // Callback for writing response data
 static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total_size = size * nmemb;
@@ -170,33 +187,14 @@ static size_t stream_callback(void* contents, size_t size, size_t nmemb, void* u
     return total_size;
 }
 
-// CURL 全局初始化管理器 (单例模式，确保只初始化一次)
-class CurlGlobalInit {
-public:
-    static CurlGlobalInit& getInstance() {
-        static CurlGlobalInit instance;
-        return instance;
-    }
-    
-    CurlGlobalInit(const CurlGlobalInit&) = delete;
-    CurlGlobalInit& operator=(const CurlGlobalInit&) = delete;
-    
-private:
-    CurlGlobalInit() {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-    }
-    
-    ~CurlGlobalInit() {
-        curl_global_cleanup();
-    }
-};
+// curl_global_init is now called once in server/src/main.cpp.
+// This module no longer calls it independently (fixes #23).
 
 // PIMPL implementation
 class HttpClient::Impl {
 public:
     Impl() : timeout_(120L) {  // 流式AI响应需要更长超时（120秒）
-        // 确保 CURL 全局初始化（单例，只会初始化一次）
-        CurlGlobalInit::getInstance();
+        // curl_global_init is now centralized in server/src/main.cpp
     }
     
     ~Impl() {
@@ -336,9 +334,9 @@ void HttpClient::post_stream(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);  // 传递上下文而非直接传递callback
     
-    // 流式请求：禁用总超时，使用低速超时
-    // 如果60秒内没有收到任何数据才超时
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);  // 禁用总超时
+    // 流式请求：使用可配置的总超时防止无限连接（默认300s），
+    // 同时保留低速超时作为活性检测（60秒无数据则断开）
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);  // 总超时 300s，防止恶意服务器无限保持连接
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);  // 最低速度 1 byte/s
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);  // 60秒内低于最低速度则超时
     

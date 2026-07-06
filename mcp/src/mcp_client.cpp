@@ -37,29 +37,29 @@ bool MCPClient::connect(const MCPConnectionConfig& config) {
         LOG_WARN("MCP client already connected");
         return true;
     }
-    
+
     config_ = config;
     transport_type_ = config.transport;
-    
+
     bool success = false;
-    
+
     if (transport_type_ == MCPTransportType::STDIO) {
         server_path_ = config.server_path;
         server_args_ = config.server_args;
-        
+
         if (!startMCPServer()) {
             LOG_ERROR("Failed to start MCP server");
             return false;
         }
-        
+
         connected_ = true;
         running_ = true;
-        
+
         // 启动通知处理线程
         notification_thread_ = std::thread([this]() {
             processNotificationsStdio();
         });
-        
+
         LOG_INFO("MCP client connected to server (STDIO): " + server_path_);
         success = true;
     } else if (transport_type_ == MCPTransportType::SSE) {
@@ -67,14 +67,48 @@ bool MCPClient::connect(const MCPConnectionConfig& config) {
             LOG_ERROR("Failed to connect to MCP server via SSE");
             return false;
         }
-        
+
         connected_ = true;
         running_ = true;
-        
+
         LOG_INFO("MCP client connected to server (SSE): " + config.sse_url);
         success = true;
     }
-    
+
+    // Fix #50: Send MCP initialize handshake as required by the protocol
+    if (success) {
+        MCPRequest init_req;
+        init_req.method = "initialize";
+        init_req.id = "init_" + std::to_string(std::time(nullptr));
+
+        Json::Value init_params;
+        init_params["protocolVersion"] = "2024-11-05";
+        Json::Value capabilities;
+        capabilities["tools"] = Json::Value(Json::objectValue);
+        capabilities["prompts"] = Json::Value(Json::objectValue);
+        capabilities["resources"] = Json::Value(Json::objectValue);
+        init_params["capabilities"] = capabilities;
+        Json::Value client_info;
+        client_info["name"] = "nexusai-mcp-client";
+        client_info["version"] = "1.0.0";
+        init_params["clientInfo"] = client_info;
+
+        Json::StreamWriterBuilder builder;
+        builder["indentation"] = "";
+        init_req.params = Json::writeString(builder, init_params);
+
+        if (sendRequest(init_req)) {
+            MCPResponse init_resp = receiveResponse();
+            if (init_resp.is_error) {
+                LOG_WARN("MCP initialize handshake returned error: " + init_resp.error);
+            } else {
+                LOG_INFO("MCP initialize handshake completed successfully");
+            }
+        } else {
+            LOG_WARN("Failed to send MCP initialize request (server may not require it)");
+        }
+    }
+
     return success;
 }
 
@@ -256,11 +290,12 @@ MCPResponse MCPClient::getPrompt(const std::string& prompt_name, const std::stri
     MCPRequest request;
     request.method = "prompts/get";
     request.id = "get_prompt_" + std::to_string(std::time(nullptr));
-    
-    // 构建参数
+
+    // 构建参数 (fix #49: only set params, not the full JSON-RPC envelope —
+    // buildJSONRPCRequest will construct the proper JSON-RPC wrapper)
     Json::Value params;
     params["name"] = prompt_name;
-    
+
     Json::Value args_json;
     Json::Reader reader;
     if (reader.parse(arguments, args_json)) {
@@ -268,13 +303,10 @@ MCPResponse MCPClient::getPrompt(const std::string& prompt_name, const std::stri
     } else {
         params["arguments"] = Json::Value();
     }
-    
-    Json::Value request_obj;
-    request_obj["method"] = request.method;
-    request_obj["params"] = params;
-    request_obj["id"] = request.id;
-    
-    request.params = request_obj.toStyledString();
+
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    request.params = Json::writeString(builder, params);
     
     if (!sendRequest(request)) {
         LOG_ERROR("Failed to send prompts/get request");
@@ -350,17 +382,14 @@ MCPResponse MCPClient::readResource(const std::string& uri) {
     MCPRequest request;
     request.method = "resources/read";
     request.id = "read_resource_" + std::to_string(std::time(nullptr));
-    
-    // 构建参数
+
+    // 构建参数 (fix #49: only set params, not the full JSON-RPC envelope)
     Json::Value params;
     params["uri"] = uri;
-    
-    Json::Value request_obj;
-    request_obj["method"] = request.method;
-    request_obj["params"] = params;
-    request_obj["id"] = request.id;
-    
-    request.params = request_obj.toStyledString();
+
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    request.params = Json::writeString(builder, params);
     
     if (!sendRequest(request)) {
         LOG_ERROR("Failed to send resources/read request");

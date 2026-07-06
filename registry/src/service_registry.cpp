@@ -343,8 +343,11 @@ void EtcdServiceRegistry::watchLoop() {
 std::string EtcdServiceRegistry::makeEtcdRequest(const std::string& method,
                                                 const std::string& key,
                                                 const std::string& value) {
-    // 简化的etcd请求实现
-    return "OK";
+    // Fix #11: Etcd registry is not implemented. Throw an explicit error
+    // instead of silently returning "OK" which masks the failure.
+    throw std::runtime_error(
+        "Etcd service registry is not implemented. "
+        "Use ConsulServiceRegistry or MemoryServiceRegistry instead.");
 }
 
 std::vector<common::ServiceEndpoint> EtcdServiceRegistry::parseEtcdResponse(const std::string& response) {

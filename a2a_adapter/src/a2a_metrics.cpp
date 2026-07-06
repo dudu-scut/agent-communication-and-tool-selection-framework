@@ -146,6 +146,9 @@ double A2AMetrics::getAverageQueryLatency() const {
     return static_cast<double>(total_query_latency_ms_.load()) / total;
 }
 
+// Fix #28: This method provides an APPROXIMATE snapshot. While the mutex is held
+// during export, the individual record*() methods use lock-free atomic operations.
+// The counters may reflect partially updated state at the instant of reading.
 std::string A2AMetrics::exportJson() const {
     std::lock_guard<std::mutex> lock(mutex_);
     

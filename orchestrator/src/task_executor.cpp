@@ -38,11 +38,13 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
     }
 
     // Execute layer by layer
+    size_t layer_idx = 0;
     for (const auto& layer : layers) {
         // Check global timeout
-        if (std::chrono::steady_clock::now() >= global_deadline) {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= global_deadline) {
             // Mark ALL remaining subtasks (current + future layers) as timed out
-            for (size_t li = &layer - &layers[0]; li < layers.size(); ++li) {
+            for (size_t li = layer_idx; li < layers.size(); ++li) {
                 for (const auto& tid : layers[li]) {
                     if (results.find(tid) == results.end()) {
                         SubTaskResult r;
@@ -60,13 +62,37 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
             // Single subtask — execute directly, no async overhead
             const auto& tid = layer[0];
             auto it = task_map.find(tid);
-            if (it == task_map.end()) continue;
+            if (it == task_map.end()) { ++layer_idx; continue; }
 
             const SubTask& st = *it->second;
             std::string prompt = buildSubtaskPrompt(st, results);
 
             if (on_progress) {
                 on_progress({SubTaskEventType::START, tid, ""});
+            }
+
+            // Check global timeout before execution
+            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                global_deadline - std::chrono::steady_clock::now());
+            if (remaining.count() <= 0) {
+                SubTaskResult r;
+                r.subtask_id = tid;
+                r.success = false;
+                r.error_message = "Global timeout exceeded";
+                results[tid] = std::move(r);
+                // Mark remaining layers as timed out
+                for (size_t li = layer_idx + 1; li < layers.size(); ++li) {
+                    for (const auto& rtid : layers[li]) {
+                        if (results.find(rtid) == results.end()) {
+                            SubTaskResult rr;
+                            rr.subtask_id = rtid;
+                            rr.success = false;
+                            rr.error_message = "Global timeout exceeded";
+                            results[rtid] = std::move(rr);
+                        }
+                    }
+                }
+                break;
             }
 
             SubTaskResult result = executeSubtask(st, prompt, call_agent);
@@ -103,10 +129,30 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
                         }));
             }
 
-            // Collect results
+            // Collect results with deadline awareness (fixes #18: DAG global timeout
+            // now actually cancels waiting on incomplete async tasks instead of
+            // blocking indefinitely on fut.get())
             for (auto& [tid, fut] : futures) {
                 try {
-                    SubTaskResult result = fut.get();
+                    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        global_deadline - std::chrono::steady_clock::now());
+
+                    SubTaskResult result;
+                    if (remaining <= std::chrono::milliseconds(0)) {
+                        // Deadline already passed — mark as timed out
+                        result.subtask_id = tid;
+                        result.success = false;
+                        result.error_message = "Global timeout exceeded";
+                    } else {
+                        auto status = fut.wait_for(remaining);
+                        if (status == std::future_status::ready) {
+                            result = fut.get();
+                        } else {
+                            result.subtask_id = tid;
+                            result.success = false;
+                            result.error_message = "Global timeout exceeded (task did not complete in time)";
+                        }
+                    }
 
                     if (on_progress) {
                         SubTaskEventType evt_type = result.success
@@ -130,6 +176,7 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
                 }
             }
         }
+        ++layer_idx;
     }
 
     return results;

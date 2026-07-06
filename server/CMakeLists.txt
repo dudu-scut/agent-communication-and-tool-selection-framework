@@ -45,7 +45,7 @@ target_link_libraries(agent_rpc_server
     proto_lib
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
-    grpc++_reflection
+    grpc++_reflection  # Fix #55: linking directly (TODO: use find_package(gRPC CONFIG) for imported target gRPC::grpc++_reflection)
     pthread
     CURL::libcurl
     OpenSSL::SSL
@@ -63,7 +63,7 @@ target_include_directories(agent_rpc_server PUBLIC
 target_compile_options(agent_rpc_server PRIVATE
     -Wall
     -Wextra
-    -std=c++20
+    -std=c++20  # Consistent with root CMakeLists.txt C++20 standard
 )
 
 # 安装规则

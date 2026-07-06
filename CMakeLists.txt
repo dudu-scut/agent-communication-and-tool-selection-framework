@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(AgentCommunicationRPC VERSION 1.0.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)  # Fix #53: unified C++20 standard across all modules
 
 # 启用测试
 enable_testing()

@@ -58,8 +58,11 @@ public:
     // 检查是否允许请求
     bool isRequestAllowed();
     
-    // 获取当前状态
-    CircuitState getState() const { return state_; }
+    // 获取当前状态（持锁读取以确保与统计数据一致）
+    CircuitState getState() const {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        return state_;
+    }
     
     // 获取统计信息
     CircuitBreakerStats getStats() const;

@@ -8,8 +8,8 @@
 namespace agent_rpc {
 namespace common {
 
-MemoryService::MemoryService(RedisClient* redis)
-    : redis_(redis) {}
+MemoryService::MemoryService(std::shared_ptr<RedisClient> redis)
+    : redis_(std::move(redis)) {}
 
 // ============================================================================
 // Tier 1: 对话历史 (Redis list, JSON-encoded messages)
