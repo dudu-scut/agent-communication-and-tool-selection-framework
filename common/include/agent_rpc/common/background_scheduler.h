@@ -30,6 +30,7 @@ public:
         std::chrono::milliseconds interval;
         std::chrono::steady_clock::time_point next_run;
         std::atomic<bool> running{false};
+        std::atomic<bool> cancelled{false};
     };
 
     int scheduleAtFixedRate(std::string name, Task fn,
@@ -48,14 +49,16 @@ public:
 
     void cancel(int task_id) {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
-        tasks_.remove_if([task_id](const ScheduledTask& t) {
-            return t.id == task_id;
-        });
+        for (auto& t : tasks_) {
+            if (t.id == task_id) {
+                t.cancelled.store(true);
+            }
+        }
     }
 
     void start(size_t worker_count = 2) {
-        if (running_.load()) return;
-        running_.store(true);
+        bool expected = false;
+        if (!running_.compare_exchange_strong(expected, true)) return;
 
         workers_.reserve(worker_count);
         for (size_t i = 0; i < worker_count; ++i) {
@@ -73,6 +76,17 @@ public:
             if (w.joinable()) w.join();
         }
         workers_.clear();
+
+        // Clear all state so the singleton is clean for the next use.
+        // All threads are joined, so no one races with these clears.
+        {
+            std::lock_guard<std::mutex> lock(tasks_mutex_);
+            tasks_.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            ready_queue_ = {};
+        }
     }
 
 private:
@@ -84,7 +98,7 @@ private:
                 std::lock_guard<std::mutex> lock(tasks_mutex_);
                 auto now = std::chrono::steady_clock::now();
                 for (auto& t : tasks_) {
-                    if (now >= t.next_run && !t.running.load()) {
+                    if (now >= t.next_run && !t.running.load() && !t.cancelled.load()) {
                         t.next_run = now + t.interval;
                         {
                             std::lock_guard<std::mutex> q_lock(queue_mutex_);
@@ -113,6 +127,12 @@ private:
                 }
             }
             if (task) {
+                // Cancelled tasks may linger in ready_queue_ at cancel time.
+                // The cancelled flag is checked here before execution instead of
+                // draining the queue, which avoids a lock ordering hazard.
+                if (task->cancelled.load()) {
+                    continue;
+                }
                 task->running.store(true);
                 try {
                     task->fn();

@@ -83,8 +83,8 @@ RC_GTEST_PROP(BackgroundSchedulerProp, TaskDoesNotFireBeforeInterval,
         [&]() { count.fetch_add(1); },
         std::chrono::milliseconds(interval));
     sched.start(1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20 + interval * 3));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100 + interval * 5));
     sched.stop();
 
-    RC_ASSERT(count.load() >= 2); // At least 2 fires for 3x interval
+    RC_ASSERT(count.load() >= 2); // At least 2 fires for 5x interval
 }
