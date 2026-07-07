@@ -278,6 +278,19 @@ target_include_directories(test_agent_communication PRIVATE
 )
 add_test(NAME AgentCommunicationIntegrationTest COMMAND test_agent_communication)
 
+add_executable(test_background_scheduler test_background_scheduler.cpp)
+target_link_libraries(test_background_scheduler
+    agent_rpc_common
+    rapidcheck
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_background_scheduler PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME BackgroundSchedulerTest COMMAND test_background_scheduler)
+
 # Redis 集成测试 (AuthService + MemoryService + RedisClient)
 # 需要运行中的 Redis 实例，不可用时自动跳过
 add_executable(test_redis_services test_redis_services.cpp)
