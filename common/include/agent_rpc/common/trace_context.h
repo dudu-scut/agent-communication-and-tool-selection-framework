@@ -1,0 +1,129 @@
+#pragma once
+
+#include <chrono>
+#include <iomanip>
+#include <mutex>
+#include <random>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace agent_rpc {
+namespace common {
+
+struct Span {
+    std::string name;
+    std::string span_id;
+    std::string parent_span_id;
+    std::string component;
+    std::chrono::steady_clock::time_point start_time;
+    std::chrono::steady_clock::time_point end_time;
+    int duration_ms = 0;
+    std::string status = "ok";
+    std::string error_message;
+    std::string metadata_json;
+};
+
+class TraceContext {
+public:
+    TraceContext(const std::string& user_id, const std::string& context_id)
+        : trace_id_(generateUUID()), user_id_(user_id), context_id_(context_id) {}
+
+    static void init(const std::string& user_id, const std::string& context_id) {
+        auto& tls = threadInstance();
+        tls.user_id_ = user_id;
+        tls.context_id_ = context_id;
+        tls.trace_id_ = generateUUID();
+        tls.spans_.clear();
+        tls.span_stack_.clear();
+    }
+
+    static TraceContext* current() {
+        return &threadInstance();
+    }
+
+    const std::string& traceId() const { return trace_id_; }
+    const std::string& userId() const { return user_id_; }
+
+    // Span management
+    void startSpan(const std::string& name, const std::string& component) {
+        Span s;
+        s.name = name;
+        s.component = component;
+        s.span_id = generateUUID();
+        s.parent_span_id = span_stack_.empty() ? "" : span_stack_.back();
+        s.start_time = std::chrono::steady_clock::now();
+        spans_.push_back(std::move(s));
+        span_stack_.push_back(spans_.back().span_id);
+    }
+
+    void endSpan() {
+        if (span_stack_.empty()) return;
+        const std::string& span_id = span_stack_.back();
+        for (auto it = spans_.rbegin(); it != spans_.rend(); ++it) {
+            if (it->span_id == span_id) {
+                it->end_time = std::chrono::steady_clock::now();
+                it->duration_ms = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        it->end_time - it->start_time).count());
+                break;
+            }
+        }
+        span_stack_.pop_back();
+    }
+
+    int currentDepth() const { return static_cast<int>(span_stack_.size()); }
+    int depth() const { return currentDepth(); }
+    void incrementDepth() { depth_++; }
+    void setDepth(int d) { depth_ = d; }
+
+    const std::vector<Span>& completedSpans() const { return spans_; }
+    std::vector<Span>& mutableSpans() { return spans_; }
+
+    // Generate human-readable trace summary
+    std::string traceSummary() const {
+        std::ostringstream oss;
+        for (size_t i = 0; i < spans_.size(); ++i) {
+            if (i > 0) oss << " -> ";
+            oss << spans_[i].name << " " << spans_[i].duration_ms << "ms";
+        }
+        return oss.str();
+    }
+
+private:
+    static TraceContext& threadInstance() {
+        thread_local TraceContext ctx("", "");
+        return ctx;
+    }
+
+    static std::string generateUUID() {
+        // Platform-independent UUID v4 generation
+        // Uses simple random hex -- sufficient for tracing, not security-critical
+        static thread_local std::mt19937_64 rng(
+            std::chrono::steady_clock::now().time_since_epoch().count() ^
+            std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        static thread_local std::uniform_int_distribution<uint64_t> dist;
+
+        std::ostringstream oss;
+        oss << std::hex << std::setfill('0');
+        uint64_t a = dist(rng);
+        uint64_t b = dist(rng);
+        oss << std::setw(8) << ((a >> 32) & 0xFFFFFFFF)
+            << "-" << std::setw(4) << ((a >> 16) & 0xFFFF)
+            << "-4" << std::setw(3) << (a & 0xFFF)   // version 4
+            << "-" << std::setw(4) << (((b >> 48) & 0x3FFF) | 0x8000) // variant
+            << "-" << std::setw(12) << (b & 0xFFFFFFFFFFFFULL);
+        return oss.str();
+    }
+
+    std::string trace_id_;
+    std::string user_id_;
+    std::string context_id_;
+    std::vector<Span> spans_;
+    std::vector<std::string> span_stack_;  // stack of span_ids for parent tracking
+    int depth_ = 0;  // delegation depth counter
+};
+
+}  // namespace common
+}  // namespace agent_rpc
