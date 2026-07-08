@@ -207,4 +207,12 @@ void A2AClient::set_timeout(long seconds) {
     impl_->http_client_.set_timeout(seconds);
 }
 
+void A2AClient::add_header(const std::string& key, const std::string& value) {
+    impl_->http_client_.add_header(key, value);
+}
+
+void A2AClient::clear_headers() {
+    impl_->http_client_.clear_headers();
+}
+
 } // namespace a2a

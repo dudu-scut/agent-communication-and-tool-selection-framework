@@ -78,6 +78,18 @@ public:
      */
     void set_timeout(long seconds);
 
+    /**
+     * @brief Add a custom HTTP header to all outgoing requests
+     * @param key Header name
+     * @param value Header value
+     */
+    void add_header(const std::string& key, const std::string& value);
+
+    /**
+     * @brief Clear all custom HTTP headers
+     */
+    void clear_headers();
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

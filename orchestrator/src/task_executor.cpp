@@ -4,6 +4,7 @@
  */
 
 #include "agent_rpc/orchestrator/task_executor.h"
+#include "agent_rpc/common/trace_context.h"
 #include <algorithm>
 #include <chrono>
 #include <future>
@@ -109,6 +110,15 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
             // Multiple subtasks — execute in parallel via std::async
             std::vector<std::pair<std::string, std::future<SubTaskResult>>> futures;
 
+            // [Batch 1] Capture parent trace context for subtask thread propagation
+            std::string parent_trace_id;
+            std::string parent_user_id;
+            auto* parent_trace = agent_rpc::common::TraceContext::current();
+            if (parent_trace) {
+                parent_trace_id = parent_trace->traceId();
+                parent_user_id = parent_trace->userId();
+            }
+
             for (const auto& tid : layer) {
                 auto it = task_map.find(tid);
                 if (it == task_map.end()) continue;
@@ -124,8 +134,15 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
                 // and prompt by value (moved into lambda)
                 futures.emplace_back(tid,
                     std::async(std::launch::async,
-                        [this, &st, p = std::move(prompt), &call_agent]() {
-                            return executeSubtask(st, p, call_agent);
+                        [this, &st, p = std::move(prompt), &call_agent,
+                         parent_trace_id, parent_user_id]() {
+                            // [Batch 1] Propagate trace context to subtask thread
+                            agent_rpc::common::TraceContext::init(parent_user_id, "");
+                            auto* trace = agent_rpc::common::TraceContext::current();
+                            trace->startSpan("subtask_" + st.id, "executor");
+                            auto result = executeSubtask(st, p, call_agent);
+                            trace->endSpan();
+                            return result;
                         }));
             }
 

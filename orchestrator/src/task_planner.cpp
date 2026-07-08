@@ -5,6 +5,8 @@
 
 #include "agent_rpc/orchestrator/task_planner.h"
 #include "agent_rpc/orchestrator/agent_router.h"
+#include "agent_rpc/common/trace_context.h"
+#include "agent_rpc/common/cost_tracker.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <stdexcept>
@@ -35,13 +37,43 @@ ExecutionPlan TaskPlanner::plan(
 
     std::string prompt = buildPlanningPrompt(query, available_skills);
 
+    // [Batch 1] Start planning trace span
+    auto* trace = agent_rpc::common::TraceContext::current();
+    auto plan_start = std::chrono::steady_clock::now();
+    if (trace) {
+        trace->startSpan("planning", "planner");
+    }
+
     try {
         std::string response = llm_client_->chat(
             "你是一个任务规划器，严格按照 JSON 格式返回结果，不要输出其他内容。",
             prompt);
 
+        // [Batch 1] End planning span and record token usage
+        if (trace) {
+            trace->endSpan();
+        }
+        auto plan_end = std::chrono::steady_clock::now();
+        int64_t plan_latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            plan_end - plan_start).count();
+        agent_rpc::common::CostTracker::instance().recordLLMCall(
+            trace ? trace->traceId() : "",
+            "",            // user_id — not available at planner level
+            "",            // context_id — not available at planner level
+            "",            // no specific agent
+            "planning",
+            0,             // prompt_tokens — LLMClient::chat() does not expose token usage
+            0,             // completion_tokens
+            llm_client_->model(),
+            plan_latency_ms
+        );
+
         plan = parsePlanResponse(response, query);
     } catch (const std::exception&) {
+        // [Batch 1] End planning span on error
+        if (trace) {
+            trace->endSpan();
+        }
         // LLM call failed → fall back to single-agent mode
         plan.is_single_agent = true;
     }

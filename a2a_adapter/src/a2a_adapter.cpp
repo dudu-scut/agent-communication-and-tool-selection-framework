@@ -8,6 +8,7 @@
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/error_mapper.h"
 #include "agent_rpc/common/circuit_breaker.h"
+#include "agent_rpc/common/trace_context.h"
 #include "ai_query.pb.h"
 #include <a2a/core/exception.hpp>
 #include <nlohmann/json.hpp>
@@ -100,8 +101,22 @@ bool A2AAdapter::processQuery(
             return false;
         }
 
+        // [Batch 1] Inject trace headers into A2A HTTP call
+        auto* trace = agent_rpc::common::TraceContext::current();
+        if (trace) {
+            trace->startSpan("agent_call", "a2a_adapter");
+            a2a_client_->add_header("x-trace-id", trace->traceId());
+            a2a_client_->add_header("x-delegation-depth", std::to_string(trace->depth()));
+        }
+
         // Send message via A2A client
         a2a::A2AResponse a2a_response = a2a_client_->send_message(params);
+
+        // [Batch 1] Record agent call result
+        if (trace) {
+            trace->endSpan();
+            a2a_client_->clear_headers();
+        }
 
         // Record success
         cb->recordSuccess();
@@ -179,6 +194,14 @@ void A2AAdapter::processQueryStreaming(
         
         // Use streaming API
         // 注意：http_client按双换行符切分数据，每次回调收到完整的SSE事件
+        // [Batch 1] Inject trace headers into A2A HTTP streaming call
+        auto* trace = agent_rpc::common::TraceContext::current();
+        if (trace) {
+            trace->startSpan("agent_call_streaming", "a2a_adapter");
+            a2a_client_->add_header("x-trace-id", trace->traceId());
+            a2a_client_->add_header("x-delegation-depth", std::to_string(trace->depth()));
+        }
+
         a2a_client_->send_message_streaming(params, 
             [this, &callback, &context_id](const std::string& event_line) {
                 // 跳过空行
@@ -293,12 +316,18 @@ void A2AAdapter::processQueryStreaming(
                 }
             });
         
+        // [Batch 1] End streaming trace span
+        if (trace) {
+            trace->endSpan();
+            a2a_client_->clear_headers();
+        }
+
         // Send completion event
         agent_communication::AIStreamEvent complete_event;
         response_adapter_->buildStreamEvent(
             "", context_id, "complete", &complete_event);
         callback(complete_event);
-        
+
     } catch (const std::exception& e) {
         // Send error event
         agent_communication::AIStreamEvent error_event;
@@ -352,7 +381,21 @@ bool A2AAdapter::processQueryDirect(
 
         a2a::A2AClient client(agent_url);
         client.set_timeout(config_.request_timeout_seconds);
+
+        // [Batch 1] Inject trace headers into direct A2A HTTP call
+        auto* trace = agent_rpc::common::TraceContext::current();
+        if (trace) {
+            trace->startSpan("agent_call_direct", "a2a_adapter");
+            client.add_header("x-trace-id", trace->traceId());
+            client.add_header("x-delegation-depth", std::to_string(trace->depth()));
+        }
+
         a2a::A2AResponse a2a_response = client.send_message(params);
+
+        // [Batch 1] End trace span
+        if (trace) {
+            trace->endSpan();
+        }
 
         response_adapter_->convertFromA2A(a2a_response, request.request_id(), "", response);
 
@@ -398,6 +441,14 @@ void A2AAdapter::processQueryStreamingDirect(
 
         a2a::A2AClient client(agent_url);
         client.set_timeout(config_.request_timeout_seconds);
+
+        // [Batch 1] Inject trace headers into direct A2A HTTP streaming call
+        auto* trace = agent_rpc::common::TraceContext::current();
+        if (trace) {
+            trace->startSpan("agent_call_streaming_direct", "a2a_adapter");
+            client.add_header("x-trace-id", trace->traceId());
+            client.add_header("x-delegation-depth", std::to_string(trace->depth()));
+        }
 
         client.send_message_streaming(params,
             [this, &callback, &context_id](const std::string& event_line) {
@@ -497,6 +548,11 @@ void A2AAdapter::processQueryStreamingDirect(
                     // Skip malformed events
                 }
             });
+
+        // [Batch 1] End direct streaming trace span
+        if (trace) {
+            trace->endSpan();
+        }
 
         agent_communication::AIStreamEvent complete_event;
         response_adapter_->buildStreamEvent(
