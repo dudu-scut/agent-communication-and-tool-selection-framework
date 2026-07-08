@@ -1,6 +1,6 @@
 #include "agent_rpc/common/cost_tracker.h"
-#include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/common/logger.h"
+#include <cmath>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -53,7 +53,7 @@ ModelPrice CostTracker::getModelPrice(const std::string& model) {
 }
 
 int64_t CostTracker::toMicroDollars(double cost_usd) {
-    return static_cast<int64_t>(cost_usd * 1'000'000.0);
+    return static_cast<int64_t>(std::llround(cost_usd * 1'000'000.0));
 }
 
 void CostTracker::recordLLMCall(
@@ -66,10 +66,6 @@ void CostTracker::recordLLMCall(
     (void)agent_id;
 
     double cost = calculateCost(model, prompt_tokens, completion_tokens);
-
-    // Write to token_usage table (async via worker would be ideal,
-    // but for Batch 1 we write synchronously via the existing PG connection flow.
-    // The actual DB write happens at the calling site in ai_query_service.cpp)
 
     // Update Redis budget counter
     updateRedisBudget(user_id, cost);
@@ -86,15 +82,18 @@ void CostTracker::updateRedisBudget(const std::string& user_id, double cost_usd)
     int64_t micro = toMicroDollars(cost_usd);
 
     std::time_t now = std::time(nullptr);
-    std::tm* tm = std::localtime(&now);
+    std::tm tm_buf;
+    localtime_r(&now, &tm_buf);
     std::ostringstream date_key;
     date_key << std::setfill('0')
-             << (tm->tm_year + 1900) << "-"
-             << std::setw(2) << (tm->tm_mon + 1) << "-"
-             << std::setw(2) << tm->tm_mday;
+             << (tm_buf.tm_year + 1900) << "-"
+             << std::setw(2) << (tm_buf.tm_mon + 1) << "-"
+             << std::setw(2) << tm_buf.tm_mday;
 
     std::string key = "cost:" + user_id + ":" + date_key.str();
-    redis_->setex(key, 90000, std::to_string(micro)); // 25h TTL
+    int64_t new_total;
+    redis_->incrby(key, micro, new_total);
+    redis_->expire(key, 90000);
 }
 
 }  // namespace common

@@ -45,10 +45,6 @@ public:
 
 private:
     CostTracker() = default;
-    void writeToDB(const std::string& trace_id, const std::string& user_id,
-                   const std::string& context_id, const std::string& agent_id,
-                   const std::string& component, int prompt_tokens,
-                   int completion_tokens, double cost_usd, int64_t latency_ms);
     void updateRedisBudget(const std::string& user_id, double cost_usd);
 
     RedisClient* redis_ = nullptr;

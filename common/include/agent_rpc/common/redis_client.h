@@ -77,6 +77,9 @@ public:
     /** Set TTL on a key (seconds). */
     bool expire(const std::string& key, int seconds);
 
+    /** Atomically increment key by increment. Returns the new value via result. */
+    bool incrby(const std::string& key, int64_t increment, int64_t& result);
+
 private:
     /** Attempt reconnect if connection is lost. Must be called with mutex_ held. */
     bool ensureConnected();

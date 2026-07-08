@@ -300,5 +300,23 @@ bool RedisClient::expire(const std::string& key, int seconds) {
     return ok;
 }
 
+bool RedisClient::incrby(const std::string& key, int64_t increment,
+                          int64_t& result) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ensureConnected()) return false;
+
+    auto* reply = static_cast<redisReply*>(
+        redisCommand(ctx_, "INCRBY %s %ld", key.c_str(), increment));
+    if (!reply) return false;
+
+    if (reply->type == REDIS_REPLY_INTEGER) {
+        result = reply->integer;
+        freeReplyObject(reply);
+        return true;
+    }
+    freeReplyObject(reply);
+    return false;
+}
+
 }  // namespace common
 }  // namespace agent_rpc
