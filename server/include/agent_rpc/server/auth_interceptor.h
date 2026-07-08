@@ -36,6 +36,7 @@ public:
         std::string user_id;
         std::string username;
         bool authenticated = false;
+        std::string trace_id;
     };
 
     static const AuthContext& currentAuth();

@@ -16,6 +16,7 @@
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/env_loader.h"
+#include "agent_rpc/common/background_scheduler.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <signal.h>
@@ -189,12 +190,18 @@ int main(int argc, char* argv[]) {
     std::cout << "==========================================" << std::endl;
     
     LOG_INFO("RPC Server 已启动: " + config.server_address);
-    
+
+    // Start BackgroundScheduler for periodic tasks
+    agent_rpc::common::BackgroundScheduler::instance().start(2);
+
     // 主循环
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
+    // Stop BackgroundScheduler before shutting down server
+    agent_rpc::common::BackgroundScheduler::instance().stop();
+
     // 停止服务器
     server.stop();
     LOG_INFO("RPC Server 已停止");

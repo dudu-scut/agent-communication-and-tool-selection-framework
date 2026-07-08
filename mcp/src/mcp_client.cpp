@@ -945,7 +945,7 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
         while ((pos = client->sse_response_buffer_.find("\n\n")) != std::string::npos) {
             std::string event = client->sse_response_buffer_.substr(0, pos);
             client->sse_response_buffer_.erase(0, pos + 2);
-        
+
         // 解析事件数据
         std::string event_data;
         std::istringstream iss(event);
@@ -998,8 +998,9 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
                 client->queue_cv_.notify_one();
             }
         }
+        }
     }
-    
+
     return total_size;
 }
 

@@ -22,8 +22,16 @@ void AuthInterceptor::Intercept(
         // Reset thread-local auth state for each new RPC
         tls_auth_ = AuthContext{};
 
+        // Extract trace ID from incoming metadata for distributed tracing
+        auto* metadata = methods->GetRecvInitialMetadata();
+        if (metadata) {
+            auto trace_it = metadata->find("x-trace-id");
+            if (trace_it != metadata->end()) {
+                tls_auth_.trace_id = std::string(trace_it->second.data(), trace_it->second.size());
+            }
+        }
+
         if (!isWhitelisted(method_path_)) {
-            auto* metadata = methods->GetRecvInitialMetadata();
             if (metadata) {
                 std::string token = extractBearerToken(*metadata);
                 if (!token.empty()) {

@@ -2,6 +2,7 @@
 #include "agent_rpc/common/logger.h"
 
 #include <openssl/sha.h>
+#include <openssl/rand.h>
 
 #include <chrono>
 #include <iomanip>
@@ -324,9 +325,6 @@ bool AuthServiceImpl::verifyPassword(const std::string& password,
         memcpy(temp + SHA256_DIGEST_LENGTH, input.c_str(), copy_len);
         SHA256(temp, SHA256_DIGEST_LENGTH + copy_len, digest);
     }
-
-    std::ostringstream oss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
 
     std::ostringstream oss;
     for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {

@@ -7,6 +7,7 @@
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/message_converter.h"
 #include "agent_rpc/common/serializer.h"
+#include "agent_rpc/common/cost_tracker.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -103,6 +104,9 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
         LOG_ERROR("Failed to connect to Redis at " + redis_host + ":" + std::to_string(redis_port));
         return false;
     }
+
+    // Initialize CostTracker with Redis for budget counters
+    agent_rpc::common::CostTracker::instance().initialize(redis_client_.get());
 
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();

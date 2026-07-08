@@ -3,6 +3,7 @@
 #include <a2a/core/jsonrpc_response.hpp>
 #include <a2a/core/a2a_methods.hpp>
 #include <a2a/core/exception.hpp>
+#include <atomic>
 #include <sstream>
 
 namespace a2a {

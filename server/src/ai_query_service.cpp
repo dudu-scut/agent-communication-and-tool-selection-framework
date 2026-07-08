@@ -15,6 +15,8 @@
 #include <a2a/llm_client.hpp>
 #include <a2a/client/a2a_client.hpp>
 #include <nlohmann/json.hpp>
+#include "agent_rpc/common/trace_context.h"
+#include "agent_rpc/common/cost_tracker.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -52,7 +54,8 @@ bool AIQueryServiceImpl::initialize(
     rpc_config_ = rpc_config;
 
     // Initialize MemoryService (Redis-backed)
-    memory_service_ = std::make_unique<common::MemoryService>(redis);
+    memory_service_ = std::make_unique<common::MemoryService>(
+        std::shared_ptr<common::RedisClient>(redis, [](common::RedisClient*){}));
 
     // Initialize A2A adapter
     if (!a2a_adapter_->initialize(a2a_config)) {
@@ -160,6 +163,9 @@ grpc::Status AIQueryServiceImpl::Query(
         user_id = AuthInterceptor::currentUserId();
     }
 
+    // Init distributed trace context for observability
+    common::TraceContext::init(user_id, request->context_id());
+
     // Memory: build enriched request with SystemContext
     agent_communication::AIQueryRequest enriched_req = *request;
     if (!user_id.empty()) {
@@ -214,7 +220,10 @@ grpc::Status AIQueryServiceImpl::Query(
         a2a_adapter_->setRequestTimeout(timeout_sec);
     }
 
+    // Trace span
+    common::TraceContext::current()->startSpan("process_query", "server");
     bool success = a2a_adapter_->processQuery(enriched_req, response);
+    common::TraceContext::current()->endSpan();
 
     // Record circuit breaker result
     if (circuit_breaker_) {
@@ -249,6 +258,13 @@ grpc::Status AIQueryServiceImpl::Query(
     if (success) {
         updateTaskStatus(request_id, "completed",
                          response->agent_id(), response->agent_name());
+        auto* tc = common::TraceContext::current();
+        if (tc) {
+            common::CostTracker::instance().recordLLMCall(
+                tc->traceId(), user_id, request->context_id(),
+                response->agent_id(), "server_query",
+                0, 0, "unknown", duration.count());
+        }
         LOG_INFO("AI query completed: " + request_id +
                 " in " + std::to_string(duration.count()) + "ms");
         return grpc::Status::OK;
@@ -299,6 +315,9 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         user_id = AuthInterceptor::currentUserId();
     }
 
+    // Init distributed trace context for observability
+    common::TraceContext::init(user_id, request->context_id());
+
     // Memory: build enriched request with SystemContext
     agent_communication::AIQueryRequest enriched_req = *request;
     if (!user_id.empty()) {
@@ -336,6 +355,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         a2a_adapter_->setRequestTimeout(timeout_sec);
     }
 
+    // Trace span for streaming query
+    common::TraceContext::current()->startSpan("process_query_stream", "server");
     a2a_adapter_->processQueryStreaming(enriched_req,
         [this, &context, &writer, &success, &error_message, &request_id, &streamed_content](
             const agent_communication::AIStreamEvent& event) {
@@ -361,7 +382,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                 error_message = "Failed to write stream event";
             }
         });
-    
+    common::TraceContext::current()->endSpan();
+
     // Calculate duration
     auto end_time = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -390,6 +412,11 @@ grpc::Status AIQueryServiceImpl::QueryStream(
 
     if (success) {
         updateTaskStatus(request_id, "completed");
+        // Record LLM call cost for observability
+        common::CostTracker::instance().recordLLMCall(
+            common::TraceContext::current() ? common::TraceContext::current()->traceId() : "",
+            user_id, request->context_id(), "", "server_stream",
+            0, 0, "unknown", duration.count());
         LOG_INFO("Streaming AI query completed: " + request_id +
                 " in " + std::to_string(duration.count()) + "ms");
         return grpc::Status::OK;
@@ -914,6 +941,9 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         agent_communication::AIStreamEvent complete;
         complete.set_event_type("complete");
         complete.set_context_id(context_id);
+        if (auto* tc = common::TraceContext::current()) {
+            complete.set_trace_summary(tc->traceSummary());
+        }
         writer->Write(complete);
 
         auto end_time = std::chrono::steady_clock::now();
@@ -1019,6 +1049,9 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         agent_communication::AIStreamEvent complete_event;
         complete_event.set_event_type("complete");
         complete_event.set_context_id(context_id);
+        if (auto* tc = common::TraceContext::current()) {
+            complete_event.set_trace_summary(tc->traceSummary());
+        }
         writer->Write(complete_event);
 
         // Memory: store user question and aggregated answer to Tier 1

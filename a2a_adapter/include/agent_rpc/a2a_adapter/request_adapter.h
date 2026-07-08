@@ -10,6 +10,7 @@
 #include <string>
 #include <atomic>
 #include <a2a/models/message_send_params.hpp>
+#include <a2a/models/agent_message.hpp>
 
 // Forward declaration for protobuf types
 namespace agent_communication {
@@ -50,6 +51,14 @@ public:
 private:
     std::atomic<uint64_t> message_counter_{0};  // Fix #21: atomic for thread safety
     std::atomic<uint64_t> context_counter_{0};  // Fix #21: atomic for thread safety
+
+    a2a::AgentMessage buildAgentMessage(
+        const std::string& content,
+        const std::string& context_id,
+        a2a::MessageRole role);
+
+    std::string extractOrGenerateContextId(
+        const agent_communication::AIQueryRequest& request);
 };
 
 } // namespace a2a_adapter
