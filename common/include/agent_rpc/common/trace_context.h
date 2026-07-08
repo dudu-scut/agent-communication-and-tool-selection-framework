@@ -37,6 +37,7 @@ public:
         tls.trace_id_ = generateUUID();
         tls.spans_.clear();
         tls.span_stack_.clear();
+        tls.depth_ = 0;
     }
 
     static TraceContext* current() {
@@ -74,9 +75,11 @@ public:
     }
 
     int currentDepth() const { return static_cast<int>(span_stack_.size()); }
-    int depth() const { return currentDepth(); }
+    int depth() const { return depth_; }
     void incrementDepth() { depth_++; }
     void setDepth(int d) { depth_ = d; }
+
+    std::string newChildSpanId() const { return generateUUID(); }
 
     const std::vector<Span>& completedSpans() const { return spans_; }
     std::vector<Span>& mutableSpans() { return spans_; }
