@@ -12,6 +12,7 @@ set(COMMON_SOURCES
     src/memory_service.cpp
     src/redis_client.cpp
     src/rpc_framework.cpp
+    src/cost_tracker.cpp        # Batch 1
 )
 
 # 创建静态库

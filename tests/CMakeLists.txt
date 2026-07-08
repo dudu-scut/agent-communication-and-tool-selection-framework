@@ -304,6 +304,19 @@ target_include_directories(test_trace_context PRIVATE
 )
 add_test(NAME TraceContextTest COMMAND test_trace_context)
 
+# CostTracker 单元测试
+add_executable(test_cost_tracker test_cost_tracker.cpp)
+target_link_libraries(test_cost_tracker
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_cost_tracker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME CostTrackerTest COMMAND test_cost_tracker)
+
 # Redis 集成测试 (AuthService + MemoryService + RedisClient)
 # 需要运行中的 Redis 实例，不可用时自动跳过
 add_executable(test_redis_services test_redis_services.cpp)
