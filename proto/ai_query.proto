@@ -74,6 +74,7 @@ message AIStreamEvent {
     string task_state = 4;
     string context_id = 5;
     int64 timestamp = 6;
+    string trace_summary = 8;      // [NEW Batch1] trace summary on 'complete' events
 }
 
 // 查询状态请求

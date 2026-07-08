@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package agent_communication;
+
+import "common.proto";
+
+// ============================================================================
+// Observability Messages
+// ============================================================================
+
+// Token usage record — matches token_usage table schema
+message TokenUsageRecord {
+    string trace_id = 1;
+    string user_id = 2;
+    string context_id = 3;
+    string agent_id = 4;
+    string component = 5;           // routing|agent_call|planning|aggregation|sandbox
+    int32 prompt_tokens = 6;
+    int32 completion_tokens = 7;
+    double cost_usd = 8;
+    int64 latency_ms = 9;
+    int64 created_at = 10;         // unix timestamp ms
+}
+
+// A single trace span — matches trace_spans table
+message TraceSpan {
+    string trace_id = 1;
+    string span_id = 2;
+    string parent_span_id = 3;
+    string component = 4;           // router|planner|agent_call|executor|aggregator
+    int64 start_time = 5;          // unix timestamp ms
+    int64 end_time = 6;
+    int32 duration_ms = 7;
+    string status = 8;             // ok|error
+    string error_message = 9;
+    string metadata_json = 10;     // arbitrary JSON metadata
+}
+
+// Cost record for dashboard aggregation
+message CostRecord {
+    string user_id = 1;
+    string date = 2;               // YYYY-MM-DD
+    double total_cost_usd = 3;
+    int32 total_prompt_tokens = 4;
+    int32 total_completion_tokens = 5;
+    int32 total_requests = 6;
+}
+
+// ============================================================================
+// RPC: GetTraceDetail
+// ============================================================================
+
+message GetTraceDetailRequest {
+    string trace_id = 1;
+}
+
+message GetTraceDetailResponse {
+    common.Status status = 1;
+    repeated TraceSpan spans = 2;
+    string trace_summary = 3;       // human-readable: "路由 12ms → 规划 340ms → Echo Agent 856ms"
+}
+
+// ============================================================================
+// RPC: GetCostReport
+// ============================================================================
+
+message GetCostReportRequest {
+    string user_id = 1;
+    string start_date = 2;         // YYYY-MM-DD
+    string end_date = 3;
+}
+
+message GetCostReportResponse {
+    common.Status status = 1;
+    repeated CostRecord records = 2;
+    double total_cost_usd = 3;
+}
+
+// ============================================================================
+// Observability Service
+// ============================================================================
+
+service ObservabilityService {
+    rpc GetTraceDetail(GetTraceDetailRequest) returns (GetTraceDetailResponse);
+    rpc GetCostReport(GetCostReportRequest) returns (GetCostReportResponse);
+}
