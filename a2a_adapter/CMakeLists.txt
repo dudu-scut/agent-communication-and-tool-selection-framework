@@ -23,6 +23,7 @@ set(A2A_ADAPTER_HEADERS
     include/agent_rpc/a2a_adapter/task_manager_wrapper.h
     include/agent_rpc/a2a_adapter/a2a_metrics.h
     include/agent_rpc/a2a_adapter/retry_policy.h
+    include/agent_rpc/a2a_adapter/version_profile.h   # Batch 8
 )
 
 # Create library

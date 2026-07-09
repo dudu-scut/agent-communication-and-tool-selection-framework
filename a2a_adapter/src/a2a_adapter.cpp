@@ -106,8 +106,33 @@ bool A2AAdapter::processQuery(
         auto* trace = agent_rpc::common::TraceContext::current();
         if (trace) {
             trace->startSpan("agent_call", "a2a_adapter");
+
+            // [Batch 8] Delegation depth limit check
+            constexpr int MAX_DEPTH = 5;
+            // Use depth() counter as primary. Safety net: count agent_call spans
+            // in completedSpans() as fallback when depth counter is unset (0).
+            int depth = trace->depth();
+            if (depth == 0) {
+                int span_count = 0;
+                for (const auto& s : trace->completedSpans()) {
+                    if (s.name.rfind("agent_call", 0) == 0) {
+                        span_count++;
+                    }
+                }
+                depth = span_count;
+            }
+            if (depth >= MAX_DEPTH) {
+                auto* status = response->mutable_status();
+                status->set_code(static_cast<int>(grpc::StatusCode::FAILED_PRECONDITION));
+                status->set_message("Delegation depth exceeded (max " +
+                                     std::to_string(MAX_DEPTH) + ")");
+                trace->endSpan();
+                return false;
+            }
+            trace->incrementDepth();
+
             a2a_client_->add_header("x-trace-id", trace->traceId());
-            a2a_client_->add_header("x-delegation-depth", std::to_string(trace->depth()));
+            a2a_client_->add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
         // [Batch 3] Inject autonomy-level header
@@ -219,9 +244,24 @@ void A2AAdapter::processQueryStreaming(
         std::string trace_id;
         if (trace) {
             trace->startSpan("agent_call_streaming", "a2a_adapter");
+
+            // [Batch 8] Delegation depth limit check for streaming
+            constexpr int MAX_DEPTH = 5;
+            int depth = trace->depth();
+            if (depth >= MAX_DEPTH) {
+                agent_communication::AIStreamEvent depth_event;
+                response_adapter_->buildStreamEvent(
+                    "Delegation depth exceeded (max " + std::to_string(MAX_DEPTH) + ")",
+                    request.context_id(), "error", &depth_event);
+                callback(depth_event);
+                trace->endSpan();
+                return;
+            }
+            trace->incrementDepth();
+
             trace_id = trace->traceId();
             a2a_client_->add_header("x-trace-id", trace_id);
-            a2a_client_->add_header("x-delegation-depth", std::to_string(trace->depth()));
+            a2a_client_->add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
         // [Batch 3] Inject autonomy-level header for streaming call
@@ -476,8 +516,24 @@ bool A2AAdapter::processQueryDirect(
         auto* trace = agent_rpc::common::TraceContext::current();
         if (trace) {
             trace->startSpan("agent_call_direct", "a2a_adapter");
+
+            // [Batch 8] Delegation depth limit check for direct calls
+            constexpr int MAX_DEPTH = 5;
+            int depth = trace->depth();
+            if (depth >= MAX_DEPTH) {
+                if (response) {
+                    auto* status = response->mutable_status();
+                    status->set_code(static_cast<int>(grpc::StatusCode::FAILED_PRECONDITION));
+                    status->set_message("Delegation depth exceeded (max " +
+                                         std::to_string(MAX_DEPTH) + ")");
+                }
+                trace->endSpan();
+                return false;
+            }
+            trace->incrementDepth();
+
             client.add_header("x-trace-id", trace->traceId());
-            client.add_header("x-delegation-depth", std::to_string(trace->depth()));
+            client.add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
         // [Batch 3] Inject autonomy-level header for direct call
@@ -558,9 +614,24 @@ void A2AAdapter::processQueryStreamingDirect(
         std::string trace_id;
         if (trace) {
             trace->startSpan("agent_call_streaming_direct", "a2a_adapter");
+
+            // [Batch 8] Delegation depth limit check for streaming direct
+            constexpr int MAX_DEPTH = 5;
+            int depth = trace->depth();
+            if (depth >= MAX_DEPTH) {
+                agent_communication::AIStreamEvent depth_event;
+                response_adapter_->buildStreamEvent(
+                    "Delegation depth exceeded (max " + std::to_string(MAX_DEPTH) + ")",
+                    request.context_id(), "error", &depth_event);
+                callback(depth_event);
+                trace->endSpan();
+                return;
+            }
+            trace->incrementDepth();
+
             trace_id = trace->traceId();
             client.add_header("x-trace-id", trace_id);
-            client.add_header("x-delegation-depth", std::to_string(trace->depth()));
+            client.add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
         // [Batch 3] Inject autonomy-level header for streaming direct call
