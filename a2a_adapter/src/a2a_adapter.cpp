@@ -216,17 +216,19 @@ void A2AAdapter::processQueryStreaming(
         // 注意：http_client按双换行符切分数据，每次回调收到完整的SSE事件
         // [Batch 1] Inject trace headers into A2A HTTP streaming call
         auto* trace = agent_rpc::common::TraceContext::current();
+        std::string trace_id;
         if (trace) {
             trace->startSpan("agent_call_streaming", "a2a_adapter");
-            a2a_client_->add_header("x-trace-id", trace->traceId());
+            trace_id = trace->traceId();
+            a2a_client_->add_header("x-trace-id", trace_id);
             a2a_client_->add_header("x-delegation-depth", std::to_string(trace->depth()));
         }
 
         // [Batch 3] Inject autonomy-level header for streaming call
         injectAutonomyHeader(request, "orchestrator");
 
-        a2a_client_->send_message_streaming(params, 
-            [this, &callback, &context_id](const std::string& event_line) {
+        a2a_client_->send_message_streaming(params,
+            [this, &callback, &context_id, trace_id](const std::string& event_line) {
                 // 跳过空行
                 if (event_line.empty() || event_line == "\n" || event_line == "\r\n") {
                     return;
@@ -305,6 +307,25 @@ void A2AAdapter::processQueryStreaming(
                             if (result.contains("status")) {
                                 auto& status_obj = result["status"];
                                 std::string state = status_obj.value("state", "");
+
+                                // [Batch 4 U3] Write activity feed record
+                                if (!trace_id.empty()) {
+                                    try {
+                                        nlohmann::json activity;
+                                        activity["t"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch()).count();
+                                        activity["status"] = state;
+                                        activity["desc"] = status_obj.value("status_description",
+                                            state == "working" ? "processing" : "completed");
+                                        std::string act_key = "activity_feed:" + trace_id;
+                                        redis_->rpush(act_key, activity.dump());
+                                        redis_->expire(act_key, 3600);
+                                        redis_->ltrim(act_key, -50, -1);
+                                    } catch (...) {
+                                        // Swallow — activity feed is non-critical
+                                    }
+                                }
+
                                 if (state == "working") {
                                     agent_communication::AIStreamEvent event;
                                     response_adapter_->buildStreamEvent(
@@ -338,7 +359,7 @@ void A2AAdapter::processQueryStreaming(
                     // 处理结果时出错，跳过
                 }
             });
-        
+
         // [Batch 1] End streaming trace span
         if (trace) {
             trace->endSpan();
@@ -534,9 +555,11 @@ void A2AAdapter::processQueryStreamingDirect(
 
         // [Batch 1] Inject trace headers into direct A2A HTTP streaming call
         auto* trace = agent_rpc::common::TraceContext::current();
+        std::string trace_id;
         if (trace) {
             trace->startSpan("agent_call_streaming_direct", "a2a_adapter");
-            client.add_header("x-trace-id", trace->traceId());
+            trace_id = trace->traceId();
+            client.add_header("x-trace-id", trace_id);
             client.add_header("x-delegation-depth", std::to_string(trace->depth()));
         }
 
@@ -544,7 +567,7 @@ void A2AAdapter::processQueryStreamingDirect(
         injectAutonomyHeader(request, "direct_agent", &client);
 
         client.send_message_streaming(params,
-            [this, &callback, &context_id](const std::string& event_line) {
+            [this, &callback, &context_id, trace_id](const std::string& event_line) {
                 if (event_line.empty() || event_line == "\n" || event_line == "\r\n") {
                     return;
                 }
@@ -608,6 +631,25 @@ void A2AAdapter::processQueryStreamingDirect(
                             if (result.contains("status")) {
                                 auto& status_obj = result["status"];
                                 std::string state = status_obj.value("state", "");
+
+                                // [Batch 4 U3] Write activity feed record
+                                if (!trace_id.empty()) {
+                                    try {
+                                        nlohmann::json activity;
+                                        activity["t"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch()).count();
+                                        activity["status"] = state;
+                                        activity["desc"] = status_obj.value("status_description",
+                                            state == "working" ? "processing" : "completed");
+                                        std::string act_key = "activity_feed:" + trace_id;
+                                        redis_->rpush(act_key, activity.dump());
+                                        redis_->expire(act_key, 3600);
+                                        redis_->ltrim(act_key, -50, -1);
+                                    } catch (...) {
+                                        // Swallow — activity feed is non-critical
+                                    }
+                                }
+
                                 if (state == "working") {
                                     agent_communication::AIStreamEvent event;
                                     response_adapter_->buildStreamEvent(
@@ -664,6 +706,42 @@ void A2AAdapter::processQueryStreamingDirect(
             e.what(), request.context_id(), "error", &error_event);
         callback(error_event);
     }
+}
+
+// ============================================================================
+// [Batch 4 U3] Intervention Detection
+// ============================================================================
+
+bool A2AAdapter::shouldIntervene(const std::string& action_type,
+                                  long estimated_tokens,
+                                  double confidence) const {
+    // Thresholds for intervention
+    constexpr long kHighCostThreshold = 8000;     // tokens
+    constexpr long kWriteThreshold    = 4000;     // tokens (writes are riskier)
+    constexpr double kLowConfidence   = 0.6;      // below this, intervene more readily
+
+    // Determine effective token threshold based on action type
+    long threshold = 0;
+    if (action_type == "write") {
+        threshold = kWriteThreshold;
+    } else if (action_type == "high_cost_llm") {
+        threshold = kHighCostThreshold;
+    } else {
+        // Default: no intervention for low-risk actions
+        return false;
+    }
+
+    // Intervene if estimated cost exceeds threshold
+    if (estimated_tokens >= threshold) {
+        return true;
+    }
+
+    // Intervene if confidence is too low for a high-impact action
+    if (action_type == "write" && confidence < kLowConfidence) {
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace a2a_adapter

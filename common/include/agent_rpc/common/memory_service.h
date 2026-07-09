@@ -84,6 +84,9 @@ private:
     static std::string summaryKey(const std::string& ctx) {
         return "nexusai:summary:" + ctx;
     }
+    static std::string profileKey(const std::string& uid) {
+        return "user_profile:" + uid;
+    }
 
     static constexpr int kMaxHistoryPerAgent = 50;
 

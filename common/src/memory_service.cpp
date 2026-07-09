@@ -1,4 +1,5 @@
 #include "agent_rpc/common/memory_service.h"
+#include "agent_rpc/common/profile_summarizer.h"
 
 #include <nlohmann/json.hpp>
 
@@ -123,6 +124,26 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
 
     agent_communication::SystemContext ctx;
     ctx.set_user_id(user_id);
+
+    // Batch 4 U2: Prepend user profile summary if available
+    if (!user_id.empty()) {
+        std::string profile_raw;
+        if (redis_->get(profileKey(user_id), profile_raw) && !profile_raw.empty()) {
+            try {
+                auto profile = nlohmann::json::parse(profile_raw);
+                std::string identity_json = profile.value("identity", "{}");
+                std::string preferences_json = profile.value("preferences", "[]");
+                std::string summary = ProfileSummarizer::summarize(
+                    identity_json, preferences_json);
+                if (!summary.empty()) {
+                    ctx.set_user_memory("[User Profile] " + summary + "\n" +
+                                        ctx.user_memory());
+                }
+            } catch (const nlohmann::json::exception&) {
+                // Malformed profile — skip silently
+            }
+        }
+    }
 
     // Tier 2: 用户长期记忆
     ctx.set_user_memory(getUserMemory(user_id));

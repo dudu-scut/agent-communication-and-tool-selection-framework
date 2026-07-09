@@ -143,6 +143,23 @@ public:
      */
     void setRedisClient(std::shared_ptr<common::RedisClient> redis);
 
+    /**
+     * @brief [Batch 4 U3] Check whether user intervention is needed before
+     *        executing a high-impact operation.
+     *
+     * Evaluates the action type against configured thresholds:
+     *   - write operations:            intervene above kInterventionTokenThresholdWrite
+     *   - high-token-cost operations:  intervene above kInterventionTokenThresholdHighCost
+     *
+     * @param action_type       "write", "high_cost_llm", "default"
+     * @param estimated_tokens  Estimated token cost of the operation
+     * @param confidence        Model confidence (0.0–1.0); lower → more likely to intervene
+     * @return true if the operation should pause for user confirmation
+     */
+    bool shouldIntervene(const std::string& action_type,
+                         long estimated_tokens = 0,
+                         double confidence = 1.0) const;
+
 private:
     std::unique_ptr<a2a::A2AClient> a2a_client_;
     std::unique_ptr<RequestAdapter> request_adapter_;

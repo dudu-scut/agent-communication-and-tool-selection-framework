@@ -1182,5 +1182,152 @@ grpc::Status AIQueryServiceImpl::GetAgentMetrics(
     return grpc::Status::OK;
 }
 
+// ============================================================================
+// [Batch 4 U4] ExecutePlan — User-modified DAG Execution
+// ============================================================================
+
+grpc::Status AIQueryServiceImpl::ExecutePlan(
+    grpc::ServerContext* context,
+    const agent_communication::ExecutePlanRequest* request,
+    agent_communication::ExecutePlanResponse* response) {
+
+    if (!isAvailable()) {
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                           "AI Query Service not available");
+    }
+
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "Invalid request or response");
+    }
+
+    // Auth: reject unauthenticated requests
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
+    // Check for cancellation
+    if (context->IsCancelled()) {
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
+    }
+
+    // Orchestrator must be enabled for DAG execution
+    if (!orchestrator_enabled_) {
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message("Multi-agent orchestrator is not enabled");
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                           "Multi-agent orchestrator is not enabled");
+    }
+
+    std::string trace_id = generateRequestId();
+    response->set_trace_id(trace_id);
+
+    const auto& dag = request->dag();
+    if (dag.nodes_size() == 0) {
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message("DAG must contain at least one node");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "DAG must contain at least one node");
+    }
+
+    LOG_INFO("ExecutePlan: " + std::to_string(dag.nodes_size()) +
+             " nodes (trace: " + trace_id + ")");
+
+    // Convert protobuf DAG → internal ExecutionPlan
+    orchestrator::ExecutionPlan plan;
+    plan.original_query = "ExecutePlan (user-modified DAG)";
+    plan.is_single_agent = false;
+    plan.tasks.clear();
+
+    for (int i = 0; i < dag.nodes_size(); ++i) {
+        const auto& node = dag.nodes(i);
+        orchestrator::SubTask st;
+        st.id = node.id();
+        st.description = node.description();
+        st.preferred_agent_id = node.agent_id();
+        for (int j = 0; j < node.dependencies_size(); ++j) {
+            st.depends_on.push_back(node.dependencies(j));
+        }
+        plan.tasks.push_back(std::move(st));
+    }
+
+    // Memory: build context
+    std::string user_id = request->user_id();
+    std::string memory_ctx;
+    if (!user_id.empty()) {
+        auto sys_ctx = memory_service_->buildSystemContext(
+            user_id, request->context_id(), "");
+        if (!sys_ctx.user_memory().empty()) {
+            memory_ctx = "[User Context]\n" + sys_ctx.user_memory() + "\n";
+        }
+        if (!sys_ctx.cross_agent_summary().empty()) {
+            memory_ctx += "[Prior Context]\n" + sys_ctx.cross_agent_summary() + "\n";
+        }
+    }
+
+    // Build call_agent lambda
+    auto call_agent = [this, &memory_ctx](const std::string& agent_url,
+                             const std::string& prompt) -> std::string {
+        std::string enriched_prompt = prompt;
+        if (!memory_ctx.empty()) {
+            enriched_prompt = memory_ctx + "\n" + prompt;
+        }
+
+        a2a::A2AClient client(agent_url);
+        client.set_timeout(rpc_config_.timeout_seconds);
+
+        a2a::AgentMessage msg = a2a::AgentMessage::create()
+            .with_role(a2a::MessageRole::User)
+            .with_text(enriched_prompt);
+
+        auto params = a2a::MessageSendParams::create().with_message(msg);
+        auto a2a_response = client.send_message(params);
+        if (a2a_response.is_task()) {
+            for (const auto& artifact : a2a_response.as_task().artifacts()) {
+                if (artifact.content().has_value()) {
+                    return artifact.content().value();
+                }
+            }
+        } else if (a2a_response.is_message()) {
+            return a2a_response.as_message().get_text();
+        }
+        return "";
+    };
+
+    try {
+        // Resolve agents from the DAG — use agent_id directly as URL
+        for (auto& task : plan.tasks) {
+            if (!task.preferred_agent_id.empty()) {
+                auto agent = agent_router_->getAgent(task.preferred_agent_id);
+                if (agent.has_value() && agent->is_healthy) {
+                    // preferred_agent_id remains as-is; the call_agent
+                    // lambda receives the agent_url from the executor
+                }
+            }
+        }
+
+        auto results = task_executor_->execute(plan, call_agent);
+
+        auto* status = response->mutable_status();
+        status->set_code(0);
+        status->set_message("OK");
+
+        LOG_INFO("ExecutePlan completed: " + trace_id +
+                 " (" + std::to_string(plan.tasks.size()) + " subtasks)");
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG_ERROR("ExecutePlan failed: " + trace_id + " - " + e.what());
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message(std::string("DAG execution failed: ") + e.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                           std::string("DAG execution failed: ") + e.what());
+    }
+}
+
 } // namespace server
 } // namespace agent_rpc

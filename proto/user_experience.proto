@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package agent_communication;
+
+import "common.proto";
+
+// ============================================================================
+// U3: User Experience — Intervention Response & Sandbox Query
+// Batch 4: Unified Memory + Activity Feed + DAG Composition
+// ============================================================================
+
+// User decision for an intervention point
+message InterventionResponseRequest {
+    string trace_id = 1;
+    string decision = 2; // PROCEED, MODIFY, SKIP, ABORT
+    string modification_text = 3;
+}
+
+message InterventionResponseResponse {
+    common.Status status = 1;
+}
+
+// Sandbox query for safe user-agent interaction
+message SandboxQueryRequest {
+    string query_text = 1;
+    string agent_id = 2;
+    string context_id = 3;
+}
+
+message SandboxQueryResponse {
+    common.Status status = 1;
+    string result = 2;
+}
+
+// ============================================================================
+// User Experience Service
+// ============================================================================
+
+service UserExperienceService {
+    // Handle user intervention decision
+    rpc InterventionResponse(InterventionResponseRequest) returns (InterventionResponseResponse);
+
+    // Query sandbox for safe exploration
+    rpc SandboxQuery(SandboxQueryRequest) returns (SandboxQueryResponse);
+}

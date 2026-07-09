@@ -247,6 +247,9 @@ add_executable(test_service_registry test_service_registry.cpp)
 target_link_libraries(test_service_registry
     agent_rpc_registry
     agent_rpc_common
+    proto_lib
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
     GTest::gtest
     GTest::gtest_main
     pthread

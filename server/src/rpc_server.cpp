@@ -290,8 +290,17 @@ void RpcServer::setupServer() {
     
     // 注册AI查询服务
     if (ai_query_service_impl_ && ai_query_service_impl_->isAvailable()) {
-        builder.RegisterService(ai_query_service_impl_.get());
+        builder.RegisterService(
+            static_cast<agent_communication::AIQueryService::Service*>(
+                ai_query_service_impl_.get()));
         LOG_INFO("AI Query Service registered");
+
+        // [Batch 4 U4] Also register the OrchestrationService (DAG execution)
+        // on the same service implementation via the second base class.
+        builder.RegisterService(
+            static_cast<agent_communication::OrchestrationService::Service*>(
+                ai_query_service_impl_.get()));
+        LOG_INFO("Orchestration Service (DAG) registered");
     }
 
     // 注册Agent通信服务

@@ -86,6 +86,8 @@ message AIStreamEvent {
     string context_id = 5;
     int64 timestamp = 6;
     string trace_summary = 8;      // [NEW Batch1] trace summary on 'complete' events
+    string activity_json = 9;      // [Batch4 U3] JSON activity record for feed
+    bool intervention_required = 10; // [Batch4 U3] true when user action needed
 }
 
 // 查询状态请求

@@ -237,6 +237,24 @@ void TaskPlanner::resolveAgents(ExecutionPlan& plan, AgentRouter& router) {
             task.preferred_agent_id = agent->id;
             task.preferred_agent_name = agent->name;
         }
+
+        // [Batch 4 U4] Populate Top-3 candidate agents per subtask
+        task.candidate_agents.clear();
+        if (!task.required_skill.empty()) {
+            auto candidates = router.findHealthyAgentsWithSkills(
+                {task.required_skill});
+            // Take up to 3 candidates with descending confidence
+            int count = 0;
+            for (const auto& ca : candidates) {
+                if (count >= 3) break;
+                CandidateAgent cand;
+                cand.agent_id = ca.id;
+                cand.agent_name = ca.name;
+                cand.confidence = 1.0 - (count * 0.15);  // Simple rank-based confidence
+                task.candidate_agents.push_back(std::move(cand));
+                ++count;
+            }
+        }
     }
 }
 

@@ -24,6 +24,16 @@ class AgentRouter;  // forward declaration for resolveAgents()
 
 // ── Data structures ────────────────────────────────────────────────────────
 
+/**
+ * @brief A candidate agent for a subtask with confidence score.
+ * [Batch 4 U4] Used to present Top-3 choices to the user.
+ */
+struct CandidateAgent {
+    std::string agent_id;
+    std::string agent_name;
+    double confidence = 0.0;               // Routing confidence (0.0–1.0)
+};
+
 struct SubTask {
     std::string id;                        // "t1", "t2", ...
     std::string description;               // Prompt sent to the Agent
@@ -31,6 +41,7 @@ struct SubTask {
     std::vector<std::string> depends_on;   // IDs of prerequisite subtasks
     std::string preferred_agent_id;        // Pre-resolved agent (set by resolveAgents)
     std::string preferred_agent_name;      // Agent name for logging
+    std::vector<CandidateAgent> candidate_agents; // [Batch 4 U4] Top-3 candidates
 };
 
 struct ExecutionPlan {

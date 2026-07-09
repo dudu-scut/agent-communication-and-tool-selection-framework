@@ -6,6 +6,8 @@ set(PROTO_FILES
     user.proto
     observability.proto
     agent_lifecycle.proto
+    user_experience.proto    # Batch 4 U3
+    orchestration.proto      # Batch 4 U4
 )
 
 foreach(PROTO_FILE ${PROTO_FILES})

@@ -13,6 +13,7 @@ set(COMMON_SOURCES
     src/redis_client.cpp
     src/rpc_framework.cpp
     src/cost_tracker.cpp        # Batch 1
+    src/profile_summarizer.cpp  # Batch 4 U2
 )
 
 # 创建静态库

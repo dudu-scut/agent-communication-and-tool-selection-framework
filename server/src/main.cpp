@@ -19,6 +19,7 @@
 #include "agent_rpc/common/background_scheduler.h"
 #include "agent_rpc/orchestrator/feedback_aggregator.h"
 #include "agent_rpc/mcp/rag/semantic_cache_index.h"
+#include "agent_rpc/common/profile_summarizer.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <signal.h>
@@ -215,6 +216,14 @@ int main(int argc, char* argv[]) {
         "cache_cleanup",
         []() { if (semantic_cache) semantic_cache->cleanup(); },
         std::chrono::seconds(600));
+
+    // Batch 4 U2: Register profile extraction task (every 5 minutes)
+    // Calls ProfileSummarizer::processPending() which is a no-op placeholder
+    // until LLM-based extraction is implemented in a future iteration.
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "profile_extraction",
+        []() { agent_rpc::common::ProfileSummarizer::processPending(); },
+        std::chrono::seconds(300));
 
     // 主循环
     while (g_running) {

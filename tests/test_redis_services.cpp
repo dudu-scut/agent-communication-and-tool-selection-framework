@@ -178,7 +178,8 @@ protected:
     void SetUp() override {
         RedisFixture::SetUp();
         if (!redis_available) return;
-        memory = std::make_unique<common::MemoryService>(&redis);
+        memory = std::make_unique<common::MemoryService>(
+            std::shared_ptr<common::RedisClient>(&redis, [](common::RedisClient*){}));
     }
 };
 

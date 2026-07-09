@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package agent_communication;
+
+import "common.proto";
+
+// ============================================================================
+// U4: DAG Composition — Orchestration Plan & Execution
+// Batch 4: Unified Memory + Activity Feed + DAG Composition
+// ============================================================================
+
+// A single node in a DAG execution plan
+message DAGNode {
+    string id = 1;
+    string description = 2;
+    string agent_id = 3;
+    repeated string dependencies = 4;
+}
+
+// Complete DAG structure
+message DAGStructure {
+    repeated DAGNode nodes = 1;
+}
+
+// Request to execute a user-defined (or user-modified) DAG plan
+message ExecutePlanRequest {
+    DAGStructure dag = 1;
+    string context_id = 2;
+    string user_id = 3;
+}
+
+// Response from executing a DAG plan
+message ExecutePlanResponse {
+    common.Status status = 1;
+    string trace_id = 2;
+}
+
+// ============================================================================
+// Orchestration Service
+// ============================================================================
+
+service OrchestrationService {
+    // Execute a user-approved (or user-modified) DAG plan
+    rpc ExecutePlan(ExecutePlanRequest) returns (ExecutePlanResponse);
+}

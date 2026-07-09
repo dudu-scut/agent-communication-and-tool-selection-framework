@@ -22,6 +22,8 @@
 
 #include "ai_query.grpc.pb.h"
 #include "ai_query.pb.h"
+#include "orchestration.grpc.pb.h"
+#include "orchestration.pb.h"
 
 #include <grpcpp/grpcpp.h>
 #include <chrono>
@@ -41,7 +43,8 @@ namespace server {
  * Implements the AIQueryService gRPC service, bridging RPC requests
  * to the A2A protocol via the A2AAdapter.
  */
-class AIQueryServiceImpl final : public agent_communication::AIQueryService::Service {
+class AIQueryServiceImpl final : public agent_communication::AIQueryService::Service,
+                                  public agent_communication::OrchestrationService::Service {
 public:
     AIQueryServiceImpl();
     ~AIQueryServiceImpl();
@@ -121,6 +124,28 @@ public:
         grpc::ServerContext* context,
         const agent_communication::GetAgentMetricsRequest* request,
         agent_communication::GetAgentMetricsResponse* response) override;
+
+    // ========================================================================
+    // DAG Execution (Batch 4 U4)
+    // ========================================================================
+
+    /**
+     * @brief Execute a user-modified DAG plan
+     *
+     * Accepts a user-approved or user-modified DAG structure and feeds it
+     * to the TaskExecutor for execution.  Designed for the DAG Preview
+     * feature where users can review and adjust sub-agent assignments
+     * before execution.
+     *
+     * @param context gRPC server context
+     * @param request  ExecutePlan request with DAG structure
+     * @param response ExecutePlan response with trace_id
+     * @return gRPC status
+     */
+    grpc::Status ExecutePlan(
+        grpc::ServerContext* context,
+        const agent_communication::ExecutePlanRequest* request,
+        agent_communication::ExecutePlanResponse* response) override;
     
     // ========================================================================
     // Accessors
