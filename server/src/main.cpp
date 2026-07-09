@@ -17,6 +17,7 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/common/background_scheduler.h"
+#include "agent_rpc/orchestrator/feedback_aggregator.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <signal.h>
@@ -193,6 +194,16 @@ int main(int argc, char* argv[]) {
 
     // Start BackgroundScheduler for periodic tasks
     agent_rpc::common::BackgroundScheduler::instance().start(2);
+
+    // Batch 2: Register feedback aggregation and metrics aggregation tasks (hourly)
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "feedback_aggregation",
+        []() { agent_rpc::orchestrator::FeedbackAggregator::recalculate(); },
+        std::chrono::seconds(3600));
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "agent_metrics_aggregation",
+        []() { agent_rpc::orchestrator::FeedbackAggregator::recalculateMetrics(); },
+        std::chrono::seconds(3600));
 
     // 主循环
     while (g_running) {

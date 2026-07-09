@@ -8,6 +8,7 @@
 #include "agent_rpc/common/message_converter.h"
 #include "agent_rpc/common/serializer.h"
 #include "agent_rpc/common/cost_tracker.h"
+#include "agent_rpc/orchestrator/feedback_aggregator.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -107,6 +108,9 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
 
     // Initialize CostTracker with Redis for budget counters
     agent_rpc::common::CostTracker::instance().initialize(redis_client_.get());
+
+    // Initialize FeedbackAggregator with Redis for feedback-driven routing (Batch 2)
+    agent_rpc::orchestrator::FeedbackAggregator::initialize(redis_client_.get());
 
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();

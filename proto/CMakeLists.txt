@@ -5,6 +5,7 @@ set(PROTO_FILES
     ai_query.proto
     user.proto
     observability.proto
+    agent_lifecycle.proto
 )
 
 foreach(PROTO_FILE ${PROTO_FILES})

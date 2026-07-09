@@ -6,6 +6,7 @@
  */
 
 #include "agent_rpc/orchestrator/agent_router.h"
+#include "agent_rpc/common/redis_client.h"
 #include <agent_rpc/mcp/rag/embedding_service.h>
 #include <agent_rpc/mcp/rag/vector_index.h>
 #include <agent_rpc/mcp/rag/embedding_cache.h>
@@ -498,6 +499,7 @@ void AgentRouter::rebuildSkillKeywordIndex() {
     // signal strength.
 
     skill_keywords_.clear();
+    skill_to_agents_.clear();
 
     // Pass 1: collect keyword → set<skill>
     std::unordered_map<std::string, std::unordered_set<std::string>> keyword_to_skills;
@@ -510,6 +512,11 @@ void AgentRouter::rebuildSkillKeywordIndex() {
 
     for (const auto& [id, agent] : agents_) {
         if (!agent.is_healthy) continue;
+
+        // Build reverse skill → agent_ids index (Batch 2)
+        for (const auto& skill : agent.skills) {
+            skill_to_agents_[skill].push_back(id);
+        }
 
         for (size_t i = 0; i < agent.skills.size(); ++i) {
             const std::string& skill = agent.skills[i];
@@ -599,7 +606,7 @@ AgentInfo AgentRouter::selectByStrategy(const std::vector<AgentInfo>& candidates
     if (candidates.size() == 1) {
         return candidates[0];
     }
-    
+
     switch (strategy_) {
         case RoutingStrategy::ROUND_ROBIN:
             return selectRoundRobin(candidates);
@@ -609,8 +616,8 @@ AgentInfo AgentRouter::selectByStrategy(const std::vector<AgentInfo>& candidates
             return selectLeastLoad(candidates);
         case RoutingStrategy::SKILL_MATCH:
         default:
-            // For skill match, candidates are already filtered, use round-robin
-            return selectRoundRobin(candidates);
+            // For skill match, weight by quality coefficient from feedback (Batch 2)
+            return selectWeightedByQuality(candidates);
     }
 }
 
@@ -630,6 +637,37 @@ AgentInfo AgentRouter::selectLeastLoad(const std::vector<AgentInfo>& candidates)
             return a.current_load < b.current_load;
         });
     return *min_it;
+}
+
+AgentInfo AgentRouter::selectWeightedByQuality(const std::vector<AgentInfo>& candidates) {
+    // Weighted random selection: agents with higher quality coefficients
+    // (based on approval rate) are more likely to be selected.
+    // Compute total weight and pick proportionally.
+    std::vector<double> weights;
+    weights.reserve(candidates.size());
+    double total_weight = 0.0;
+
+    for (const auto& agent : candidates) {
+        // Use first skill for quality coefficient lookup
+        std::string skill = agent.skills.empty() ? "" : agent.skills.front();
+        double qc = getQualityCoefficient(agent.id, skill);
+        weights.push_back(qc);
+        total_weight += qc;
+    }
+
+    // Weighted random selection
+    std::uniform_real_distribution<double> dist(0.0, total_weight);
+    double pick = dist(random_generator_);
+    double cumulative = 0.0;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        cumulative += weights[i];
+        if (pick <= cumulative) {
+            return candidates[i];
+        }
+    }
+
+    // Fallback (should not reach here)
+    return candidates.back();
 }
 
 // === Dynamic Intent Classification (P0-1 / P1-1) ===
@@ -923,6 +961,30 @@ std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string& questi
     }
 
     return {};
+}
+
+// === Batch 2: Fallback and Feedback-Driven Routing ===
+
+std::string AgentRouter::findFallbackAgent(const std::string& skill_name, const std::string& exclude_agent_id) {
+    std::lock_guard<std::mutex> lock(agents_mutex_);
+    auto it = skill_to_agents_.find(skill_name);
+    if (it == skill_to_agents_.end()) return "";
+    for (const auto& id : it->second) {
+        if (id != exclude_agent_id) return id;
+    }
+    return "";
+}
+
+// === Batch 2: Feedback-Driven Routing ===
+
+double AgentRouter::getQualityCoefficient(const std::string& agent_id, const std::string& skill_name) {
+    std::string key = "feedback:" + agent_id + ":" + skill_name;
+    std::string value;
+    if (redis_ && redis_->hget(key, "approval_rate", value)) {
+        double rate = std::stod(value);
+        return 0.5 + 0.5 * rate; // range [0.5, 1.0]
+    }
+    return 0.75; // default for new agents
 }
 
 } // namespace orchestrator

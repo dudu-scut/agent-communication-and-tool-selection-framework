@@ -32,6 +32,9 @@ namespace agent_rpc { namespace mcp { namespace rag {
 class LLMClient;
 
 namespace agent_rpc {
+namespace common {
+class RedisClient;
+}
 namespace orchestrator {
 
 /**
@@ -292,13 +295,31 @@ public:
      */
     void setLLMClient(std::unique_ptr<LLMClient> client);
 
-    // === Embedding-based Routing (P3) ===
+    // === Feedback-Driven Routing (Batch 2) ===
 
     /**
-     * @brief Enable embedding-based skill routing
-     * @param config Embedding router configuration
-     * @return true if embedding service initialized successfully
+     * @brief Find a fallback agent for a given skill, excluding a specific agent
+     * @param skill_name The skill to find a fallback for
+     * @param exclude_agent_id Agent ID to exclude from results
+     * @return Fallback agent ID, or empty string if none found
      */
+    std::string findFallbackAgent(const std::string& skill_name, const std::string& exclude_agent_id);
+
+    /**
+     * @brief Get quality coefficient for an agent-skill pair based on approval rate
+     * @param agent_id Agent identifier
+     * @param skill_name Skill name
+     * @return Quality coefficient in range [0.5, 1.0]
+     */
+    double getQualityCoefficient(const std::string& agent_id, const std::string& skill_name);
+
+    /**
+     * @brief Set the Redis client for feedback-driven routing
+     * @param redis Pointer to RedisClient instance
+     */
+    void setRedisClient(agent_rpc::common::RedisClient* redis) { redis_ = redis; }
+
+private:
     bool enableEmbedding(const EmbeddingRouterConfig& config);
 
     /**
@@ -347,7 +368,15 @@ private:
      * @brief Select using least-load strategy
      */
     AgentInfo selectLeastLoad(const std::vector<AgentInfo>& candidates);
-    
+
+    /**
+     * @brief Select using quality-weighted random (Batch 2 feedback-driven)
+     *
+     * Agents with higher quality coefficients (derived from approval rate) are
+     * more likely to be selected. Uses a weighted random selection.
+     */
+    AgentInfo selectWeightedByQuality(const std::vector<AgentInfo>& candidates);
+
     /**
      * @brief Rebuild the skill keyword index from current agents
      * 
@@ -390,6 +419,9 @@ private:
     };
     std::unordered_map<std::string, std::vector<KeywordEntry>> skill_keywords_;
 
+    // Skill → agent IDs map for fast fallback lookup (Batch 2)
+    std::unordered_map<std::string, std::vector<std::string>> skill_to_agents_;
+
     // Embedding-based routing (P3)
     EmbeddingRouterConfig embedding_config_;
     std::unique_ptr<agent_rpc::mcp::rag::EmbeddingService> embedding_service_;
@@ -401,6 +433,9 @@ private:
 
     // LLM-based intent classification (P1-1)
     std::unique_ptr<LLMClient> llm_client_;
+
+    // Redis client for feedback-driven routing (Batch 2)
+    agent_rpc::common::RedisClient* redis_ = nullptr;
 };
 
 } // namespace orchestrator

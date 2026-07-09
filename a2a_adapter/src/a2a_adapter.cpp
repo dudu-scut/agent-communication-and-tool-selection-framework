@@ -187,11 +187,27 @@ void A2AAdapter::processQueryStreaming(
         return;
     }
     
+    // Circuit breaker: check if orchestrator is healthy before streaming call
+    auto streaming_cb = common::CircuitBreakerManager::getInstance().getCircuitBreaker("a2a_orchestrator");
+    if (!streaming_cb->isRequestAllowed()) {
+        agent_communication::AIStreamEvent cb_event;
+        response_adapter_->buildStreamEvent(
+            "Circuit breaker is OPEN — orchestrator is unavailable",
+            request.context_id(), "error", &cb_event);
+        callback(cb_event);
+        // End streaming trace span if it was started
+        auto* trace = agent_rpc::common::TraceContext::current();
+        if (trace) {
+            trace->endSpan();
+        }
+        return;
+    }
+
     try {
         // Convert RPC request to A2A format
         a2a::MessageSendParams params = request_adapter_->convertToA2A(request);
         std::string context_id = params.context_id().value_or("");
-        
+
         // Use streaming API
         // 注意：http_client按双换行符切分数据，每次回调收到完整的SSE事件
         // [Batch 1] Inject trace headers into A2A HTTP streaming call
@@ -322,6 +338,9 @@ void A2AAdapter::processQueryStreaming(
             a2a_client_->clear_headers();
         }
 
+        // Record streaming success to circuit breaker
+        streaming_cb->recordSuccess();
+
         // Send completion event
         agent_communication::AIStreamEvent complete_event;
         response_adapter_->buildStreamEvent(
@@ -329,6 +348,9 @@ void A2AAdapter::processQueryStreaming(
         callback(complete_event);
 
     } catch (const std::exception& e) {
+        // Record streaming failure to circuit breaker
+        streaming_cb->recordFailure();
+
         // Send error event
         agent_communication::AIStreamEvent error_event;
         response_adapter_->buildStreamEvent(
@@ -376,8 +398,21 @@ bool A2AAdapter::processQueryDirect(
 
     auto start_time = std::chrono::steady_clock::now();
 
+    // Circuit breaker: check if the target agent is healthy
+    auto direct_cb = common::CircuitBreakerManager::getInstance().getCircuitBreaker("direct_agent:" + agent_url);
+
     try {
         a2a::MessageSendParams params = request_adapter_->convertToA2A(request);
+
+        // Check circuit breaker before making the direct call
+        if (!direct_cb->isRequestAllowed()) {
+            if (response) {
+                auto* status = response->mutable_status();
+                status->set_code(static_cast<int>(grpc::StatusCode::UNAVAILABLE));
+                status->set_message("Circuit breaker is OPEN — agent " + agent_url + " is unavailable");
+            }
+            return false;
+        }
 
         a2a::A2AClient client(agent_url);
         client.set_timeout(config_.request_timeout_seconds);
@@ -399,6 +434,9 @@ bool A2AAdapter::processQueryDirect(
 
         response_adapter_->convertFromA2A(a2a_response, request.request_id(), "", response);
 
+        // Record direct call success to circuit breaker
+        direct_cb->recordSuccess();
+
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             end_time - start_time);
@@ -406,6 +444,8 @@ bool A2AAdapter::processQueryDirect(
         return true;
 
     } catch (const a2a::A2AException& e) {
+        // Record failure to circuit breaker
+        direct_cb->recordFailure();
         auto* status = response->mutable_status();
         grpc::StatusCode grpc_code = ErrorMapper::mapToGrpcStatus(
             static_cast<a2a::ErrorCode>(e.error_code()));
@@ -418,6 +458,8 @@ bool A2AAdapter::processQueryDirect(
         status->set_message(error_msg);
         return false;
     } catch (const std::exception& e) {
+        // Record failure to circuit breaker
+        direct_cb->recordFailure();
         auto* status = response->mutable_status();
         grpc::StatusCode grpc_code = ErrorMapper::mapNetworkException(e);
         status->set_code(static_cast<int>(grpc_code));
@@ -432,6 +474,17 @@ void A2AAdapter::processQueryStreamingDirect(
     const std::string& agent_url) {
 
     if (!initialized_ || !callback) {
+        return;
+    }
+
+    // Circuit breaker: check if the target agent is healthy for streaming direct
+    auto streaming_direct_cb = common::CircuitBreakerManager::getInstance().getCircuitBreaker("streaming_direct:" + agent_url);
+    if (!streaming_direct_cb->isRequestAllowed()) {
+        agent_communication::AIStreamEvent cb_event;
+        response_adapter_->buildStreamEvent(
+            "Circuit breaker is OPEN — agent " + agent_url + " is unavailable for streaming",
+            request.context_id(), "error", &cb_event);
+        callback(cb_event);
         return;
     }
 
@@ -554,12 +607,18 @@ void A2AAdapter::processQueryStreamingDirect(
             trace->endSpan();
         }
 
+        // Record streaming direct success to circuit breaker
+        streaming_direct_cb->recordSuccess();
+
         agent_communication::AIStreamEvent complete_event;
         response_adapter_->buildStreamEvent(
             "", context_id, "complete", &complete_event);
         callback(complete_event);
 
     } catch (const std::exception& e) {
+        // Record streaming direct failure to circuit breaker
+        streaming_direct_cb->recordFailure();
+
         agent_communication::AIStreamEvent error_event;
         response_adapter_->buildStreamEvent(
             e.what(), request.context_id(), "error", &error_event);

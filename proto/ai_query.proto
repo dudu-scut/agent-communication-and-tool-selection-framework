@@ -8,6 +8,17 @@ import "common.proto";
 // AI Query Messages
 // ============================================================================
 
+// Agent Metrics request (Batch 2 - AgentCard transparency)
+message GetAgentMetricsRequest {
+    string agent_id = 1;
+}
+
+// Agent Metrics response (Batch 2 - AgentCard transparency)
+message GetAgentMetricsResponse {
+    common.Status status = 1;
+    common.AgentMetrics metrics = 2;
+}
+
 // Agent偏好设置
 message AgentPreference {
     repeated string preferred_skills = 1;  // 偏好技能
@@ -106,10 +117,13 @@ message QueryStatusResponse {
 service AIQueryService {
     // 同步查询
     rpc Query(AIQueryRequest) returns (AIQueryResponse);
-    
+
     // 流式查询
     rpc QueryStream(AIQueryRequest) returns (stream AIStreamEvent);
-    
+
     // 获取查询状态
     rpc GetQueryStatus(QueryStatusRequest) returns (QueryStatusResponse);
+
+    // 获取Agent运行时指标 (Batch 2 - AgentCard透明度)
+    rpc GetAgentMetrics(GetAgentMetricsRequest) returns (GetAgentMetricsResponse);
 }

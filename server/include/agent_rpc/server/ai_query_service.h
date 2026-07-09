@@ -105,6 +105,22 @@ public:
         grpc::ServerContext* context,
         const agent_communication::QueryStatusRequest* request,
         agent_communication::QueryStatusResponse* response) override;
+
+    // ========================================================================
+    // Agent Metrics (Batch 2)
+    // ========================================================================
+
+    /**
+     * @brief Get agent runtime metrics from Redis
+     * @param context gRPC server context
+     * @param request Metrics request
+     * @param response Metrics response
+     * @return gRPC status
+     */
+    grpc::Status GetAgentMetrics(
+        grpc::ServerContext* context,
+        const agent_communication::GetAgentMetricsRequest* request,
+        agent_communication::GetAgentMetricsResponse* response) override;
     
     // ========================================================================
     // Accessors
@@ -199,6 +215,9 @@ private:
     std::unique_ptr<LLMClient> memory_llm_client_;
     std::mutex memory_llm_mutex_;
     std::set<std::string> summary_in_progress_;  // context_ids with ongoing summary generation
+
+    // Redis client for feedback-driven routing and metrics (Batch 2)
+    common::RedisClient* redis_client_ = nullptr;
 };
 
 } // namespace server

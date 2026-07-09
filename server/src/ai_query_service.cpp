@@ -52,6 +52,7 @@ bool AIQueryServiceImpl::initialize(
     }
 
     rpc_config_ = rpc_config;
+    redis_client_ = redis;
 
     // Initialize MemoryService (Redis-backed)
     memory_service_ = std::make_unique<common::MemoryService>(
@@ -681,6 +682,11 @@ bool AIQueryServiceImpl::initializeOrchestrator(
         auto router_llm = std::make_unique<LLMClient>(api_key, model, api_url);
         agent_router_->setLLMClient(std::move(router_llm));
 
+        // Wire Redis client into AgentRouter for feedback-driven routing (Batch 2)
+        if (redis_client_) {
+            agent_router_->setRedisClient(redis_client_);
+        }
+
         // TaskPlanner: decides single vs multi-agent, decomposes into DAG
         // (creates its own LLMClient internally from config)
         orchestrator::TaskPlannerConfig planner_config;
@@ -1091,6 +1097,89 @@ grpc::Status AIQueryServiceImpl::handleMultiAgentQueryStream(
         return grpc::Status(grpc::StatusCode::INTERNAL,
                            std::string("Multi-agent orchestration failed: ") + e.what());
     }
+}
+
+// ============================================================================
+// Agent Metrics (Batch 2)
+// ============================================================================
+
+grpc::Status AIQueryServiceImpl::GetAgentMetrics(
+    grpc::ServerContext* context,
+    const agent_communication::GetAgentMetricsRequest* request,
+    agent_communication::GetAgentMetricsResponse* response) {
+
+    (void)context; // unused, reserved for future auth/deadline propagation
+
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "Invalid request or response");
+    }
+
+    // Auth: reject unauthenticated requests
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
+    const std::string& agent_id = request->agent_id();
+    if (agent_id.empty()) {
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message("agent_id is required");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "agent_id is required");
+    }
+
+    LOG_INFO("GetAgentMetrics for agent: " + agent_id);
+
+    // Read from Redis HSET: agent_metrics:{agent_id}
+    std::string redis_key = "agent_metrics:" + agent_id;
+    std::map<std::string, std::string> metrics_data;
+
+    if (!redis_client_ || !redis_client_->hgetall(redis_key, metrics_data)) {
+        LOG_WARN("No metrics found for agent: " + agent_id);
+        auto* status = response->mutable_status();
+        status->set_code(0);
+        status->set_message("No metrics available for this agent");
+        // Return empty metrics with OK status
+        auto* metrics = response->mutable_metrics();
+        metrics->set_agent_id(agent_id);
+        return grpc::Status::OK;
+    }
+
+    // Populate AgentMetrics from Redis hash fields
+    auto* metrics = response->mutable_metrics();
+    metrics->set_agent_id(agent_id);
+
+    auto get_double = [&](const std::string& field) -> double {
+        auto it = metrics_data.find(field);
+        if (it != metrics_data.end() && !it->second.empty()) {
+            try { return std::stod(it->second); } catch (...) {}
+        }
+        return 0.0;
+    };
+
+    auto get_int = [&](const std::string& field) -> int32_t {
+        auto it = metrics_data.find(field);
+        if (it != metrics_data.end() && !it->second.empty()) {
+            try { return std::stoi(it->second); } catch (...) {}
+        }
+        return 0;
+    };
+
+    metrics->set_success_rate(get_double("success_rate"));
+    metrics->set_avg_latency_ms(get_double("avg_latency_ms"));
+    metrics->set_p95_latency_ms(get_double("p95_latency_ms"));
+    metrics->set_total_requests(get_int("total_requests"));
+
+    // approval_rate comes from feedback aggregation
+    metrics->set_approval_rate(get_double("approval_rate"));
+
+    auto* status = response->mutable_status();
+    status->set_code(0);
+    status->set_message("OK");
+
+    return grpc::Status::OK;
 }
 
 } // namespace server

@@ -19,6 +19,7 @@ message ServiceInfo {
     map<string, string> metadata = 6;
     repeated string skills = 7;          // AgentCard 技能名称列表
     string agent_card = 8;               // AgentCard JSON（完整元数据）
+    AgentMetrics agent_metrics = 9;      // 运行时指标 (Batch 2)
 }
 
 // 健康检查请求
@@ -61,4 +62,16 @@ message LogEntry {
     string source = 3;
     int64 timestamp = 4;
     map<string, string> fields = 5;
+}
+
+// 代理运行时指标 (Batch 2 - AgentCard透明度)
+message AgentMetrics {
+    string agent_id = 1;
+    double success_rate = 2;
+    double avg_latency_ms = 3;
+    double p95_latency_ms = 4;
+    int32 total_requests = 5;
+    double approval_rate = 6;
+    int32 estimated_token_low = 7;
+    int32 estimated_token_high = 8;
 }

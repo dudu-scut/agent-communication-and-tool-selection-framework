@@ -11,6 +11,7 @@ set(ORCHESTRATOR_SOURCES
     src/task_planner.cpp
     src/task_executor.cpp
     src/result_aggregator.cpp
+    src/feedback_aggregator.cpp
 )
 
 # Header files
@@ -20,6 +21,7 @@ set(ORCHESTRATOR_HEADERS
     include/agent_rpc/orchestrator/task_planner.h
     include/agent_rpc/orchestrator/task_executor.h
     include/agent_rpc/orchestrator/result_aggregator.h
+    include/agent_rpc/orchestrator/feedback_aggregator.h
 )
 
 # Create library
@@ -35,6 +37,7 @@ target_include_directories(orchestrator
         ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
         ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../mcp/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
         ${CMAKE_BINARY_DIR}/proto
 )
 

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package agent_communication;
+
+import "common.proto";
+
+message SubmitFeedbackRequest {
+    string trace_id = 1;
+    string agent_id = 2;
+    string skill_name = 3;
+    int32 rating = 4;
+    string comment = 5;
+}
+
+message SubmitFeedbackResponse {
+    common.Status status = 1;
+}
+
+message GetAgentCompareRequest {
+    string skill_name = 1;
+}
+
+message GetAgentCompareResponse {
+    common.Status status = 1;
+    repeated common.AgentMetrics agents = 2;
+}
+
+service AgentLifecycleService {
+    rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+    rpc GetAgentCompare(GetAgentCompareRequest) returns (GetAgentCompareResponse);
+}
