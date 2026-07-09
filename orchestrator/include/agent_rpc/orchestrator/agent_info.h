@@ -35,6 +35,7 @@ struct AgentInfo {
     int current_load = 0;                        // Current task load (for LEAST_LOAD strategy)
     std::string description;                     // Agent description
     std::string version;                         // Agent version
+    std::string deployment_stage;                // Batch 6: STABLE / CANARY / DEPRECATED
     
     /**
      * @brief Skill name → description mapping

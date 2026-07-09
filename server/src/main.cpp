@@ -18,8 +18,10 @@
 #include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/common/background_scheduler.h"
 #include "agent_rpc/orchestrator/feedback_aggregator.h"
+#include "agent_rpc/orchestrator/cron_scheduler.h"
 #include "agent_rpc/mcp/rag/semantic_cache_index.h"
 #include "agent_rpc/common/profile_summarizer.h"
+#include "agent_rpc/registry/service_registry.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <signal.h>
@@ -224,6 +226,70 @@ int main(int argc, char* argv[]) {
         "profile_extraction",
         []() { agent_rpc::common::ProfileSummarizer::processPending(); },
         std::chrono::seconds(300));
+
+    // Batch 5: Register health evaluation task (every 30 seconds)
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "health_evaluation",
+        []() {
+            agent_rpc::registry::ServiceRegistry::evaluateAllHealth();
+        },
+        std::chrono::seconds(30));
+
+    // Batch 6: Initialize CronScheduler with Redis client
+    agent_rpc::orchestrator::CronScheduler::initialize(server.getRedisClient());
+
+    // Batch 6: Wire up CronScheduler execute callback to AIQueryService
+    agent_rpc::orchestrator::CronScheduler::setExecuteFn(
+        [&server](int64_t task_id, const std::string& task_name,
+                   const std::string& query_template,
+                   const std::string& agent_id,
+                   const std::string& context_id) {
+            auto ai_service = server.getAIQueryService();
+            if (!ai_service || !ai_service->isAvailable()) {
+                LOG_WARN("CronScheduler: AIQueryService not available, skipping task " +
+                         std::to_string(task_id));
+                return;
+            }
+            agent_communication::AIQueryRequest req;
+            req.set_request_id("cron_" + std::to_string(task_id));
+            req.set_question(query_template.empty() ? task_name : query_template);
+            req.set_context_id(context_id.empty() ? "cron_" + std::to_string(task_id) : context_id);
+            req.set_user_id("cron_scheduler");
+            if (!agent_id.empty()) {
+                req.mutable_preference()->add_preferred_agents(agent_id);
+            }
+            agent_communication::AIQueryResponse resp;
+            ai_service->Query(nullptr, &req, &resp);
+            LOG_INFO("CronScheduler: task " + std::to_string(task_id) +
+                     " executed via AIQueryService");
+        });
+
+    // Batch 6: Register cron scheduler check (every 60 seconds)
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "cron_scheduler",
+        []() { agent_rpc::orchestrator::CronScheduler::checkAndFire(); },
+        std::chrono::seconds(60));
+
+    // Batch 6: Register canary evaluation task (every 600 seconds)
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "canary_evaluation",
+        [&server]() {
+            // Canary evaluation placeholder: evaluates canary deployments
+            // by comparing agent metrics between canary and stable versions.
+            // Full implementation will read from canary_deployments table
+            // and compare feedback/quality coefficients.
+            LOG_INFO("Canary evaluation: checking deployment health...");
+            auto* ai_service = server.getAIQueryService().get();
+            if (ai_service) {
+                auto* router = ai_service->getAgentRouter();
+                if (router) {
+                    auto agents = router->getHealthyAgents();
+                    LOG_INFO("Canary evaluation: " + std::to_string(agents.size()) +
+                             " healthy agents available");
+                }
+            }
+        },
+        std::chrono::seconds(600));
 
     // 主循环
     while (g_running) {

@@ -55,6 +55,9 @@ public:
 
     // 获取认证服务
     std::shared_ptr<AuthServiceImpl> getAuthService();
+
+    // 获取 Redis 客户端 (Batch 6: for CronScheduler and Canary)
+    common::RedisClient* getRedisClient() { return redis_client_.get(); }
     
     // 设置A2A配置
     void setA2AConfig(const a2a_adapter::A2AConfig& config);

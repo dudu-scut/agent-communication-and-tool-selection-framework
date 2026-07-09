@@ -651,6 +651,15 @@ AgentInfo AgentRouter::selectWeightedByQuality(const std::vector<AgentInfo>& can
         // Use first skill for quality coefficient lookup
         std::string skill = agent.skills.empty() ? "" : agent.skills.front();
         double qc = getQualityCoefficient(agent.id, skill);
+
+        // [Batch 6] Apply deployment_stage weight multiplier
+        if (agent.deployment_stage == "CANARY") {
+            qc *= 0.1;  // Canary agents get 10% of their quality weight
+        } else if (agent.deployment_stage == "DEPRECATED") {
+            qc = 0.0;   // Deprecated agents are excluded from selection
+        }
+        // STABLE (or empty): full weight, no modification
+
         weights.push_back(qc);
         total_weight += qc;
     }

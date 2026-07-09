@@ -21,6 +21,8 @@ message ServiceInfo {
     string agent_card = 8;               // AgentCard JSON（完整元数据）
     AgentMetrics agent_metrics = 9;      // 运行时指标 (Batch 2)
     bool cacheable = 10;                 // Semantically cacheable responses (Batch 3)
+    string deployment_stage = 11;        // Batch 6: STABLE / CANARY / DEPRECATED
+    string a2a_version = 12;             // Batch 8: A2A protocol version (e.g. "1.0", "1.1")
 }
 
 // 健康检查请求

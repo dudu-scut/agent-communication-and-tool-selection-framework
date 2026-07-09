@@ -18,6 +18,8 @@
 #include "agent_rpc/orchestrator/agent_router.h"
 #include "agent_rpc/orchestrator/task_planner.h"
 #include "agent_rpc/orchestrator/task_executor.h"
+#include "agent_rpc/server/budget_middleware.h"
+#include "agent_rpc/orchestrator/replay_service.h"
 #include "agent_rpc/orchestrator/result_aggregator.h"
 
 #include "ai_query.grpc.pb.h"
@@ -146,6 +148,40 @@ public:
         grpc::ServerContext* context,
         const agent_communication::ExecutePlanRequest* request,
         agent_communication::ExecutePlanResponse* response) override;
+
+    // ========================================================================
+    // Query Replay (Batch 5)
+    // ========================================================================
+
+    /**
+     * @brief Replay a previous query (exact or route-only)
+     *
+     * @param context gRPC server context
+     * @param request ReplayQuery request with trace_id and mode
+     * @param response ReplayQuery response with original and replayed outputs
+     * @return gRPC status
+     */
+    grpc::Status ReplayQuery(
+        grpc::ServerContext* context,
+        const agent_communication::ReplayQueryRequest* request,
+        agent_communication::ReplayQueryResponse* response) override;
+
+    // ========================================================================
+    // Batch 6: Export Conversation
+    // ========================================================================
+
+    /**
+     * @brief Export conversation as Markdown or HTML
+     *
+     * @param context gRPC server context
+     * @param request ExportConversation request with context_id and format
+     * @param response ExportConversation response with file data
+     * @return gRPC status
+     */
+    grpc::Status ExportConversation(
+        grpc::ServerContext* context,
+        const agent_communication::ExportConversationRequest* request,
+        agent_communication::ExportConversationResponse* response) override;
     
     // ========================================================================
     // Accessors

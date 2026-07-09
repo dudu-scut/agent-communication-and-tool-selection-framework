@@ -17,12 +17,14 @@
 #include <nlohmann/json.hpp>
 #include "agent_rpc/common/trace_context.h"
 #include "agent_rpc/common/cost_tracker.h"
+#include "agent_rpc/orchestrator/export_service.h"
 
 #include <chrono>
 #include <cstdlib>
 #include <future>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 #ifdef _WIN32
 #include <objbase.h>
 #include <rpc.h>
@@ -176,6 +178,28 @@ grpc::Status AIQueryServiceImpl::Query(
         *enriched_req.mutable_system_context() = sys_ctx;
     }
 
+    // Batch 5: Budget check — skip for internal/empty user_ids
+    // [Batch 7 U5] Skip budget check for sandbox queries (context_id prefixed with "sandbox_")
+    bool is_sandbox = request->context_id().rfind("sandbox_", 0) == 0;
+    if (redis_client_ && !user_id.empty() && !is_sandbox) {
+        // Estimate cost: ~100 micro-dollars per 1000 characters (rough heuristic)
+        int64_t estimated_cost = std::max<int64_t>(100,
+            static_cast<int64_t>(request->question().size()) * 100 / 1000);
+        auto budget_result = BudgetMiddleware::checkAndDeduct(
+            redis_client_, user_id, request->context_id(), request_id, estimated_cost);
+        if (budget_result != BudgetMiddleware::OK) {
+            LOG_WARN("Budget check failed for " + user_id + ": " +
+                     BudgetMiddleware::resultMessage(budget_result));
+            auto* status = response->mutable_status();
+            status->set_code(-1);
+            status->set_message(BudgetMiddleware::resultMessage(budget_result));
+            updateTaskStatus(request_id, "failed", "", "",
+                             BudgetMiddleware::resultMessage(budget_result));
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                               BudgetMiddleware::resultMessage(budget_result));
+        }
+    }
+
     // P4-4: Multi-agent orchestrator path
     if (orchestrator_enabled_) {
         auto status = handleMultiAgentQuery(context, &enriched_req, response, request_id);
@@ -261,9 +285,11 @@ grpc::Status AIQueryServiceImpl::Query(
                          response->agent_id(), response->agent_name());
         auto* tc = common::TraceContext::current();
         if (tc) {
+            // [Batch 7 U5] Use "sandbox" component for sandbox queries (skips budget update)
+            std::string component = is_sandbox ? "sandbox" : "server_query";
             common::CostTracker::instance().recordLLMCall(
                 tc->traceId(), user_id, request->context_id(),
-                response->agent_id(), "server_query",
+                response->agent_id(), component,
                 0, 0, "unknown", duration.count());
         }
         LOG_INFO("AI query completed: " + request_id +
@@ -414,9 +440,12 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     if (success) {
         updateTaskStatus(request_id, "completed");
         // Record LLM call cost for observability
+        // [Batch 7 U5] Use "sandbox" component for sandbox queries (skips budget update)
+        bool qs_is_sandbox = request->context_id().rfind("sandbox_", 0) == 0;
+        std::string qs_component = qs_is_sandbox ? "sandbox" : "server_stream";
         common::CostTracker::instance().recordLLMCall(
             common::TraceContext::current() ? common::TraceContext::current()->traceId() : "",
-            user_id, request->context_id(), "", "server_stream",
+            user_id, request->context_id(), "", qs_component,
             0, 0, "unknown", duration.count());
         LOG_INFO("Streaming AI query completed: " + request_id +
                 " in " + std::to_string(duration.count()) + "ms");
@@ -1327,6 +1356,127 @@ grpc::Status AIQueryServiceImpl::ExecutePlan(
         return grpc::Status(grpc::StatusCode::INTERNAL,
                            std::string("DAG execution failed: ") + e.what());
     }
+}
+
+// ============================================================================
+// Batch 6: Export Conversation
+// ============================================================================
+
+grpc::Status AIQueryServiceImpl::ExportConversation(
+    grpc::ServerContext* context,
+    const agent_communication::ExportConversationRequest* request,
+    agent_communication::ExportConversationResponse* response) {
+
+    (void)context; // unused, reserved for future auth/deadline propagation
+
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "Invalid request or response");
+    }
+
+    // Auth: reject unauthenticated requests
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
+    const std::string& context_id = request->context_id();
+    if (context_id.empty()) {
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message("context_id is required");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "context_id is required");
+    }
+
+    LOG_INFO("ExportConversation: context=" + context_id +
+             " format=" + request->format());
+
+    // Generate Markdown conversation
+    std::string markdown = orchestrator::ExportService::toMarkdown(context_id);
+
+    // Determine output format
+    std::string format = request->format();
+    if (format.empty()) {
+        format = "markdown"; // default
+    }
+
+    std::string file_content;
+    std::string mime_type;
+
+    if (format == "html") {
+        file_content = orchestrator::ExportService::toHTML(markdown);
+        mime_type = "text/html; charset=utf-8";
+    } else {
+        // Default: Markdown
+        file_content = markdown;
+        mime_type = "text/markdown; charset=utf-8";
+    }
+
+    response->set_file_data(file_content);
+    response->set_mime_type(mime_type);
+
+    auto* status = response->mutable_status();
+    status->set_code(0);
+    status->set_message("OK");
+
+    LOG_INFO("ExportConversation completed: context=" + context_id +
+             " size=" + std::to_string(file_content.size()) + " bytes");
+    return grpc::Status::OK;
+}
+
+// ============================================================================
+// Query Replay (Batch 5)
+// ============================================================================
+
+grpc::Status AIQueryServiceImpl::ReplayQuery(
+    grpc::ServerContext* context,
+    const agent_communication::ReplayQueryRequest* request,
+    agent_communication::ReplayQueryResponse* response) {
+
+    (void)context; // unused, reserved for future auth/deadline propagation
+
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "Invalid request or response");
+    }
+
+    // Auth: reject unauthenticated requests
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Valid authentication token required");
+    }
+
+    const std::string& trace_id = request->trace_id();
+    const std::string& mode = request->mode();
+
+    if (trace_id.empty()) {
+        auto* status = response->mutable_status();
+        status->set_code(-1);
+        status->set_message("trace_id is required");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "trace_id is required");
+    }
+
+    LOG_INFO("ReplayQuery: trace=" + trace_id + " mode=" + mode);
+
+    auto* status = response->mutable_status();
+    status->set_code(0);
+    status->set_message("OK");
+
+    if (mode == "route") {
+        auto result = orchestrator::ReplayService::replayRoute(trace_id);
+        response->set_original(result.original_response);
+        response->set_replayed(result.replayed_response);
+    } else {
+        // Default to "exact"
+        auto result = orchestrator::ReplayService::replayExact(trace_id);
+        response->set_original(result.original_response);
+        response->set_replayed(result.replayed_response);
+    }
+
+    LOG_INFO("ReplayQuery completed: trace=" + trace_id);
+    return grpc::Status::OK;
 }
 
 } // namespace server

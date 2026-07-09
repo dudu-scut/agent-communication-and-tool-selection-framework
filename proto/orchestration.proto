@@ -36,10 +36,46 @@ message ExecutePlanResponse {
 }
 
 // ============================================================================
+// Batch 5: Query Replay — ReplayQuery RPC
+// ============================================================================
+
+message ReplayQueryRequest {
+    string trace_id = 1;
+    string mode = 2; // "exact" or "route"
+}
+
+message ReplayQueryResponse {
+    common.Status status = 1;
+    string original = 2;
+    string replayed = 3;
+}
+
+// ============================================================================
+// Batch 6: Export Conversation
+// ============================================================================
+
+message ExportConversationRequest {
+    string context_id = 1;
+    string format = 2; // "markdown" or "html"
+}
+
+message ExportConversationResponse {
+    common.Status status = 1;
+    bytes file_data = 2;
+    string mime_type = 3;
+}
+
+// ============================================================================
 // Orchestration Service
 // ============================================================================
 
 service OrchestrationService {
     // Execute a user-approved (or user-modified) DAG plan
     rpc ExecutePlan(ExecutePlanRequest) returns (ExecutePlanResponse);
+
+    // Batch 5: Replay a previous query (exact or route-only)
+    rpc ReplayQuery(ReplayQueryRequest) returns (ReplayQueryResponse);
+
+    // Batch 6: Export conversation as Markdown or HTML
+    rpc ExportConversation(ExportConversationRequest) returns (ExportConversationResponse);
 }
