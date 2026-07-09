@@ -65,6 +65,12 @@ void CostTracker::recordLLMCall(
     (void)context_id;
     (void)agent_id;
 
+    // [Batch 7 U5] Skip budget update for sandbox queries
+    if (component == "sandbox") {
+        LOG_DEBUG("CostTracker: skipping budget update for sandbox component");
+        return;
+    }
+
     double cost = calculateCost(model, prompt_tokens, completion_tokens);
 
     // Update Redis budget counter

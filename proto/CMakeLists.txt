@@ -8,6 +8,7 @@ set(PROTO_FILES
     agent_lifecycle.proto
     user_experience.proto    # Batch 4 U3
     orchestration.proto      # Batch 4 U4
+    sharing.proto            # Batch 7 U6
 )
 
 foreach(PROTO_FILE ${PROTO_FILES})

@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package agent_communication;
+
+import "common.proto";
+import "ai_query.proto";
+
+// ============================================================================
+// Batch 7 U6: Session Sharing
+// ============================================================================
+
+message ShareSessionRequest {
+    string context_id = 1;
+    string mode = 2;           // "view" or "interact"
+    int32 expiry_days = 3;     // Share link TTL (0 = no expiry)
+}
+
+message ShareSessionResponse {
+    common.Status status = 1;
+    string share_id = 2;
+    string share_url = 3;
+}
+
+message ObserveSessionRequest {
+    string trace_id = 1;
+}
+
+message SaveTemplateRequest {
+    string name = 1;
+    string description = 2;
+    string dag_json = 3;      // DAG structure as JSON
+}
+
+message SaveTemplateResponse {
+    common.Status status = 1;
+    string template_id = 2;
+}
+
+message UseTemplateRequest {
+    string template_id = 1;
+}
+
+message UseTemplateResponse {
+    common.Status status = 1;
+    string context_id = 2;
+}
+
+// Batch 7 U6: Session Sharing Service
+service SharingService {
+    // Share a session (generate share link)
+    rpc ShareSession(ShareSessionRequest) returns (ShareSessionResponse);
+
+    // Observe a shared session in real-time (stream events)
+    rpc ObserveSession(ObserveSessionRequest) returns (stream AIStreamEvent);
+
+    // Save a conversation as a reusable template
+    rpc SaveTemplate(SaveTemplateRequest) returns (SaveTemplateResponse);
+
+    // Apply a saved template to create a new conversation
+    rpc UseTemplate(UseTemplateRequest) returns (UseTemplateResponse);
+}
