@@ -18,6 +18,7 @@
 #include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/common/background_scheduler.h"
 #include "agent_rpc/orchestrator/feedback_aggregator.h"
+#include "agent_rpc/mcp/rag/semantic_cache_index.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <signal.h>
@@ -204,6 +205,16 @@ int main(int argc, char* argv[]) {
         "agent_metrics_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculateMetrics(); },
         std::chrono::seconds(3600));
+
+    // Batch 3: Register semantic cache cleanup task (every 10 minutes)
+    // The SemanticCacheIndex instance should be shared from wherever it is owned
+    // (e.g., held by the MCP module or AIQueryService).  At startup the shared_ptr
+    // is null, so the lambda is a safe no-op until the cache is wired up.
+    static std::shared_ptr<agent_rpc::mcp::SemanticCacheIndex> semantic_cache;
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "cache_cleanup",
+        []() { if (semantic_cache) semantic_cache->cleanup(); },
+        std::chrono::seconds(600));
 
     // 主循环
     while (g_running) {

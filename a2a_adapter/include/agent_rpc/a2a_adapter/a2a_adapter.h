@@ -23,6 +23,7 @@ class AIQueryRequest;
 class AIQueryResponse;
 class AIStreamEvent;
 }
+namespace agent_rpc { namespace common { class RedisClient; } }
 
 namespace agent_rpc {
 namespace a2a_adapter {
@@ -137,12 +138,24 @@ public:
      */
     ResponseAdapter& getResponseAdapter() { return *response_adapter_; }
 
+    /**
+     * @brief Attach a shared Redis client for autonomy-level lookups.
+     */
+    void setRedisClient(std::shared_ptr<common::RedisClient> redis);
+
 private:
     std::unique_ptr<a2a::A2AClient> a2a_client_;
     std::unique_ptr<RequestAdapter> request_adapter_;
     std::unique_ptr<ResponseAdapter> response_adapter_;
     A2AConfig config_;
     std::atomic<bool> initialized_{false};
+    std::shared_ptr<common::RedisClient> redis_;
+
+    /// Inject autonomy level header from Redis into the current A2A client (Batch 3).
+    void injectAutonomyHeader(
+        const agent_communication::AIQueryRequest& request,
+        const std::string& agent_id,
+        a2a::A2AClient* client = nullptr);
 };
 
 } // namespace a2a_adapter

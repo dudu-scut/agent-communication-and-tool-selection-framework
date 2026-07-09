@@ -12,6 +12,7 @@ set(ORCHESTRATOR_SOURCES
     src/task_executor.cpp
     src/result_aggregator.cpp
     src/feedback_aggregator.cpp
+    src/context_compressor.cpp
 )
 
 # Header files
@@ -22,6 +23,7 @@ set(ORCHESTRATOR_HEADERS
     include/agent_rpc/orchestrator/task_executor.h
     include/agent_rpc/orchestrator/result_aggregator.h
     include/agent_rpc/orchestrator/feedback_aggregator.h
+    include/agent_rpc/orchestrator/context_compressor.h
 )
 
 # Create library

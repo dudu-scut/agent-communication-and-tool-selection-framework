@@ -20,6 +20,7 @@ message ServiceInfo {
     repeated string skills = 7;          // AgentCard 技能名称列表
     string agent_card = 8;               // AgentCard JSON（完整元数据）
     AgentMetrics agent_metrics = 9;      // 运行时指标 (Batch 2)
+    bool cacheable = 10;                 // Semantically cacheable responses (Batch 3)
 }
 
 // 健康检查请求

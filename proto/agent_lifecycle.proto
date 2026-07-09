@@ -25,7 +25,30 @@ message GetAgentCompareResponse {
     repeated common.AgentMetrics agents = 2;
 }
 
+message SetAutonomyLevelRequest {
+    string user_id = 1;
+    string agent_id = 2;
+    int32 level = 3;
+}
+
+message SetAutonomyLevelResponse {
+    common.Status status = 1;
+}
+
+message UndoActionRequest {
+    string trace_id = 1;
+    int32 step_index = 2;
+}
+
+message UndoActionResponse {
+    common.Status status = 1;
+    bool success = 2;
+    string message = 3;
+}
+
 service AgentLifecycleService {
     rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
     rpc GetAgentCompare(GetAgentCompareRequest) returns (GetAgentCompareResponse);
+    rpc SetAutonomyLevel(SetAutonomyLevelRequest) returns (SetAutonomyLevelResponse);
+    rpc UndoAction(UndoActionRequest) returns (UndoActionResponse);
 }

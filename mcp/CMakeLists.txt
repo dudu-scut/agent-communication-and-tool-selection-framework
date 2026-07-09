@@ -11,6 +11,7 @@ set(MCP_SOURCES
     src/rag/vector_index.cpp
     src/rag/tool_retriever.cpp
     src/rag/tool_validator.cpp
+    src/rag/semantic_cache_index.cpp
 )
 
 # 创建MCP库
