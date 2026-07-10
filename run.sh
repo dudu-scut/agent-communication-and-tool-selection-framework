@@ -26,6 +26,8 @@ BUILD_DIR="$PROJECT_ROOT/build"
 LOGS_DIR="$PROJECT_ROOT/logs"
 PIDS_DIR="$PROJECT_ROOT/pids"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
+VERIFY_DIR="$PROJECT_ROOT/verify"
+VERIFY_SCRIPTS="$VERIFY_DIR/scripts"
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
@@ -446,6 +448,118 @@ cmd_frontend_build() {
 }
 
 # ============================================================================
+# verify - 运行 E2E 验证测试
+# ============================================================================
+
+cmd_verify() {
+    local batch="${1:-all}"
+
+    if [ "$batch" != "all" ]; then
+        # Run single batch
+        local script="$VERIFY_SCRIPTS/verify-batch${batch}.sh"
+        if [ ! -x "$script" ]; then
+            error "验证脚本不存在: $script"
+            exit 1
+        fi
+        banner "Batch $batch 验证测试"
+        "$script"
+        return $?
+    fi
+
+    # Run all batches
+    banner "NexusAI E2E 验证测试"
+    echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+
+    local total_pass=0
+    local total_fail=0
+    local batch_results=()
+
+    for batch in 1 2 3 4 5 6 7 8; do
+        local script="$VERIFY_SCRIPTS/verify-batch${batch}.sh"
+        if [ ! -x "$script" ]; then
+            warn "跳过 Batch $batch — 脚本不存在"
+            batch_results+=("Batch $batch — SKIP")
+            continue
+        fi
+
+        if "$script"; then
+            batch_results+=("Batch $batch — PASS")
+            ((total_pass++))
+        else
+            batch_results+=("Batch $batch — FAIL")
+            ((total_fail++))
+        fi
+        echo ""
+    done
+
+    # Summary report
+    echo "========================================"
+    echo " NexusAI 验证测试报告"
+    echo " 时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "========================================"
+    echo ""
+    for result in "${batch_results[@]}"; do
+        echo "  $result"
+    done
+    echo ""
+    echo "========================================"
+    echo " 通过: $total_pass/8 batches"
+    if [ "$total_fail" -gt 0 ]; then
+        echo " 失败: $total_fail/8 batches"
+    fi
+    echo " 手动验证: 见 docs/verification-checklist.md"
+    echo "========================================"
+
+    return $(( total_fail > 0 ? 1 : 0 ))
+}
+
+# ============================================================================
+# start-mock-agent - 启动 Mock Agent
+# ============================================================================
+cmd_start_mock_agent() {
+    banner "启动 Mock Agent"
+
+    local mock_script="$VERIFY_DIR/mock-agent/mock_agent_server.py"
+    if [ ! -f "$mock_script" ]; then
+        error "Mock Agent 脚本不存在: $mock_script"
+        exit 1
+    fi
+
+    if ! command -v python3 &>/dev/null; then
+        error "未找到 python3"
+        exit 1
+    fi
+
+    mkdir -p "$LOGS_DIR" "$PIDS_DIR"
+
+    local pid_file="$PIDS_DIR/mock_agent.pid"
+    if [ -f "$pid_file" ]; then
+        local old_pid
+        old_pid=$(cat "$pid_file")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            warn "Mock Agent 已在运行 (PID: $old_pid)"
+            return 0
+        fi
+        rm -f "$pid_file"
+    fi
+
+    info "启动 Mock Agent (端口: 5100)..."
+    python3 "$mock_script" >> "$LOGS_DIR/mock_agent.log" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$pid_file"
+
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+        info "Mock Agent 启动成功 (PID: $pid)"
+    else
+        error "Mock Agent 启动失败"
+        rm -f "$pid_file"
+        exit 1
+    fi
+}
+
+# ============================================================================
 # 主入口
 # ============================================================================
 usage() {
@@ -460,8 +574,12 @@ usage() {
     echo "  gateway        启动 API 网关: Nginx + Envoy (需 Docker)"
     echo "  frontend-dev   启动前端开发服务器 (Vite HMR)"
     echo "  frontend-build 构建前端生产包"
-    echo "  stop           停止所有服务 (本地进程 + Docker 容器)"
+    echo "  stop           停止所有服务 (本地进程 + Docker 容器 + Mock Agent)"
     echo "  setup          检测开发环境"
+    echo "  verify         运行 E2E 验证测试 (全部 8 批)"
+    echo "  verify-batch1  单独运行第 1 批验证"
+    echo "  verify-batch2  ...以此类推至 verify-batch8"
+    echo "  start-mock-agent 启动 Mock Agent (验证用)"
     echo ""
     echo "环境变量:"
     echo "  BUILD_TYPE           构建类型 (默认: Release)"
@@ -490,6 +608,16 @@ case "${1:-}" in
     frontend-dev)   cmd_frontend_dev ;;
     frontend-build) cmd_frontend_build ;;
     stop)           cmd_stop ;;
+    verify)         shift; cmd_verify "$@" ;;
+    verify-batch1)  cmd_verify "1" ;;
+    verify-batch2)  cmd_verify "2" ;;
+    verify-batch3)  cmd_verify "3" ;;
+    verify-batch4)  cmd_verify "4" ;;
+    verify-batch5)  cmd_verify "5" ;;
+    verify-batch6)  cmd_verify "6" ;;
+    verify-batch7)  cmd_verify "7" ;;
+    verify-batch8)  cmd_verify "8" ;;
+    start-mock-agent) cmd_start_mock_agent ;;
     setup)          cmd_setup ;;
     *)              usage ;;
 esac
