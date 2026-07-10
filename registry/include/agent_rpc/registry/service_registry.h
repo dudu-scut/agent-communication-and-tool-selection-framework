@@ -10,9 +10,27 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#include <array>
+#include <chrono>
 
 namespace agent_rpc {
 namespace registry {
+
+// ========================================================================
+// Agent Live Metrics Types (Batch 5 — Health Dashboard)
+// ========================================================================
+
+/** Per-agent health metrics tracked in the registry module. */
+struct AgentLiveMetrics {
+    std::array<bool, 100> recent_results{};
+    int buffer_idx = 0;
+    double ema_latency_ms = 0.0; // alpha=0.1
+    std::atomic<int> active_requests{0};
+    std::chrono::steady_clock::time_point last_heartbeat;
+};
+
+/** Health classification returned by evaluateHealth(). */
+enum class HealthStatus { HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN };
 
 // 服务注册中心接口
 class ServiceRegistry {
@@ -37,6 +55,37 @@ public:
     // 监听服务变化
     virtual void watchServices(const std::string& service_name,
                               std::function<void(const std::vector<common::ServiceEndpoint>&)> callback) = 0;
+
+    // ========================================================================
+    // Agent Live Metrics (Batch 5 — Health Dashboard)
+    // ========================================================================
+
+    /**
+     * @brief Record one agent call outcome for live metrics.
+     * @param agent_id Agent identifier
+     * @param success Whether the call succeeded
+     * @param latency_ms Call duration in milliseconds
+     */
+    static void recordAgentCall(const std::string& agent_id, bool success, double latency_ms);
+
+    /**
+     * @brief Evaluate live health of a single agent.
+     * @param agent_id Agent to evaluate
+     * @return HealthStatus classification
+     */
+    static HealthStatus evaluateHealth(const std::string& agent_id);
+
+    /**
+     * @brief Iterate all tracked agents and evaluate health.
+     * Calls evaluateHealth() per agent and logs alerts for degraded/unhealthy.
+     * Intended to be called periodically by BackgroundScheduler.
+     */
+    static void evaluateAllHealth();
+
+    /**
+     * @brief Get a singleton reference (default MemoryServiceRegistry).
+     */
+    static ServiceRegistry& instance();
 };
 
 // 基于Consul的服务注册中心实现

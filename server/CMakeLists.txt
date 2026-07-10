@@ -8,6 +8,7 @@ set(SERVER_SOURCES
     src/ai_query_service.cpp
     src/auth_service.cpp
     src/auth_interceptor.cpp
+    src/budget_middleware.cpp
 )
 
 # 创建静态库
