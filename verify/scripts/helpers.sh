@@ -87,6 +87,7 @@ verify_warn() {
 # ============================================================================
 # Pre-check: ensure required services are running
 # ============================================================================
+PIDS_DIR="$PROJECT_ROOT/pids"
 precheck_services() {
     echo "--- Pre-check: Services ---"
 
@@ -114,6 +115,9 @@ precheck_services() {
     else
         echo "  Mock Agent: ❌ not running — attempting auto-start..."
         python3 "$VERIFY_DIR/mock-agent/mock_agent_server.py" &
+        local mock_pid=$!
+        mkdir -p "$PIDS_DIR"
+        echo "$mock_pid" > "$PIDS_DIR/mock_agent.pid"
         sleep 1
     fi
 
