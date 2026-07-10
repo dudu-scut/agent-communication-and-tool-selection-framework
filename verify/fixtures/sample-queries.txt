@@ -1,0 +1,8 @@
+What is the capital of France?
+Translate "good morning" to Chinese.
+Write a Python function to sort a list.
+How do I set up a reverse proxy with Nginx?
+Explain the difference between TCP and UDP.
+Compare REST and GraphQL for API design.
+Generate a markdown report on microservices architecture.
+Find and fix the bug in this code: def add(a,b): return a-b

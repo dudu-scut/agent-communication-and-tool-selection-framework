@@ -1,0 +1,38 @@
+{
+  "agents": [
+    {
+      "agent_id": "mock-general",
+      "skill": "general",
+      "a2a_version": "1.0",
+      "deployment_stage": "STABLE",
+      "endpoint": "http://localhost:5100/tasks/send",
+      "cacheable": true,
+      "demo_queries": ["What is 2+2?", "Explain REST in one sentence"]
+    },
+    {
+      "agent_id": "mock-translator",
+      "skill": "translation",
+      "a2a_version": "1.0",
+      "deployment_stage": "STABLE",
+      "endpoint": "http://localhost:5100/tasks/send",
+      "cacheable": true,
+      "demo_queries": ["Translate 'hello' to Chinese"]
+    },
+    {
+      "agent_id": "mock-unstable",
+      "skill": "general",
+      "a2a_version": "1.0",
+      "deployment_stage": "STABLE",
+      "endpoint": "http://localhost:5100/tasks/send",
+      "cacheable": false
+    },
+    {
+      "agent_id": "mock-canary",
+      "skill": "general",
+      "a2a_version": "1.1",
+      "deployment_stage": "CANARY",
+      "endpoint": "http://localhost:5100/tasks/send",
+      "cacheable": false
+    }
+  ]
+}
