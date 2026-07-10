@@ -59,13 +59,13 @@ verify() {
     shift
     if "$@"; then
         echo -e "    $PASS $desc"
-        ((PASS_COUNT++))
+        PASS_COUNT=$((PASS_COUNT+1))
         return 0
     else
         echo -e "    $FAIL $desc"
-        ((FAIL_COUNT++))
+        FAIL_COUNT=$((FAIL_COUNT+1))
         FAILED_SCENARIOS+=("$desc")
-        return 1
+        return 0
     fi
 }
 
@@ -75,11 +75,11 @@ verify_warn() {
     shift
     if "$@"; then
         echo -e "    $PASS $desc"
-        ((PASS_COUNT++))
+        PASS_COUNT=$((PASS_COUNT+1))
         return 0
     else
         echo -e "    $WARN $desc (non-blocking)"
-        ((WARN_COUNT++))
+        WARN_COUNT=$((WARN_COUNT+1))
         return 0
     fi
 }
