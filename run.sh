@@ -560,6 +560,32 @@ cmd_start_mock_agent() {
 }
 
 # ============================================================================
+# start-orchestrator - 启动 Orchestrator
+# ============================================================================
+cmd_start_orchestrator() {
+    banner "启动 Orchestrator"
+    local orch_script="$PROJECT_ROOT/examples/orchestrator_agent.py"
+    [ -f "$orch_script" ] || { error "Orchestrator 脚本不存在: $orch_script"; exit 1; }
+    command -v python3 &>/dev/null || { error "未找到 python3"; exit 1; }
+    mkdir -p "$LOGS_DIR" "$PIDS_DIR"
+    local pid_file="$PIDS_DIR/orchestrator.pid"
+    if [ -f "$pid_file" ]; then
+        local old_pid=$(cat "$pid_file")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            warn "Orchestrator 已在运行 (PID: $old_pid)"; return 0
+        fi; rm -f "$pid_file"
+    fi
+    info "启动 Orchestrator (端口: 5000)..."
+    python3 "$orch_script" >> "$LOGS_DIR/orchestrator.log" 2>&1 &
+    local pid=$!; echo "$pid" > "$pid_file"; sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+        info "Orchestrator 启动成功 (PID: $pid)"
+    else
+        error "Orchestrator 启动失败"; rm -f "$pid_file"; exit 1
+    fi
+}
+
+# ============================================================================
 # 主入口
 # ============================================================================
 usage() {
@@ -580,6 +606,7 @@ usage() {
     echo "  verify-batch1  单独运行第 1 批验证"
     echo "  verify-batch2  ...以此类推至 verify-batch8"
     echo "  start-mock-agent 启动 Mock Agent (验证用)"
+    echo "  start-orchestrator 启动 A2A Orchestrator (端口 5000)"
     echo ""
     echo "环境变量:"
     echo "  BUILD_TYPE           构建类型 (默认: Release)"
@@ -618,6 +645,7 @@ case "${1:-}" in
     verify-batch7)  cmd_verify "7" ;;
     verify-batch8)  cmd_verify "8" ;;
     start-mock-agent) cmd_start_mock_agent ;;
+    start-orchestrator) cmd_start_orchestrator ;;
     setup)          cmd_setup ;;
     *)              usage ;;
 esac
