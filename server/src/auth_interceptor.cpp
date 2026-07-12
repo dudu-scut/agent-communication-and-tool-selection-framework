@@ -62,7 +62,8 @@ bool AuthInterceptor::isWhitelisted(const std::string& method) {
            method == "/agent_communication.HealthService/Watch" ||
            method == "/agent_communication.AgentCommunicationService/RegisterAgent" ||
            method == "/agent_communication.AgentCommunicationService/UnregisterAgent" ||
-           method == "/agent_communication.AgentCommunicationService/Heartbeat";
+           method == "/agent_communication.AgentCommunicationService/Heartbeat" ||
+           method == "/agent_communication.AgentCommunicationService/GetAgents";
 }
 
 const AuthInterceptor::AuthContext& AuthInterceptor::currentAuth() {

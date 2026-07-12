@@ -349,7 +349,7 @@ void A2AAdapter::processQueryStreaming(
                                 std::string state = status_obj.value("state", "");
 
                                 // [Batch 4 U3] Write activity feed record
-                                if (!trace_id.empty()) {
+                                if (!trace_id.empty() && redis_) {
                                     try {
                                         nlohmann::json activity;
                                         activity["t"] = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -379,7 +379,7 @@ void A2AAdapter::processQueryStreaming(
                                         if (message.contains("parts")) {
                                             std::string content;
                                             for (auto& part : message["parts"]) {
-                                                if (part.value("type", "") == "text") {
+                                                if (part.value("type", "") == "text" || part.value("kind", "") == "text") {
                                                     content += part.value("text", "");
                                                 }
                                             }
@@ -704,7 +704,7 @@ void A2AAdapter::processQueryStreamingDirect(
                                 std::string state = status_obj.value("state", "");
 
                                 // [Batch 4 U3] Write activity feed record
-                                if (!trace_id.empty()) {
+                                if (!trace_id.empty() && redis_) {
                                     try {
                                         nlohmann::json activity;
                                         activity["t"] = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -734,7 +734,7 @@ void A2AAdapter::processQueryStreamingDirect(
                                         if (message.contains("parts")) {
                                             std::string content;
                                             for (auto& part : message["parts"]) {
-                                                if (part.value("type", "") == "text") {
+                                                if (part.value("type", "") == "text" || part.value("kind", "") == "text") {
                                                     content += part.value("text", "");
                                                 }
                                             }

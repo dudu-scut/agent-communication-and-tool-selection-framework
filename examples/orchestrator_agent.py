@@ -273,7 +273,7 @@ class A2AHandler(BaseHTTPRequestHandler):
 def main():
     logger.info(f"[{AGENT_NAME}] 启动...")
     if not register():
-        sys.exit(1)
+        logger.warning(f"[{AGENT_NAME}] 注册失败，继续运行（功能受限）")
 
     _heartbeat_running.set()  # Fix #35: use Event.set()
     threading.Thread(target=_heartbeat_loop, daemon=True).start()

@@ -66,6 +66,12 @@ bool AIQueryServiceImpl::initialize(
         return false;
     }
 
+    // Wire Redis client to adapter (required for activity feed and autonomy headers)
+    if (redis) {
+        a2a_adapter_->setRedisClient(
+            std::shared_ptr<common::RedisClient>(redis, [](common::RedisClient*){}));
+    }
+
     // Initialize circuit breaker for A2A backend
     circuit_breaker_ = common::CircuitBreakerManager::getInstance()
         .getCircuitBreaker("a2a_backend");

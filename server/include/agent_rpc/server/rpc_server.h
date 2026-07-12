@@ -6,6 +6,7 @@
 #include "agent_rpc/common/redis_client.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/registry/service_registry.h"
+#include "agent_rpc/server/agent_lifecycle_service.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -25,6 +26,9 @@ class AgentCommunicationServiceImpl;
 class HealthServiceImpl;
 class AIQueryServiceImpl;
 class AuthServiceImpl;
+class AgentLifecycleServiceImpl;
+class SharingServiceImpl;
+class UserExperienceServiceImpl;
 
 // RPC服务器类
 class RpcServer {
@@ -89,6 +93,9 @@ private:
     std::shared_ptr<HealthServiceImpl> health_service_impl_;
     std::shared_ptr<AIQueryServiceImpl> ai_query_service_impl_;
     std::shared_ptr<AuthServiceImpl> auth_service_impl_;
+    std::unique_ptr<SharingServiceImpl> sharing_service_impl_;
+    std::unique_ptr<AgentLifecycleServiceImpl> agent_lifecycle_service_impl_;
+    std::unique_ptr<UserExperienceServiceImpl> user_experience_service_impl_;
     std::unique_ptr<common::RedisClient> redis_client_;
     
     // A2A配置

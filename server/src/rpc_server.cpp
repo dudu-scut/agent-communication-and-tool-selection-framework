@@ -3,6 +3,9 @@
 #include "agent_rpc/server/ai_query_service.h"
 #include "agent_rpc/server/auth_service.h"
 #include "agent_rpc/server/auth_interceptor.h"
+#include "agent_rpc/server/sharing_service.h"
+#include "agent_rpc/server/agent_lifecycle_service.h"
+#include "agent_rpc/server/user_experience_service.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/message_converter.h"
@@ -78,6 +81,8 @@ RpcServer::RpcServer() {
     // 设置默认MCP服务器路径 (预留，待实现MCP client)
     mcp_server_path_ = "";
     mcp_server_args_ = {};
+    sharing_service_impl_ = std::make_unique<SharingServiceImpl>();
+    user_experience_service_impl_ = std::make_unique<UserExperienceServiceImpl>();
 }
 
 RpcServer::~RpcServer() {
@@ -88,6 +93,9 @@ RpcServer::~RpcServer() {
     health_service_impl_.reset();
     ai_query_service_impl_.reset();
     auth_service_impl_.reset();
+    sharing_service_impl_.reset();
+    agent_lifecycle_service_impl_.reset();
+    user_experience_service_impl_.reset();
     server_.reset();
     server_credentials_.reset();
     builders_.clear();
@@ -111,6 +119,9 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
 
     // Initialize FeedbackAggregator with Redis for feedback-driven routing (Batch 2)
     agent_rpc::orchestrator::FeedbackAggregator::initialize(redis_client_.get());
+
+    // Initialize lifecycle service AFTER Redis is connected
+    agent_lifecycle_service_impl_ = std::make_unique<AgentLifecycleServiceImpl>(redis_client_.get());
 
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
@@ -319,6 +330,24 @@ void RpcServer::setupServer() {
     if (auth_service_impl_) {
         builder.RegisterService(auth_service_impl_.get());
         LOG_INFO("User Auth Service registered");
+    }
+
+    // 注册分享服务
+    if (sharing_service_impl_) {
+        builder.RegisterService(sharing_service_impl_.get());
+        LOG_INFO("Sharing Service registered");
+    }
+
+    // 注册生命周期服务
+    if (agent_lifecycle_service_impl_) {
+        builder.RegisterService(agent_lifecycle_service_impl_.get());
+        LOG_INFO("Agent Lifecycle Service registered");
+    }
+
+    // 注册用户体验服务
+    if (user_experience_service_impl_) {
+        builder.RegisterService(user_experience_service_impl_.get());
+        LOG_INFO("User Experience Service registered");
     }
 
     // 注册认证拦截器 (Token验证)

@@ -523,12 +523,12 @@ cmd_start_mock_agent() {
     local mock_script="$VERIFY_DIR/mock-agent/mock_agent_server.py"
     if [ ! -f "$mock_script" ]; then
         error "Mock Agent 脚本不存在: $mock_script"
-        exit 1
+        return 1
     fi
 
     if ! command -v python3 &>/dev/null; then
         error "未找到 python3"
-        exit 1
+        return 1
     fi
 
     mkdir -p "$LOGS_DIR" "$PIDS_DIR"
@@ -565,8 +565,8 @@ cmd_start_mock_agent() {
 cmd_start_orchestrator() {
     banner "启动 Orchestrator"
     local orch_script="$PROJECT_ROOT/examples/orchestrator_agent.py"
-    [ -f "$orch_script" ] || { error "Orchestrator 脚本不存在: $orch_script"; exit 1; }
-    command -v python3 &>/dev/null || { error "未找到 python3"; exit 1; }
+    [ -f "$orch_script" ] || { error "Orchestrator 脚本不存在: $orch_script"; return 1; }
+    command -v python3 &>/dev/null || { error "未找到 python3"; return 1; }
     mkdir -p "$LOGS_DIR" "$PIDS_DIR"
     local pid_file="$PIDS_DIR/orchestrator.pid"
     if [ -f "$pid_file" ]; then
@@ -581,11 +581,61 @@ cmd_start_orchestrator() {
     if kill -0 "$pid" 2>/dev/null; then
         info "Orchestrator 启动成功 (PID: $pid)"
     else
-        error "Orchestrator 启动失败"; rm -f "$pid_file"; exit 1
+        error "Orchestrator 启动失败"; rm -f "$pid_file"; return 1
     fi
 }
 
 # ============================================================================
+# ============================================================================
+# start-all - 一键启动全部后端服务（在 WSL 终端中执行）
+# ============================================================================
+cmd_start_all() {
+    banner "启动全部服务"
+
+    # 1. Redis
+    cmd_redis
+
+    # 2. Mock Agent (验证用)
+    if [ -f "$VERIFY_DIR/mock-agent/mock_agent_server.py" ]; then
+        cmd_start_mock_agent
+    fi
+
+    # 3. Node gRPC Proxy (gRPC-Web :8081 → gRPC :50051)
+    local proxy_dir="$PROJECT_ROOT/gateway/proxy"
+    if [ -f "$proxy_dir/server.mjs" ]; then
+        export PATH="$HOME/.local/bin:$PATH"
+        if command -v node &>/dev/null; then
+            info "启动 Node gRPC 代理 (端口 8081)..."
+            (cd "$proxy_dir" && GRPC_TARGET="localhost:50051" node server.mjs &>/dev/null &)
+            sleep 2
+            echo "  Node 代理: http://localhost:8081 → localhost:50051"
+        else
+            warn "Node.js 未安装，跳过代理启动"
+        fi
+    fi
+
+    # 4. Orchestrator
+    if [ -f "$PROJECT_ROOT/examples/orchestrator_agent.py" ]; then
+        cmd_start_orchestrator
+    fi
+
+    # 5. gRPC Server
+    cmd_start "$@"
+
+    echo ""
+    info "全部后端服务启动完成，请保持此 WSL 终端开启"
+    echo ""
+    echo "  Redis:           localhost:6379"
+    echo "  Mock Agent:      localhost:5100"
+    echo "  Node 代理:       localhost:8081 → gRPC :50051"
+    echo "  Orchestrator:    localhost:5000"
+    echo "  gRPC Server:     localhost:50051"
+    echo ""
+    echo "  接下来在 Windows 终端启动前端:"
+    echo "    cd frontend && npm run dev           # 前端 :5173"
+    echo "  运行验证:     ./run.sh verify"
+}
+
 # 主入口
 # ============================================================================
 usage() {
@@ -605,8 +655,14 @@ usage() {
     echo "  verify         运行 E2E 验证测试 (全部 8 批)"
     echo "  verify-batch1  单独运行第 1 批验证"
     echo "  verify-batch2  ...以此类推至 verify-batch8"
+    echo "  start-all      一键启动全部后端服务 (在 WSL 终端中执行)"
     echo "  start-mock-agent 启动 Mock Agent (验证用)"
     echo "  start-orchestrator 启动 A2A Orchestrator (端口 5000)"
+    echo ""
+    echo "开发流程:"
+    echo "  WSL终端:  ./run.sh start-all    # 启动全部后端 (保持终端开启)"
+    echo "  Win终端:  cd gateway/proxy && node server.mjs  # gRPC代理"
+    echo "  Win终端:  cd frontend && npm run dev         # 前端"
     echo ""
     echo "环境变量:"
     echo "  BUILD_TYPE           构建类型 (默认: Release)"
@@ -646,6 +702,7 @@ case "${1:-}" in
     verify-batch8)  cmd_verify "8" ;;
     start-mock-agent) cmd_start_mock_agent ;;
     start-orchestrator) cmd_start_orchestrator ;;
+    start-all)      shift; cmd_start_all "$@" ;;
     setup)          cmd_setup ;;
     *)              usage ;;
 esac

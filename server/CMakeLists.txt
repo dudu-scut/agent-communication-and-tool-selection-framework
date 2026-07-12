@@ -9,6 +9,9 @@ set(SERVER_SOURCES
     src/auth_service.cpp
     src/auth_interceptor.cpp
     src/budget_middleware.cpp
+    src/sharing_service.cpp
+    src/agent_lifecycle_service.cpp
+    src/user_experience_service.cpp
 )
 
 # 创建静态库
