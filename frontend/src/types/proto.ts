@@ -57,7 +57,7 @@ export interface AIQueryResponse {
   agent_name: string
   task_id: string
   context_id: string
-  processing_time_ms: number | string  // proto-loader returns string for int64
+  processing_time_ms: number | string
   memory_hints?: Record<string, string>
   artifacts?: Artifact[]
 }
@@ -70,11 +70,12 @@ export interface Artifact {
 
 export interface AIStreamEvent {
   event_id: string
-  event_type: 'partial' | 'status' | 'complete' | 'error' | 'plan' | 'subtask_start' | 'subtask_complete'
+  event_type: 'partial' | 'status' | 'complete' | 'error' | 'plan' | 'subtask_start' | 'subtask_complete' | 'activity_json' | 'trace_summary'
   content: string
   task_state: string
   context_id: string
   timestamp: number
+  trace_id?: string
 }
 
 // === agent_service.proto ===
@@ -105,7 +106,35 @@ export interface FindAgentsResponse {
   total_count: number
 }
 
-// === 多Agent执行计划 (P4-4) ===
+// === Agent Metrics ===
+
+export interface AgentMetrics {
+  agent_id: string
+  success_rate: number
+  avg_latency_ms: number
+  approval_rate: number
+  active_requests: number
+  circuit_breaker_trips: number
+  total_requests: number
+  health_status: 'healthy' | 'degraded' | 'unhealthy'
+  last_heartbeat: number
+  cpu_percent?: number
+  memory_mb?: number
+}
+
+// === Budget ===
+
+export interface BudgetInfo {
+  user_id: string
+  daily_limit: number
+  daily_used: number
+  monthly_limit: number
+  monthly_used: number
+  remaining: number
+  reset_at: number
+}
+
+// === 多Agent执行计划 ===
 
 export interface SubTaskInfo {
   id: string
@@ -114,11 +143,36 @@ export interface SubTaskInfo {
   depends_on: string[]
   status: 'pending' | 'running' | 'completed' | 'failed'
   result?: string
+  assigned_agent_id?: string
 }
 
 export interface ExecutionPlan {
   original_query: string
   tasks: SubTaskInfo[]
+}
+
+// === Activity Feed ===
+
+export interface ActivityEntry {
+  timestamp: number
+  type: 'thinking' | 'tool_call' | 'agent_call' | 'complete' | 'error'
+  message: string
+  agent_name?: string
+  tool_name?: string
+  duration_ms?: number
+  detail?: string
+}
+
+// === Trace Info ===
+
+export interface TraceInfo {
+  trace_id: string
+  route_time_ms: number
+  agent_time_ms: number
+  total_time_ms: number
+  agent_name: string
+  agent_id: string
+  skill: string
 }
 
 // === user.proto (认证) ===
@@ -148,6 +202,53 @@ export interface LoginResponse {
   expires_at: number
 }
 
+// === Sharing & Templates ===
+
+export interface ShareInfo {
+  share_id: string
+  context_id: string
+  owner_user_id: string
+  mode: 'READONLY' | 'COMMENT'
+  created_at: number
+  expires_at?: number
+}
+
+export interface TemplateInfo {
+  id: string
+  name: string
+  description: string
+  category: string
+  usage_count: number
+  rating: number
+  author: string
+  dag_structure: ExecutionPlan
+}
+
+// === Cron / Scheduled Tasks ===
+
+export interface ScheduledTask {
+  id: string
+  name: string
+  cron_expr: string
+  query_template: string
+  enabled: boolean
+  last_run_at?: number
+  next_run_at?: number
+  execution_count: number
+  last_result?: string
+}
+
+// === Canary Deployment ===
+
+export interface CanaryConfig {
+  agent_id_stable: string
+  agent_id_canary: string
+  traffic_split_pct: number  // % to canary
+  stable_metrics: AgentMetrics
+  canary_metrics: AgentMetrics
+  status: 'running' | 'promoting' | 'rolling_back' | 'completed'
+}
+
 // === 前端内部类型 ===
 
 export interface ChatMessage {
@@ -160,6 +261,9 @@ export interface ChatMessage {
   streaming?: boolean
   error?: string
   executionPlan?: ExecutionPlan
+  activityFeed?: ActivityEntry[]
+  traceInfo?: TraceInfo
+  feedbackGiven?: 'like' | 'dislike' | null
   timestamp: number
 }
 
@@ -173,4 +277,5 @@ export interface AgentDisplayInfo {
   skills: string[]
   healthy: boolean
   lastHeartbeat?: number
+  metrics?: AgentMetrics
 }

@@ -21,6 +21,27 @@ const router = createRouter({
       component: () => import('../views/AdminView.vue'),
     },
     {
+      path: '/sandbox',
+      name: 'sandbox',
+      component: () => import('../views/AgentSandbox.vue'),
+    },
+    {
+      path: '/compare',
+      name: 'compare',
+      component: () => import('../views/CompareView.vue'),
+    },
+    {
+      path: '/share/:shareId',
+      name: 'share',
+      component: () => import('../views/ShareView.vue'),
+      meta: { public: true },
+    },
+    {
+      path: '/templates',
+      name: 'templates',
+      component: () => import('../views/TemplateMarket.vue'),
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/login',
     },
@@ -38,7 +59,6 @@ router.beforeEach((to) => {
 
   const auth = useAuthStore()
   if (!auth.isAuthenticated) {
-    // Only cleanup if there was actually a stale token
     if (auth.token) auth.logout()
     return { name: 'login' }
   }

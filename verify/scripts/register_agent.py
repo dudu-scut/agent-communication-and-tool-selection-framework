@@ -28,7 +28,7 @@ out, err = grpcurl("agent_communication.AgentCommunicationService/RegisterAgent"
             "skills": ["general"],
             "a2a_version": "1.0",
             "deployment_stage": "STABLE",
-            "host": "localhost",
+            "host": "127.0.0.1",
             "port": 5100
         }
     }), auth=token)

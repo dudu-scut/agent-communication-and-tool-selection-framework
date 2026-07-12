@@ -1,13 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { queryStream } from '../services/grpc-client'
-import type { ChatMessage, AIStreamEvent } from '../types/proto'
+import type { ChatMessage, AIStreamEvent, TraceInfo, ActivityEntry } from '../types/proto'
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const isStreaming = ref(false)
   const contextId = ref(generateContextId())
   const abortController = ref<AbortController | null>(null)
+  const traceInfo = ref<TraceInfo | null>(null)
+  const activityEntries = ref<ActivityEntry[]>([])
 
   const lastAgentName = computed(() => {
     for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -18,10 +20,21 @@ export const useChatStore = defineStore('chat', () => {
     return ''
   })
 
+  function addActivity(type: ActivityEntry['type'], message: string, extra?: Partial<ActivityEntry>) {
+    activityEntries.value = [...activityEntries.value, {
+      timestamp: Date.now(),
+      type,
+      message,
+      ...extra,
+    }]
+    if (activityEntries.value.length > 100) {
+      activityEntries.value = activityEntries.value.slice(-100)
+    }
+  }
+
   function sendQuestion(text: string) {
     if (isStreaming.value || !text.trim()) return
 
-    // 添加用户消息
     messages.value.push({
       id: crypto.randomUUID(),
       role: 'user',
@@ -29,7 +42,6 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
     })
 
-    // 创建空的 Agent 消息占位
     const agentMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'agent',
@@ -38,13 +50,14 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
     }
     messages.value.push(agentMsg)
-    // 获取响应式代理对象——闭包中必须使用 proxy 而非原始对象，
-    // 否则 Vue 无法检测到属性变更
     const reactiveMsg = messages.value[messages.value.length - 1]
     isStreaming.value = true
+    traceInfo.value = null
 
     const ac = new AbortController()
     abortController.value = ac
+
+    addActivity('thinking', '正在分析请求...')
 
     queryStream(
       text,
@@ -52,10 +65,10 @@ export const useChatStore = defineStore('chat', () => {
       contextId.value,
       ac.signal,
     ).finally(() => {
-      // Safety net: if server disconnects without a complete/error event
       if (reactiveMsg.streaming) {
         reactiveMsg.streaming = false
         reactiveMsg.content += '\n[连接断开]'
+        addActivity('error', '连接意外断开')
       }
       isStreaming.value = false
       abortController.value = null
@@ -65,7 +78,6 @@ export const useChatStore = defineStore('chat', () => {
   function handleStreamEvent(event: AIStreamEvent, msg: ChatMessage) {
     switch (event.event_type) {
       case 'partial':
-        // 清除规划阶段的占位文本，替换为真实内容
         if (msg.content === '正在分析请求...') {
           msg.content = ''
         }
@@ -73,18 +85,18 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'status':
-        // "thinking" during planning phase, or agent name from A2A
         if (event.task_state === 'planning') {
           if (!msg.content) {
             msg.content = '正在分析请求...'
           }
+          addActivity('thinking', '正在规划任务...')
         } else if (event.content && event.content !== 'thinking') {
           msg.agentName = event.content
+          addActivity('agent_call', `路由到 Agent: ${event.content}`)
         }
         break
 
       case 'plan':
-        // 解析多Agent执行计划 JSON
         try {
           const plan = JSON.parse(event.content)
           msg.executionPlan = {
@@ -95,8 +107,10 @@ export const useChatStore = defineStore('chat', () => {
               skill: t.skill,
               depends_on: t.depends_on || [],
               status: 'pending' as const,
+              assigned_agent_id: t.assigned_agent_id,
             })),
           }
+          addActivity('thinking', `生成执行计划: ${plan.tasks?.length || 0} 个子任务`)
         } catch {
           // malformed plan JSON, ignore
         }
@@ -105,7 +119,13 @@ export const useChatStore = defineStore('chat', () => {
       case 'subtask_start':
         if (msg.executionPlan) {
           const task = msg.executionPlan.tasks.find(t => t.id === event.task_state)
-          if (task) task.status = 'running'
+          if (task) {
+            task.status = 'running'
+            addActivity('tool_call', `执行子任务: ${task.description}`, {
+              agent_name: task.assigned_agent_id,
+              tool_name: task.skill,
+            })
+          }
         }
         break
 
@@ -115,7 +135,31 @@ export const useChatStore = defineStore('chat', () => {
           if (task) {
             task.status = event.content?.startsWith('FAILED:') ? 'failed' : 'completed'
             task.result = event.content
+            addActivity(
+              task.status === 'completed' ? 'complete' : 'error',
+              `${task.status === 'completed' ? '完成' : '失败'}: ${task.description}`,
+              { duration_ms: task.status === 'completed' ? undefined : undefined }
+            )
           }
+        }
+        break
+
+      case 'activity_json':
+        try {
+          const activity = JSON.parse(event.content)
+          addActivity(activity.type || 'tool_call', activity.message, activity)
+        } catch {
+          addActivity('tool_call', event.content)
+        }
+        break
+
+      case 'trace_summary':
+        try {
+          const trace = JSON.parse(event.content) as TraceInfo
+          msg.traceInfo = trace
+          traceInfo.value = trace
+        } catch {
+          // ignore malformed trace
         }
         break
 
@@ -126,6 +170,9 @@ export const useChatStore = defineStore('chat', () => {
           : undefined
         isStreaming.value = false
         abortController.value = null
+        addActivity('complete', '查询完成', {
+          duration_ms: msg.processingTimeMs,
+        })
         break
 
       case 'error':
@@ -133,7 +180,15 @@ export const useChatStore = defineStore('chat', () => {
         msg.streaming = false
         isStreaming.value = false
         abortController.value = null
+        addActivity('error', `错误: ${msg.error}`)
         break
+    }
+  }
+
+  function setFeedback(msgId: string, type: 'like' | 'dislike') {
+    const msg = messages.value.find(m => m.id === msgId)
+    if (msg) {
+      msg.feedbackGiven = msg.feedbackGiven === type ? null : type
     }
   }
 
@@ -143,7 +198,6 @@ export const useChatStore = defineStore('chat', () => {
       abortController.value = null
     }
     isStreaming.value = false
-    // Find the last streaming agent message (not just the last in array)
     for (let i = messages.value.length - 1; i >= 0; i--) {
       const msg = messages.value[i]
       if (msg.role === 'agent' && msg.streaming) {
@@ -158,6 +212,8 @@ export const useChatStore = defineStore('chat', () => {
     stopStreaming()
     messages.value = []
     contextId.value = generateContextId()
+    traceInfo.value = null
+    activityEntries.value = []
   }
 
   return {
@@ -165,9 +221,13 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     contextId,
     lastAgentName,
+    traceInfo,
+    activityEntries,
     sendQuestion,
     stopStreaming,
     newConversation,
+    setFeedback,
+    addActivity,
   }
 })
 
