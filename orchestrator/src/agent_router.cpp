@@ -687,11 +687,20 @@ AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<Age
     // In that case, fall back to round-robin for fair load distribution.
     if (candidates.size() <= 1) return candidates[0];
 
+    // Compute quality coefficients with deployment stage modifiers applied,
+    // so CANARY/DEPRECATED stages are properly reflected in the fallback decision.
     std::vector<double> qcs;
     qcs.reserve(candidates.size());
     for (const auto& agent : candidates) {
         std::string skill = agent.skills.empty() ? "" : agent.skills.front();
-        qcs.push_back(getQualityCoefficient(agent.id, skill));
+        double qc = getQualityCoefficient(agent.id, skill);
+        // Apply deployment stage weight modifiers (same as selectWeightedByQuality)
+        if (agent.deployment_stage == "CANARY") {
+            qc *= 0.1;
+        } else if (agent.deployment_stage == "DEPRECATED") {
+            qc = 0.0;
+        }
+        qcs.push_back(qc);
     }
 
     // Check if all coefficients are identical (within epsilon)

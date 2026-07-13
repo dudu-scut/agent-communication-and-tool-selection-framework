@@ -170,6 +170,11 @@ bool A2AAdapter::processQuery(
     } catch (const a2a::A2AException& e) {
         // Record failure to circuit breaker
         cb->recordFailure();
+        // Record failure for health dashboard
+        auto fail_end = std::chrono::steady_clock::now();
+        auto fail_dur = std::chrono::duration_cast<std::chrono::milliseconds>(fail_end - start_time);
+        agent_rpc::registry::ServiceRegistry::recordAgentCall(
+            "orchestrator", false, static_cast<double>(fail_dur.count()));
         // Handle A2A protocol errors via ErrorMapper
         auto* status = response->mutable_status();
         grpc::StatusCode grpc_code = ErrorMapper::mapToGrpcStatus(
@@ -185,6 +190,11 @@ bool A2AAdapter::processQuery(
     } catch (const std::exception& e) {
         // Record failure to circuit breaker
         cb->recordFailure();
+        // Record failure for health dashboard
+        auto fail_end2 = std::chrono::steady_clock::now();
+        auto fail_dur2 = std::chrono::duration_cast<std::chrono::milliseconds>(fail_end2 - start_time);
+        agent_rpc::registry::ServiceRegistry::recordAgentCall(
+            "orchestrator", false, static_cast<double>(fail_dur2.count()));
         // Handle network and general errors via ErrorMapper
         auto* status = response->mutable_status();
         grpc::StatusCode grpc_code = ErrorMapper::mapNetworkException(e);

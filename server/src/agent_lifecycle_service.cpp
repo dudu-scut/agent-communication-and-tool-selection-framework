@@ -24,7 +24,9 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
         std::string counter_key = key + ":" + counter_suffix;
         int64_t dummy;
         redis_->incrby(counter_key, 1, dummy);
+        redis_->expire(counter_key, 86400 * 30); // 30 day TTL
         redis_->incrby(key + ":total", 1, dummy);
+        redis_->expire(key + ":total", 86400 * 30); // 30 day TTL
         redis_->expire(key, 86400 * 30); // 30 day TTL
     }
 
