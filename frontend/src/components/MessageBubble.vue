@@ -25,7 +25,7 @@
     <div v-if="message.traceInfo" class="trace-summary">
       <span class="trace-badge" :title="'Trace ID: ' + message.traceInfo.trace_id">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        路由 {{ message.traceInfo.route_time_ms }}ms
+        Route {{ message.traceInfo.route_time_ms }}ms
       </span>
       <span class="trace-arrow">→</span>
       <span class="trace-agent">{{ message.traceInfo.agent_name }}</span>
@@ -34,7 +34,7 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Agent {{ message.traceInfo.agent_time_ms }}ms
       </span>
-      <span class="trace-total">{{ message.traceInfo.total_time_ms }}ms 总计</span>
+      <span class="trace-total">{{ message.traceInfo.total_time_ms }}ms total</span>
     </div>
 
     <!-- Feedback buttons -->
@@ -43,7 +43,7 @@
         class="feedback-btn like-btn"
         :class="{ active: message.feedbackGiven === 'like' }"
         @click="$emit('feedback', message.id, 'like')"
-        title="有帮助"
+        title="Helpful"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" :fill="message.feedbackGiven === 'like' ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
           <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/>
@@ -53,18 +53,18 @@
         class="feedback-btn dislike-btn"
         :class="{ active: message.feedbackGiven === 'dislike' }"
         @click="$emit('feedback', message.id, 'dislike')"
-        title="无帮助"
+        title="Not helpful"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" :fill="message.feedbackGiven === 'dislike' ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
           <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/>
         </svg>
       </button>
-      <button class="feedback-btn copy-btn" @click="copyContent" title="复制回答">
+      <button class="feedback-btn copy-btn" @click="copyContent" title="Copy response">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
         </svg>
       </button>
-      <span v-if="copied" class="copied-hint">已复制</span>
+      <span v-if="copied" class="copied-hint">Copied</span>
     </div>
   </div>
 </template>

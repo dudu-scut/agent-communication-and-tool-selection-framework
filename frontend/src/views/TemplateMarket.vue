@@ -5,8 +5,8 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
       </router-link>
       <div>
-        <h1>模板市场</h1>
-        <span class="subtitle">使用预置模板快速创建 Agent 工作流</span>
+        <h1>Template Market</h1>
+        <span class="subtitle">Use preset templates to quickly create Agent workflows</span>
       </div>
     </div>
 
@@ -27,14 +27,14 @@
           <h3>{{ tmpl.name }}</h3>
           <p>{{ tmpl.description }}</p>
           <div class="tmpl-meta">
-            <span>📋 {{ tmpl.taskCount }} 个子任务</span>
+            <span>📋 {{ tmpl.taskCount }} subtask(s)</span>
             <span>⭐ {{ tmpl.rating }}</span>
-            <span>👥 {{ formatCount(tmpl.usageCount) }} 次使用</span>
+            <span>👥 {{ formatCount(tmpl.usageCount) }} uses</span>
           </div>
           <div class="tmpl-author">by {{ tmpl.author }}</div>
           <button class="use-btn" @click="useTemplate(tmpl)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><polyline points="12 5 19 12 12 19"/></svg>
-            使用模板
+            Use Template
           </button>
         </div>
       </div>
@@ -45,18 +45,18 @@
       <div v-if="activeTemplate" class="modal-overlay" @click.self="activeTemplate = null">
         <div class="modal-card">
           <div class="modal-header">
-            <span>使用模板: {{ activeTemplate.name }}</span>
+            <span>Use Template: {{ activeTemplate.name }}</span>
             <button class="modal-close" @click="activeTemplate = null">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
           <div class="modal-body">
-            <p class="modal-desc">此模板包含 {{ activeTemplate.taskCount }} 个预定义子任务的 DAG 结构。使用后将创建一个新会话并自动加载该工作流。</p>
+            <p class="modal-desc">This template contains {{ activeTemplate.taskCount }} predefined subtask(s) in a DAG structure. A new session will be created and the workflow preloaded.</p>
             <div class="modal-actions">
-              <button class="btn-cancel" @click="activeTemplate = null">取消</button>
+              <button class="btn-cancel" @click="activeTemplate = null">Cancel</button>
               <button class="btn-confirm" @click="confirmUse">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                确认创建
+                Confirm
               </button>
             </div>
           </div>
@@ -83,20 +83,20 @@ interface Template {
   author: string
 }
 
-const categories = ['全部', '编程', '分析', '写作', '翻译', '规划']
-const activeCategory = ref('全部')
+const categories = ['All', 'Dev', 'Analytics', 'Writing', 'Translate', 'Planning']
+const activeCategory = ref('All')
 
 const templates = ref<Template[]>([
-  { id: '1', name: '代码审查工作流', description: '自动审查代码，检查 Bug、安全漏洞和性能问题', category: '编程', taskCount: 4, rating: 4.8, usageCount: 3200, author: 'dev-team' },
-  { id: '2', name: '数据分析报告', description: '连接数据源 → 清洗 → 分析 → 生成可视化报告', category: '分析', taskCount: 5, rating: 4.6, usageCount: 2100, author: 'data-team' },
-  { id: '3', name: '多语言翻译链', description: '源语言 → 中间语 → 目标语言，含术语一致性检查', category: '翻译', taskCount: 3, rating: 4.7, usageCount: 1800, author: 'l10n-team' },
-  { id: '4', name: '技术博客生成', description: '研究 → 大纲 → 初稿 → 润色 → SEO 优化', category: '写作', taskCount: 5, rating: 4.9, usageCount: 4500, author: 'content-team' },
-  { id: '5', name: '微服务迁移规划', description: '现状分析 → 服务拆分建议 → 迁移步骤规划 → 风险预估', category: '规划', taskCount: 4, rating: 4.5, usageCount: 890, author: 'arch-team' },
-  { id: '6', name: 'API 文档生成', description: '从代码注释自动生成 OpenAPI/Swagger 文档', category: '编程', taskCount: 2, rating: 4.4, usageCount: 5600, author: 'api-team' },
+  { id: '1', name: 'Code Review Workflow', description: 'Automated code review for bugs, security vulnerabilities, and performance issues', category: 'Dev', taskCount: 4, rating: 4.8, usageCount: 3200, author: 'dev-team' },
+  { id: '2', name: 'Data Analysis Report', description: 'Connect data source → clean → analyze → generate visualization report', category: 'Analytics', taskCount: 5, rating: 4.6, usageCount: 2100, author: 'data-team' },
+  { id: '3', name: 'Multi-language Translation Chain', description: 'Source → intermediate → target language with terminology consistency check', category: 'Translate', taskCount: 3, rating: 4.7, usageCount: 1800, author: 'l10n-team' },
+  { id: '4', name: 'Technical Blog Generator', description: 'Research → outline → draft → polish → SEO optimization', category: 'Writing', taskCount: 5, rating: 4.9, usageCount: 4500, author: 'content-team' },
+  { id: '5', name: 'Microservice Migration Plan', description: 'Current state analysis → service split proposals → migration steps → risk assessment', category: 'Planning', taskCount: 4, rating: 4.5, usageCount: 890, author: 'arch-team' },
+  { id: '6', name: 'API Documentation Generator', description: 'Auto-generate OpenAPI/Swagger docs from code annotations', category: 'Dev', taskCount: 2, rating: 4.4, usageCount: 5600, author: 'api-team' },
 ])
 
 const filteredTemplates = computed(() => {
-  if (activeCategory.value === '全部') return templates.value
+  if (activeCategory.value === 'All') return templates.value
   return templates.value.filter(t => t.category === activeCategory.value)
 })
 
@@ -172,11 +172,11 @@ function formatCount(n: number): string {
   font-size: 11px; font-weight: 600; color: #fff;
 }
 
-.tmpl-badge.编程 { background: #3b82f6; }
-.tmpl-badge.分析 { background: #8b5cf6; }
-.tmpl-badge.写作 { background: #f59e0b; color: #78350f; }
-.tmpl-badge.翻译 { background: #10b981; }
-.tmpl-badge.规划 { background: #ef4444; }
+.tmpl-badge.Dev { background: #3b82f6; }
+.tmpl-badge.Analytics { background: #8b5cf6; }
+.tmpl-badge.Writing { background: #f59e0b; color: #78350f; }
+.tmpl-badge.Translate { background: #10b981; }
+.tmpl-badge.Planning { background: #ef4444; }
 
 .tmpl-content { padding: 22px; }
 

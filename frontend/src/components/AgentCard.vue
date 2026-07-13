@@ -3,7 +3,7 @@
     <div class="card-header">
       <div class="agent-name">{{ agent.name }}</div>
       <span class="status-dot" :class="{ healthy: agent.healthy }"></span>
-      <span class="status-text">{{ agent.healthy ? '健康' : '不健康' }}</span>
+      <span class="status-text">{{ agent.healthy ? 'Healthy' : 'Unhealthy' }}</span>
     </div>
 
     <div class="card-body">
@@ -12,16 +12,16 @@
         <span class="value">{{ agent.id }}</span>
       </div>
       <div class="info-row">
-        <span class="label">地址</span>
+        <span class="label">Address</span>
         <span class="value">{{ agent.host }}:{{ agent.port }}</span>
       </div>
       <div v-if="agent.version" class="info-row">
-        <span class="label">版本</span>
+        <span class="label">Version</span>
         <span class="value">{{ agent.version }}</span>
       </div>
 
       <div v-if="agent.skills.length > 0" class="skills">
-        <span class="label">技能</span>
+        <span class="label">Skills</span>
         <div class="skill-tags">
           <span v-for="skill in agent.skills" :key="skill" class="skill-tag">
             {{ skill }}
@@ -30,7 +30,7 @@
       </div>
 
       <div v-if="agent.tags.length > 0" class="tags">
-        <span class="label">标签</span>
+        <span class="label">Tags</span>
         <div class="tag-list">
           <span v-for="tag in agent.tags" :key="tag" class="tag">
             {{ tag }}

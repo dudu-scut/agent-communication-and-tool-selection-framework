@@ -57,7 +57,7 @@ export const useChatStore = defineStore('chat', () => {
     const ac = new AbortController()
     abortController.value = ac
 
-    addActivity('thinking', '正在分析请求...')
+    addActivity('thinking', 'Analyzing request...')
 
     queryStream(
       text,
@@ -67,8 +67,8 @@ export const useChatStore = defineStore('chat', () => {
     ).finally(() => {
       if (reactiveMsg.streaming) {
         reactiveMsg.streaming = false
-        reactiveMsg.content += '\n[连接断开]'
-        addActivity('error', '连接意外断开')
+        reactiveMsg.content += '\n[Connection lost]'
+        addActivity('error', 'Connection unexpectedly closed')
       }
       isStreaming.value = false
       abortController.value = null
@@ -78,7 +78,7 @@ export const useChatStore = defineStore('chat', () => {
   function handleStreamEvent(event: AIStreamEvent, msg: ChatMessage) {
     switch (event.event_type) {
       case 'partial':
-        if (msg.content === '正在分析请求...') {
+        if (msg.content === 'Analyzing request...') {
           msg.content = ''
         }
         msg.content += event.content
@@ -87,12 +87,12 @@ export const useChatStore = defineStore('chat', () => {
       case 'status':
         if (event.task_state === 'planning') {
           if (!msg.content) {
-            msg.content = '正在分析请求...'
+            msg.content = 'Analyzing request...'
           }
-          addActivity('thinking', '正在规划任务...')
+          addActivity('thinking', 'Planning tasks...')
         } else if (event.content && event.content !== 'thinking') {
           msg.agentName = event.content
-          addActivity('agent_call', `路由到 Agent: ${event.content}`)
+          addActivity('agent_call', `Routed to Agent: ${event.content}`)
         }
         break
 
@@ -110,7 +110,7 @@ export const useChatStore = defineStore('chat', () => {
               assigned_agent_id: t.assigned_agent_id,
             })),
           }
-          addActivity('thinking', `生成执行计划: ${plan.tasks?.length || 0} 个子任务`)
+          addActivity('thinking', `Execution plan: ${plan.tasks?.length || 0} subtask(s)`)
         } catch {
           // malformed plan JSON, ignore
         }
@@ -121,7 +121,7 @@ export const useChatStore = defineStore('chat', () => {
           const task = msg.executionPlan.tasks.find(t => t.id === event.task_state)
           if (task) {
             task.status = 'running'
-            addActivity('tool_call', `执行子任务: ${task.description}`, {
+            addActivity('tool_call', `Executing subtask: ${task.description}`, {
               agent_name: task.assigned_agent_id,
               tool_name: task.skill,
             })
@@ -137,7 +137,7 @@ export const useChatStore = defineStore('chat', () => {
             task.result = event.content
             addActivity(
               task.status === 'completed' ? 'complete' : 'error',
-              `${task.status === 'completed' ? '完成' : '失败'}: ${task.description}`,
+              `${task.status === 'completed' ? 'Completed' : 'Failed'}: ${task.description}`,
               { duration_ms: task.status === 'completed' ? undefined : undefined }
             )
           }
@@ -170,7 +170,7 @@ export const useChatStore = defineStore('chat', () => {
           : undefined
         isStreaming.value = false
         abortController.value = null
-        addActivity('complete', '查询完成', {
+        addActivity('complete', 'Query completed', {
           duration_ms: msg.processingTimeMs,
         })
         break
@@ -180,7 +180,7 @@ export const useChatStore = defineStore('chat', () => {
         msg.streaming = false
         isStreaming.value = false
         abortController.value = null
-        addActivity('error', `错误: ${msg.error}`)
+        addActivity('error', `Error: ${msg.error}`)
         break
     }
   }
@@ -202,7 +202,7 @@ export const useChatStore = defineStore('chat', () => {
       const msg = messages.value[i]
       if (msg.role === 'agent' && msg.streaming) {
         msg.streaming = false
-        msg.content += '\n[已停止]'
+        msg.content += '\n[Stopped]'
         break
       }
     }

@@ -4,8 +4,8 @@
       <router-link to="/" class="back-link">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
       </router-link>
-      <h1>Agent 沙箱</h1>
-      <span class="subtitle">快速试用各类 AI Agent</span>
+      <h1>Agent Sandbox</h1>
+      <span class="subtitle">Try out various AI Agents</span>
     </div>
 
     <div class="agent-grid">
@@ -25,7 +25,7 @@
           </div>
           <button class="try-btn" @click="quickTry(agent)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            快速试用
+            Try Now
           </button>
         </div>
       </div>
@@ -36,7 +36,7 @@
       <div v-if="activeAgent" class="modal-overlay" @click.self="activeAgent = null">
         <div class="modal-card">
           <div class="modal-header">
-            <span>{{ activeAgent.icon }} {{ activeAgent.name }} — 试用</span>
+            <span>{{ activeAgent.icon }} {{ activeAgent.name }} — Try</span>
             <button class="modal-close" @click="activeAgent = null">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
@@ -44,9 +44,9 @@
           <div class="modal-body">
             <div v-if="sandboxResponse" class="sandbox-response">{{ sandboxResponse }}</div>
             <div v-else class="sandbox-placeholder">
-              <textarea v-model="sandboxInput" placeholder="输入试用消息..." class="sandbox-textarea" rows="3"></textarea>
+              <textarea v-model="sandboxInput" placeholder="Enter a test message..." class="sandbox-textarea" rows="3"></textarea>
               <button class="btn-send" @click="sendSandboxQuery" :disabled="!sandboxInput.trim()">
-                发送试用
+                Send Test
               </button>
             </div>
           </div>
@@ -71,12 +71,12 @@ interface SandboxAgent {
 }
 
 const sandboxAgents = ref<SandboxAgent[]>([
-  { id: 'mock-general', name: 'General Assistant', icon: '🤖', description: '通用 AI 助手，可回答各类问题、编写代码、分析数据', tags: ['对话', '编程', '分析'], avgLatency: 145, rating: 4.7, usageCount: 12500 },
-  { id: 'mock-translator', name: 'Translator Pro', icon: '🌐', description: '专业翻译 Agent，支持 50+ 语言互译，保持语境和术语一致性', tags: ['翻译', '本地化', '术语管理'], avgLatency: 89, rating: 4.5, usageCount: 8900 },
-  { id: 'mock-writer', name: 'Content Writer', icon: '✍️', description: '内容创作 Agent，擅长博客、报告、营销文案和创意写作', tags: ['写作', '创意', '营销'], avgLatency: 230, rating: 4.8, usageCount: 6700 },
-  { id: 'mock-coder', name: 'Code Reviewer', icon: '🔍', description: '代码审查 Agent，自动检测 Bug、安全漏洞和性能问题', tags: ['代码审查', '安全', '性能'], avgLatency: 310, rating: 4.6, usageCount: 15200 },
-  { id: 'mock-analyst', name: 'Data Analyst', icon: '📊', description: '数据分析 Agent，生成可视化图表和洞察报告', tags: ['数据', '可视化', '报告'], avgLatency: 420, rating: 4.4, usageCount: 4300 },
-  { id: 'mock-planner', name: 'Task Planner', icon: '📋', description: '任务规划 Agent，将复杂任务分解为可执行的子任务 DAG', tags: ['规划', '编排', 'DAG'], avgLatency: 180, rating: 4.9, usageCount: 9800 },
+  { id: 'mock-general', name: 'General Assistant', icon: '🤖', description: 'General-purpose AI assistant for Q&A, coding, and data analysis', tags: ['Chat', 'Coding', 'Analysis'], avgLatency: 145, rating: 4.7, usageCount: 12500 },
+  { id: 'mock-translator', name: 'Translator Pro', icon: '🌐', description: 'Professional translation agent supporting 50+ languages with context and terminology consistency', tags: ['Translation', 'Localization', 'Terminology'], avgLatency: 89, rating: 4.5, usageCount: 8900 },
+  { id: 'mock-writer', name: 'Content Writer', icon: '✍️', description: 'Content creation agent for blogs, reports, marketing copy, and creative writing', tags: ['Writing', 'Creative', 'Marketing'], avgLatency: 230, rating: 4.8, usageCount: 6700 },
+  { id: 'mock-coder', name: 'Code Reviewer', icon: '🔍', description: 'Code review agent that detects bugs, security vulnerabilities, and performance issues', tags: ['Code Review', 'Security', 'Performance'], avgLatency: 310, rating: 4.6, usageCount: 15200 },
+  { id: 'mock-analyst', name: 'Data Analyst', icon: '📊', description: 'Data analysis agent that generates visualizations and insight reports', tags: ['Data', 'Visualization', 'Reports'], avgLatency: 420, rating: 4.4, usageCount: 4300 },
+  { id: 'mock-planner', name: 'Task Planner', icon: '📋', description: 'Task planning agent that decomposes complex tasks into executable DAG subtasks', tags: ['Planning', 'Orchestration', 'DAG'], avgLatency: 180, rating: 4.9, usageCount: 9800 },
 ])
 
 const activeAgent = ref<SandboxAgent | null>(null)
@@ -91,10 +91,10 @@ function quickTry(agent: SandboxAgent) {
 
 async function sendSandboxQuery() {
   if (!sandboxInput.value.trim()) return
-  sandboxResponse.value = '处理中...'
+  sandboxResponse.value = 'Processing...'
   // Simulate sandbox query
   await new Promise(r => setTimeout(r, 1000))
-  sandboxResponse.value = `[沙箱模式] Mock 响应: ${sandboxInput.value}\n\n这是来自 "${activeAgent.value?.name}" 的试用回复。沙箱模式不消耗 Token，不保存历史记录。`
+  sandboxResponse.value = `[Sandbox Mode] Mock response for: ${sandboxInput.value}\n\nThis is a trial response from "${activeAgent.value?.name}". Sandbox mode does not consume tokens or save history.`
 }
 
 function formatCount(n: number): string {

@@ -4,33 +4,33 @@
       <router-link to="/" class="back-link">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
       </router-link>
-      <h1>Agent 对比</h1>
-      <span class="subtitle">并排比较不同 Agent 的回答质量</span>
+      <h1>Agent Compare</h1>
+      <span class="subtitle">Compare Agent responses side by side</span>
     </div>
 
     <div class="compare-controls">
       <div class="control-group">
-        <label>选择 Agent (最多3个)</label>
+        <label>Select Agents (up to 3)</label>
         <div class="agent-selects">
           <select v-model="selectedAgents[0]" class="select-input">
-            <option value="">-- 选择 Agent --</option>
+            <option value="">-- Select Agent --</option>
             <option v-for="a in availableAgents" :key="a" :value="a">{{ a }}</option>
           </select>
           <select v-model="selectedAgents[1]" class="select-input">
-            <option value="">-- 选择 Agent --</option>
+            <option value="">-- Select Agent --</option>
             <option v-for="a in availableAgents" :key="a" :value="a">{{ a }}</option>
           </select>
           <select v-model="selectedAgents[2]" class="select-input">
-            <option value="">-- 选择 Agent --</option>
+            <option value="">-- Select Agent --</option>
             <option v-for="a in availableAgents" :key="a" :value="a">{{ a }}</option>
           </select>
         </div>
       </div>
       <div class="query-group">
-        <textarea v-model="compareQuery" placeholder="输入比较查询..." class="query-input" rows="3"></textarea>
+        <textarea v-model="compareQuery" placeholder="Enter comparison query..." class="query-input" rows="3"></textarea>
         <button class="btn-compare" @click="runCompare" :disabled="!canCompare">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          开始对比
+          Compare
         </button>
       </div>
     </div>
@@ -49,22 +49,22 @@
 
       <!-- Comparison Summary -->
       <div class="compare-summary">
-        <h3>对比摘要</h3>
+        <h3>Comparison Summary</h3>
         <div class="summary-grid">
           <div v-for="r in results" :key="r.agent" class="summary-card">
             <div class="summary-agent">{{ r.agent }}</div>
             <div class="summary-metrics">
               <div class="sm">
-                <span class="sm-label">延迟</span>
+                <span class="sm-label">Latency</span>
                 <span class="sm-value">{{ r.latency }}ms</span>
               </div>
               <div class="sm">
-                <span class="sm-label">成本</span>
+                <span class="sm-label">Cost</span>
                 <span class="sm-value">{{ formatTokens(r.cost) }}</span>
               </div>
               <div class="sm">
-                <span class="sm-label">长度</span>
-                <span class="sm-value">{{ r.content.length }} 字</span>
+                <span class="sm-label">Length</span>
+                <span class="sm-value">{{ r.content.length }} chars</span>
               </div>
             </div>
           </div>
@@ -101,9 +101,9 @@ async function runCompare() {
     await new Promise(r => setTimeout(r, 600 + Math.random() * 800))
     results.value.push({
       agent,
-      content: `[${agent}] 对 "${compareQuery.value}" 的响应:\n\n` +
-        '这是一段模拟的 Agent 对比回复，展示了不同 Agent 对同一问题的不同回答风格和内容深度。\n\n' +
-        '实际使用时，此处会展示真实的多 Agent 并排对比结果。',
+      content: `[${agent}] Response to "${compareQuery.value}":\n\n` +
+        'This is a simulated Agent comparison response, demonstrating different answer styles and depth across Agents for the same query.\n\n' +
+        'In production, real multi-Agent side-by-side comparison results would be shown here.',
       latency: Date.now() - start,
       cost: Math.floor(Math.random() * 5000 + 500),
     })

@@ -39,7 +39,7 @@ export const useAgentsStore = defineStore('agents', () => {
         }
       }
     } catch {
-      // agent_card JSON 解析失败，fallback 到 skills 字段
+      // agent_card JSON parse failed, fallback to skills field
     }
 
     return {
@@ -54,7 +54,7 @@ export const useAgentsStore = defineStore('agents', () => {
     }
   }
 
-  // 自动轮询：每 15 秒刷新一次
+  // Auto-polling: refresh every 15 seconds
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   function startPolling(intervalMs = 15000) {

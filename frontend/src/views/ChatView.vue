@@ -11,20 +11,20 @@
           <h1>NexusAI</h1>
         </div>
         <div class="header-actions">
-          <button class="btn-icon" @click="showActivityPanel = !showActivityPanel" :class="{ active: showActivityPanel }" title="活动日志">
+          <button class="btn-icon" @click="showActivityPanel = !showActivityPanel" :class="{ active: showActivityPanel }" title="Activity Log">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
               <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
             </svg>
           </button>
-          <button class="btn-icon" @click="exportMarkdown" title="导出 Markdown">
+          <button class="btn-icon" @click="exportMarkdown" title="Export Markdown">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </button>
-          <button class="btn-text" @click="chatStore.newConversation()">新对话</button>
-          <router-link to="/admin" class="btn-text">管理</router-link>
-          <button class="btn-text btn-logout" @click="handleLogout">登出</button>
+          <button class="btn-text" @click="chatStore.newConversation()">New Chat</button>
+          <router-link to="/admin" class="btn-text">Admin</router-link>
+          <button class="btn-text btn-logout" @click="handleLogout">Logout</button>
         </div>
       </div>
 
@@ -39,8 +39,8 @@
               <line x1="8" y1="14" x2="14" y2="14"/>
             </svg>
           </div>
-          <h2>向 NexusAI 提问</h2>
-          <p>AI 会自动路由到最合适的 Agent，支持多 Agent 协作完成复杂任务</p>
+          <h2>Ask NexusAI</h2>
+          <p>AI auto-routes to the best Agent, supporting multi-agent collaboration for complex tasks</p>
           <div class="quick-prompts">
             <button
               v-for="prompt in quickPrompts"
@@ -71,7 +71,7 @@
         <div class="input-wrapper">
           <textarea
             v-model="inputText"
-            :placeholder="chatStore.isStreaming ? 'Agent 正在回答...' : '输入你的问题...'"
+            :placeholder="chatStore.isStreaming ? 'Agent is responding...' : 'Enter your question...'"
             :disabled="chatStore.isStreaming"
             @keydown.enter.exact.prevent="handleSend"
             @compositionstart="composing = true"
@@ -86,7 +86,7 @@
             @click="chatStore.stopStreaming()"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-            停止
+            Stop
           </button>
           <button
             v-else
@@ -139,10 +139,10 @@ const selectedAgentId = ref<string>()
 const activityEntries = ref<ActivityEntry[]>([])
 
 const quickPrompts = [
-  '帮我解释什么是微服务架构',
-  '用 Python 写一个快速排序',
-  '对比 REST 和 GraphQL',
-  '如何设计一个高可用系统？',
+  'Explain microservices architecture',
+  'Write a quicksort in Python',
+  'Compare REST vs GraphQL',
+  'How to design a high-availability system?',
 ]
 
 function quickSend(text: string) {
@@ -160,18 +160,18 @@ function handleSend() {
     textareaRef.value.style.height = 'auto'
   }
   // Add activity entry
-  addActivity('agent_call', `发送查询: ${text.slice(0, 60)}${text.length > 60 ? '...' : ''}`)
+  addActivity('agent_call', `Sending query: ${text.slice(0, 60)}${text.length > 60 ? '...' : ''}`)
 }
 
 function handleFeedback(msgId: string, type: 'like' | 'dislike') {
   chatStore.setFeedback(msgId, type)
-  addActivity('complete', type === 'like' ? '用户标记为有帮助 👍' : '用户标记为无帮助 👎')
+  addActivity('complete', type === 'like' ? 'User marked as helpful 👍' : 'User marked as not helpful 👎')
 }
 
 function handleAgentSelect(agentId: string) {
   selectedAgentId.value = agentId
   showAgentSelector.value = false
-  addActivity('agent_call', `已选择 Agent: ${agentId}`)
+  addActivity('agent_call', `Agent selected: ${agentId}`)
 }
 
 function addActivity(type: ActivityEntry['type'], message: string, extra?: Partial<ActivityEntry>) {
@@ -203,15 +203,15 @@ function exportMarkdown() {
   const msgs = chatStore.messages
   if (msgs.length === 0) return
 
-  let md = '# NexusAI 对话记录\n\n'
-  md += `> 导出时间: ${new Date().toLocaleString()}\n`
-  md += `> 对话 ID: ${chatStore.contextId}\n\n---\n\n`
+  let md = '# NexusAI Conversation Log\n\n'
+  md += `> Exported: ${new Date().toLocaleString()}\n`
+  md += `> Conversation ID: ${chatStore.contextId}\n\n---\n\n`
 
   for (const msg of msgs) {
-    const role = msg.role === 'user' ? '👤 **用户**' : `🤖 **${msg.agentName || 'Agent'}**`
+    const role = msg.role === 'user' ? '👤 **User**' : `🤖 **${msg.agentName || 'Agent'}**`
     md += `### ${role}\n\n`
     if (msg.traceInfo) {
-      md += `> 路由 ${msg.traceInfo.route_time_ms}ms → ${msg.traceInfo.agent_name} ${msg.traceInfo.agent_time_ms}ms (总计 ${msg.traceInfo.total_time_ms}ms)\n\n`
+      md += `> Route ${msg.traceInfo.route_time_ms}ms → ${msg.traceInfo.agent_name} ${msg.traceInfo.agent_time_ms}ms (total ${msg.traceInfo.total_time_ms}ms)\n\n`
     }
     md += `${msg.content}\n\n---\n\n`
   }
@@ -224,7 +224,7 @@ function exportMarkdown() {
   a.click()
   URL.revokeObjectURL(url)
 
-  addActivity('complete', '对话已导出为 Markdown')
+  addActivity('complete', 'Conversation exported as Markdown')
 }
 
 // Watch for streaming events to populate activity feed
@@ -232,9 +232,9 @@ watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.executionPlan,
   (plan) => {
     if (plan) {
-      addActivity('thinking', `生成执行计划: ${plan.tasks.length} 个子任务`)
+      addActivity('thinking', `Execution plan: ${plan.tasks.length} subtask(s)`)
       plan.tasks.forEach(t => {
-        addActivity('thinking', `任务 [${t.id}]: ${t.description}`)
+        addActivity('thinking', `Task [${t.id}]: ${t.description}`)
       })
     }
   },

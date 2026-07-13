@@ -2,39 +2,39 @@
   <div class="login-view">
     <div class="login-card">
       <h1 class="login-title">NexusAI</h1>
-      <p class="login-subtitle">{{ isRegister ? '创建新账户' : '登录以继续' }}</p>
+      <p class="login-subtitle">{{ isRegister ? 'Create Account' : 'Sign in to continue' }}</p>
 
       <form class="login-form" @submit.prevent="handleSubmit">
         <div class="form-group">
-          <label for="username">用户名</label>
+          <label for="username">Username</label>
           <input
             id="username"
             v-model="form.username"
             type="text"
-            placeholder="输入用户名"
+            placeholder="Enter username"
             autocomplete="username"
             required
           />
         </div>
 
         <div v-if="isRegister" class="form-group">
-          <label for="displayName">显示名称 <span class="optional">(可选)</span></label>
+          <label for="displayName">Display Name <span class="optional">(optional)</span></label>
           <input
             id="displayName"
             v-model="form.displayName"
             type="text"
-            placeholder="输入显示名称"
+            placeholder="Enter display name"
             autocomplete="name"
           />
         </div>
 
         <div class="form-group">
-          <label for="password">密码</label>
+          <label for="password">Password</label>
           <input
             id="password"
             v-model="form.password"
             type="password"
-            placeholder="输入密码"
+            placeholder="Enter password"
             autocomplete="current-password"
             required
           />
@@ -44,16 +44,16 @@
         <p v-if="success" class="success-message">{{ success }}</p>
 
         <button type="submit" class="btn-submit" :disabled="loading">
-          {{ loading ? '请稍候...' : (isRegister ? '注册' : '登录') }}
+          {{ loading ? 'Please wait...' : (isRegister ? 'Register' : 'Sign In') }}
         </button>
       </form>
 
       <p class="toggle-mode">
         <template v-if="isRegister">
-          已有账户？<a href="#" @click.prevent="switchToLogin">去登录</a>
+          Already have an account? <a href="#" @click.prevent="switchToLogin">Sign in</a>
         </template>
         <template v-else>
-          没有账户？<a href="#" @click.prevent="switchToRegister">去注册</a>
+          Don't have an account? <a href="#" @click.prevent="switchToRegister">Register</a>
         </template>
       </p>
     </div>
@@ -93,17 +93,17 @@ function switchToRegister() {
 
 async function handleSubmit() {
   if (!form.username.trim() || !form.password.trim()) {
-    error.value = '请填写用户名和密码'
+    error.value = 'Please enter username and password'
     return
   }
 
   if (form.password.length < 6) {
-    error.value = '密码长度不能少于6位'
+    error.value = 'Password must be at least 6 characters'
     return
   }
 
   if (isRegister.value && form.username.trim().length < 3) {
-    error.value = '用户名长度不能少于3位'
+    error.value = 'Username must be at least 3 characters'
     return
   }
 
@@ -121,7 +121,7 @@ async function handleSubmit() {
       // Registration successful — switch to login
       isRegister.value = false
       form.password = ''
-      success.value = '注册成功，请登录'
+      success.value = 'Registration successful, please sign in'
     } else {
       const err = await auth.login(form.username.trim(), form.password)
       if (err) {

@@ -5,11 +5,11 @@
         <router-link to="/" class="back-link">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
         </router-link>
-        <h1>管理后台</h1>
+        <h1>Admin Dashboard</h1>
       </div>
       <div class="header-actions">
         <button class="btn-refresh" @click="refreshAll" :disabled="loading">
-          {{ loading ? '刷新中...' : '刷新' }}
+          {{ loading ? 'Refreshing...' : 'Refresh' }}
         </button>
       </div>
     </div>
@@ -38,7 +38,7 @@
             </div>
             <div class="stat-info">
               <span class="stat-value">{{ agents.length }}</span>
-              <span class="stat-label">已注册 Agent</span>
+              <span class="stat-label">Registered Agents</span>
             </div>
           </div>
           <div class="stat-card">
@@ -47,7 +47,7 @@
             </div>
             <div class="stat-info">
               <span class="stat-value">{{ healthyCount }}</span>
-              <span class="stat-label">运行正常</span>
+              <span class="stat-label">Healthy</span>
             </div>
           </div>
           <div class="stat-card">
@@ -56,7 +56,7 @@
             </div>
             <div class="stat-info">
               <span class="stat-value">{{ degradedCount }}</span>
-              <span class="stat-label">需要关注</span>
+              <span class="stat-label">Degraded</span>
             </div>
           </div>
           <div class="stat-card">
@@ -65,19 +65,19 @@
             </div>
             <div class="stat-info">
               <span class="stat-value">{{ unhealthyCount }}</span>
-              <span class="stat-label">离线</span>
+              <span class="stat-label">Offline</span>
             </div>
           </div>
         </div>
 
         <!-- Agent Health Table -->
         <div class="section">
-          <h3>Agent 健康状态</h3>
+          <h3>Agent Health Status</h3>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Agent</th><th>状态</th><th>成功率</th><th>平均延迟</th><th>活跃请求</th><th>熔断次数</th><th>最后心跳</th>
+                  <th>Agent</th><th>Status</th><th>Success Rate</th><th>Avg Latency</th><th>Active Reqs</th><th>Breaker Trips</th><th>Last Heartbeat</th>
                 </tr>
               </thead>
               <tbody>
@@ -112,7 +112,7 @@
       <!-- === Budget Tab === -->
       <div v-if="activeTab === 'budget'" class="tab-content">
         <div class="section">
-          <h3>Token 预算概览</h3>
+          <h3>Token Budget Overview</h3>
           <div class="budget-cards">
             <div class="budget-card">
               <div class="budget-ring">
@@ -122,21 +122,21 @@
                 </svg>
                 <div class="ring-text">
                   <span class="ring-value">{{ dailyUsedPercent }}%</span>
-                  <span class="ring-label">今日用量</span>
+                  <span class="ring-label">Today</span>
                 </div>
               </div>
               <div class="budget-details">
-                <div class="budget-row"><span>日配额</span><span>{{ formatTokens(dailyLimit) }}</span></div>
-                <div class="budget-row"><span>已使用</span><span>{{ formatTokens(dailyUsed) }}</span></div>
-                <div class="budget-row"><span>剩余</span><span class="remaining">{{ formatTokens(dailyRemaining) }}</span></div>
+                <div class="budget-row"><span>Daily Limit</span><span>{{ formatTokens(dailyLimit) }}</span></div>
+                <div class="budget-row"><span>Used</span><span>{{ formatTokens(dailyUsed) }}</span></div>
+                <div class="budget-row"><span>Remaining</span><span class="remaining">{{ formatTokens(dailyRemaining) }}</span></div>
               </div>
             </div>
             <div class="budget-card">
               <div class="budget-details full-width">
-                <div class="budget-row"><span>月配额</span><span>{{ formatTokens(monthlyLimit) }}</span></div>
-                <div class="budget-row"><span>已使用</span><span>{{ formatTokens(monthlyUsed) }}</span></div>
-                <div class="budget-row"><span>剩余</span><span class="remaining">{{ formatTokens(monthlyRemaining) }}</span></div>
-                <div class="budget-row muted"><span>重置时间</span><span>{{ resetTime }}</span></div>
+                <div class="budget-row"><span>Monthly Limit</span><span>{{ formatTokens(monthlyLimit) }}</span></div>
+                <div class="budget-row"><span>Used</span><span>{{ formatTokens(monthlyUsed) }}</span></div>
+                <div class="budget-row"><span>Remaining</span><span class="remaining">{{ formatTokens(monthlyRemaining) }}</span></div>
+                <div class="budget-row muted"><span>Reset Time</span><span>{{ resetTime }}</span></div>
               </div>
             </div>
           </div>
@@ -146,25 +146,25 @@
       <!-- === Replay Tab === -->
       <div v-if="activeTab === 'replay'" class="tab-content">
         <div class="section">
-          <h3>查询重放</h3>
+          <h3>Query Replay</h3>
           <div class="replay-form">
             <div class="input-group">
               <label>Trace ID</label>
-              <input v-model="replayTraceId" placeholder="输入 trace_id..." class="text-input" />
+              <input v-model="replayTraceId" placeholder="Enter trace_id..." class="text-input" />
             </div>
             <div class="input-group">
-              <label>模式</label>
+              <label>Mode</label>
               <select v-model="replayMode" class="text-input">
-                <option value="EXACT">精确重放</option>
-                <option value="ROUTE">重新路由</option>
+                <option value="EXACT">Exact Replay</option>
+                <option value="ROUTE">Re-route</option>
               </select>
             </div>
             <button class="btn-primary" @click="replayQuery" :disabled="!replayTraceId.trim()">
-              执行重放
+              Run Replay
             </button>
           </div>
           <div v-if="replayResult" class="replay-result">
-            <div class="replay-header">重放结果</div>
+            <div class="replay-header">Replay Result</div>
             <pre class="replay-json">{{ replayResult }}</pre>
           </div>
         </div>
@@ -174,37 +174,37 @@
       <div v-if="activeTab === 'cron'" class="tab-content">
         <div class="section">
           <div class="section-header">
-            <h3>定时任务</h3>
+            <h3>Scheduled Tasks</h3>
             <button class="btn-sm" @click="showCronForm = !showCronForm">
-              {{ showCronForm ? '取消' : '+ 新建任务' }}
+              {{ showCronForm ? 'Cancel' : '+ New Task' }}
             </button>
           </div>
 
           <div v-if="showCronForm" class="cron-form">
             <div class="input-row">
-              <input v-model="cronForm.name" placeholder="任务名称" class="text-input" />
-              <input v-model="cronForm.expr" placeholder="Cron 表达式 (如: 0 * * * *)" class="text-input mono" />
+              <input v-model="cronForm.name" placeholder="Task name" class="text-input" />
+              <input v-model="cronForm.expr" placeholder="Cron expression (e.g. 0 * * * *)" class="text-input mono" />
             </div>
             <div class="input-row">
-              <input v-model="cronForm.query" placeholder="查询模板" class="text-input flex-1" />
-              <button class="btn-primary" @click="addCronTask" :disabled="!cronForm.name">创建</button>
+              <input v-model="cronForm.query" placeholder="Query template" class="text-input flex-1" />
+              <button class="btn-primary" @click="addCronTask" :disabled="!cronForm.name">Create</button>
             </div>
           </div>
 
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>名称</th><th>调度</th><th>状态</th><th>执行次数</th><th>上次执行</th><th>下次执行</th><th>操作</th></tr></thead>
+              <thead><tr><th>Name</th><th>Schedule</th><th>Status</th><th>Runs</th><th>Last Run</th><th>Next Run</th><th>Actions</th></tr></thead>
               <tbody>
                 <tr v-for="task in cronTasks" :key="task.id">
                   <td class="fw-600">{{ task.name }}</td>
                   <td><code>{{ task.cron_expr }}</code></td>
-                  <td><span class="status-light" :class="task.enabled ? 'healthy' : 'unhealthy'"></span> {{ task.enabled ? '启用' : '停用' }}</td>
+                  <td><span class="status-light" :class="task.enabled ? 'healthy' : 'unhealthy'"></span> {{ task.enabled ? 'Enabled' : 'Disabled' }}</td>
                   <td>{{ task.execution_count }}</td>
                   <td class="time-cell">{{ formatTimeAgo(task.last_run_at) }}</td>
                   <td class="time-cell">{{ formatTimeAgo(task.next_run_at) }}</td>
                   <td>
-                    <button class="btn-xs" @click="triggerCronTask(task.id)">触发</button>
-                    <button class="btn-xs danger" @click="deleteCronTask(task.id)">删除</button>
+                    <button class="btn-xs" @click="triggerCronTask(task.id)">Trigger</button>
+                    <button class="btn-xs danger" @click="deleteCronTask(task.id)">Delete</button>
                   </td>
                 </tr>
               </tbody>
@@ -216,11 +216,11 @@
       <!-- === Canary Tab === -->
       <div v-if="activeTab === 'canary'" class="tab-content">
         <div class="section">
-          <h3>灰度部署</h3>
+          <h3>Canary Deployment</h3>
           <div v-if="canaryConfig" class="canary-panel">
             <div class="canary-header">
               <div>
-                <span class="canary-label">稳定版</span>
+                <span class="canary-label">Stable</span>
                 <span class="canary-agent">{{ canaryConfig.agent_id_stable }}</span>
               </div>
               <div class="canary-split">
@@ -230,32 +230,32 @@
                 </div>
               </div>
               <div>
-                <span class="canary-label">金丝雀</span>
+                <span class="canary-label">Canary</span>
                 <span class="canary-agent">{{ canaryConfig.agent_id_canary }}</span>
               </div>
             </div>
             <div class="canary-metrics">
               <div class="compare-metric">
-                <span class="compare-label">成功率</span>
+                <span class="compare-label">Success Rate</span>
                 <span>{{ (canaryConfig.stable_metrics.success_rate * 100).toFixed(1) }}%</span>
                 <span class="vs">vs</span>
                 <span>{{ (canaryConfig.canary_metrics.success_rate * 100).toFixed(1) }}%</span>
               </div>
               <div class="compare-metric">
-                <span class="compare-label">延迟</span>
+                <span class="compare-label">Latency</span>
                 <span>{{ canaryConfig.stable_metrics.avg_latency_ms }}ms</span>
                 <span class="vs">vs</span>
                 <span>{{ canaryConfig.canary_metrics.avg_latency_ms }}ms</span>
               </div>
             </div>
             <div class="canary-actions">
-              <button class="btn-success" @click="promoteCanary">🚀 推进 (100%)</button>
-              <button class="btn-danger" @click="rollbackCanary">⏪ 回滚</button>
+              <button class="btn-success" @click="promoteCanary">🚀 Promote (100%)</button>
+              <button class="btn-danger" @click="rollbackCanary">⏪ Rollback</button>
             </div>
           </div>
           <div v-else class="empty-state">
-            <p>暂无灰度部署</p>
-            <p class="hint">注册 STABLE + CANARY 双版本 Agent 后会出现灰度控制面板</p>
+            <p>No active canary deployment</p>
+            <p class="hint">Register STABLE + CANARY agents to enable the canary control panel</p>
           </div>
         </div>
       </div>
@@ -273,11 +273,11 @@ const loading = ref(false)
 const activeTab = ref('dashboard')
 
 const tabs = [
-  { id: 'dashboard', label: '仪表盘', icon: '📊' },
-  { id: 'budget', label: '预算', icon: '💰' },
-  { id: 'replay', label: '重放', icon: '🔁' },
-  { id: 'cron', label: '定时任务', icon: '⏰' },
-  { id: 'canary', label: '灰度', icon: '🚦' },
+  { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+  { id: 'budget', label: 'Budget', icon: '💰' },
+  { id: 'replay', label: 'Replay', icon: '🔁' },
+  { id: 'cron', label: 'Cron Jobs', icon: '⏰' },
+  { id: 'canary', label: 'Canary', icon: '🚦' },
 ]
 
 const agents = computed(() => agentsStore.agents)
@@ -292,9 +292,9 @@ function getHealthClass(a: AgentDisplayInfo): string {
 }
 
 function getHealthLabel(a: AgentDisplayInfo): string {
-  if (a.healthy) return '正常'
-  if (a.lastHeartbeat) return '降级'
-  return '离线'
+  if (a.healthy) return 'Healthy'
+  if (a.lastHeartbeat) return 'Degraded'
+  return 'Offline'
 }
 
 function getSuccessRate(a: AgentDisplayInfo): number {
@@ -308,9 +308,9 @@ function getAvgLatency(a: AgentDisplayInfo): number {
 function formatTimeAgo(ts?: number): string {
   if (!ts) return '---'
   const sec = Math.floor((Date.now() - ts) / 1000)
-  if (sec < 60) return `${sec}s 前`
-  if (sec < 3600) return `${Math.floor(sec / 60)}min 前`
-  return `${Math.floor(sec / 3600)}h 前`
+  if (sec < 60) return `${sec}s ago`
+  if (sec < 3600) return `${Math.floor(sec / 60)}min ago`
+  return `${Math.floor(sec / 3600)}h ago`
 }
 
 // Budget
@@ -357,7 +357,7 @@ async function replayQuery() {
     trace_id: replayTraceId.value,
     mode: replayMode.value,
     agent_id: 'mock-general',
-    content: '(重放结果 — 需要后端 ReplayQuery RPC 实现)',
+    content: '(Replay result — requires backend ReplayQuery RPC implementation)',
   }, null, 2)
 }
 
@@ -365,8 +365,8 @@ async function replayQuery() {
 const showCronForm = ref(false)
 const cronForm = ref({ name: '', expr: '0 * * * *', query: '' })
 const cronTasks = ref<ScheduledTask[]>([
-  { id: '1', name: '健康检查', cron_expr: '*/5 * * * *', query_template: 'health check', enabled: true, execution_count: 287, last_run_at: Date.now() - 120000, next_run_at: Date.now() + 180000 },
-  { id: '2', name: '日报汇总', cron_expr: '0 9 * * *', query_template: 'daily summary', enabled: true, execution_count: 42 },
+  { id: '1', name: 'Health Check', cron_expr: '*/5 * * * *', query_template: 'health check', enabled: true, execution_count: 287, last_run_at: Date.now() - 120000, next_run_at: Date.now() + 180000 },
+  { id: '2', name: 'Daily Summary', cron_expr: '0 9 * * *', query_template: 'daily summary', enabled: true, execution_count: 42 },
 ])
 
 function addCronTask() {

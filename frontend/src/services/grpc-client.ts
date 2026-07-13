@@ -1,8 +1,8 @@
 /**
- * gRPC-Web 客户端封装
+ * gRPC-Web client wrapper
  *
- * 通过 HTTP/1.1 与 grpcwebproxy 通信，后者再转为 gRPC/2 转发到 NexusAI。
- * 当前使用手写 TypeScript 类型 + fetch，后续可切换为 protoc 生成的 stub。
+ * Communicates with grpcwebproxy via HTTP/1.1, which converts to gRPC/2 and forwards to NexusAI.
+ * Currently uses hand-written TypeScript types + fetch; can switch to protoc-generated stubs later.
  */
 
 import type {
@@ -20,7 +20,7 @@ import type {
 
 const BASE_URL = import.meta.env.VITE_API_BASE || ''
 
-// AIQueryService 路径前缀
+// AIQueryService path prefix
 const AI_QUERY = '/agent_communication.AIQueryService'
 const AGENT_COMM = '/agent_communication.AgentCommunicationService'
 const USER_AUTH = '/agent_communication.auth.UserService'
@@ -36,7 +36,7 @@ let _onUnauthorized: (() => void) | null = null
 export function setOnUnauthorized(cb: () => void) { _onUnauthorized = cb }
 
 /**
- * 一元 RPC 调用（JSON 序列化，通过 grpcwebproxy 转发）
+ * Unary RPC call (JSON serialized, forwarded via grpcwebproxy)
  */
 async function unaryCall<TReq, TRes>(
   servicePath: string,
@@ -71,7 +71,7 @@ async function unaryCall<TReq, TRes>(
 // AIQueryService
 // ============================================================================
 
-/** 同步查询 */
+/** Synchronous query */
 export async function query(
   question: string,
   contextId?: string,
@@ -88,11 +88,11 @@ export async function query(
 }
 
 /**
- * 流式查询
+ * Streaming query
  *
- * 使用 fetch + ReadableStream 消费 server-streaming 响应。
- * grpcwebproxy 返回的是 gRPC-Web text 格式（base64 编码帧），
- * 这里简化处理为逐行解析 JSON 事件。
+ * Uses fetch + ReadableStream to consume server-streaming responses.
+ * grpcwebproxy returns gRPC-Web text format (base64-encoded frames),
+ * simplified here to line-by-line JSON event parsing.
  */
 export function queryStream(
   question: string,
@@ -147,14 +147,14 @@ export function queryStream(
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        // 按换行分割，处理 SSE 风格的帧
+        // Split by newline, process SSE-style frames
         const lines = buffer.split('\n')
-        buffer = lines.pop() || '' // 最后一个可能不完整
+        buffer = lines.pop() || '' // last line may be incomplete
 
         for (const line of lines) {
           const trimmed = line.trim()
           if (!trimmed || trimmed.startsWith(':')) continue
-          // 尝试解析 data: 前缀（SSE 格式）或直接 JSON
+          // Try parsing data: prefix (SSE format) or direct JSON
           const jsonStr = trimmed.startsWith('data: ')
             ? trimmed.slice(6)
             : trimmed
@@ -162,12 +162,12 @@ export function queryStream(
             const event = JSON.parse(jsonStr) as AIStreamEvent
             onEvent(event)
           } catch {
-            // 非 JSON 行，跳过
+            // non-JSON line, skip
           }
         }
       }
 
-      // 处理 buffer 中剩余内容
+      // Process remaining content in buffer
       if (buffer.trim()) {
         try {
           const event = JSON.parse(buffer.trim()) as AIStreamEvent
@@ -184,7 +184,7 @@ export function queryStream(
       onEvent({
         event_id: '',
         event_type: 'error',
-        content: timedOut ? '请求超时，请稍后重试' : (err.message || 'Stream failed'),
+        content: timedOut ? 'Request timed out, please try again' : (err.message || 'Stream failed'),
         task_state: 'failed',
         context_id: contextId || 'default',
         timestamp: Date.now(),
@@ -196,7 +196,7 @@ export function queryStream(
 // AgentCommunicationService
 // ============================================================================
 
-/** 获取所有已注册 Agent */
+/** Get all registered Agents */
 export async function getAgents(
   filter = '',
   limit = 100,
@@ -208,7 +208,7 @@ export async function getAgents(
   })
 }
 
-/** 按 tag/skill/keyword 查找 Agent */
+/** Find Agent by tag/skill/keyword */
 export async function findAgents(
   params: Partial<FindAgentsRequest>,
 ): Promise<FindAgentsResponse> {
@@ -225,7 +225,7 @@ export async function findAgents(
 // UserService (Auth)
 // ============================================================================
 
-/** 用户注册 */
+/** User registration */
 export async function register(
   username: string,
   password: string,
@@ -235,7 +235,7 @@ export async function register(
   return unaryCall<RegisterRequest, RegisterResponse>(USER_AUTH, 'Register', req)
 }
 
-/** 用户登录 */
+/** User login */
 export async function login(
   username: string,
   password: string,

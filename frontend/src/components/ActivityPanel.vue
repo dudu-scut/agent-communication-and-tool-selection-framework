@@ -5,7 +5,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="pulse-icon">
           <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
         </svg>
-        <span class="header-title">活动日志</span>
+        <span class="header-title">Activity Log</span>
         <span v-if="entries.length > 0 && expanded" class="entry-count">{{ entries.length }}</span>
       </div>
       <svg
@@ -23,7 +23,7 @@
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
           </svg>
         </div>
-        <p>发送消息后，Agent 工作步骤会在此实时展示</p>
+        <p>Agent workflow steps appear here in real-time after sending a message</p>
       </div>
 
       <TransitionGroup name="feed" tag="div" class="feed-list">

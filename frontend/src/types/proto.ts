@@ -1,6 +1,6 @@
 /**
- * TypeScript 类型定义，对应 proto/ 下的 protobuf 消息
- * 手写替代 protoc 生成，保持与 proto 定义同步
+ * TypeScript type definitions matching protobuf messages in proto/
+ * Hand-written as a replacement for protoc generation; keep in sync with proto definitions
  */
 
 // === common.proto ===
@@ -134,7 +134,7 @@ export interface BudgetInfo {
   reset_at: number
 }
 
-// === 多Agent执行计划 ===
+// === Multi-Agent Execution Plan ===
 
 export interface SubTaskInfo {
   id: string
@@ -175,7 +175,7 @@ export interface TraceInfo {
   skill: string
 }
 
-// === user.proto (认证) ===
+// === user.proto (auth) ===
 
 export interface RegisterRequest {
   username: string
@@ -249,7 +249,7 @@ export interface CanaryConfig {
   status: 'running' | 'promoting' | 'rolling_back' | 'completed'
 }
 
-// === 前端内部类型 ===
+// === Frontend internal types ===
 
 export interface ChatMessage {
   id: string

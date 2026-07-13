@@ -6,7 +6,7 @@
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
         </svg>
       </span>
-      <span class="plan-title">执行计划</span>
+      <span class="plan-title">Execution Plan</span>
       <span class="plan-badge">{{ completedCount }}/{{ plan.tasks.length }}</span>
     </div>
 
@@ -23,7 +23,7 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/>
       </svg>
-      {{ showDag ? '隐藏流程图' : '显示流程图' }}
+      {{ showDag ? 'Hide Flowchart' : 'Show Flowchart' }}
     </button>
 
     <!-- Task Cards -->
@@ -144,7 +144,7 @@ async function renderMermaid() {
     )
     dagRef.value.innerHTML = svg
   } catch {
-    dagRef.value.innerHTML = '<p style="color:#9ca3af;font-size:12px;text-align:center">流程图渲染失败</p>'
+    dagRef.value.innerHTML = '<p style="color:#9ca3af;font-size:12px;text-align:center">Flowchart render failed</p>'
   }
 }
 
