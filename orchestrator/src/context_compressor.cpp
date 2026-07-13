@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <curl/curl.h>
 #include <cstdlib>
+#include <nlohmann/json.hpp>
 
 namespace agent_rpc {
 namespace orchestrator {
@@ -149,12 +150,17 @@ std::string ContextCompressor::generateSummary(
     const char* model  = std::getenv("LLM_MODEL");
     if (!model) model  = "deepseek-v4-pro";
 
-    std::string json_body =
-        R"({"model":")" + std::string(model) +
-        R"(","messages":[
-            {"role":"system","content":"You are a concise summarizer. Output ONLY the summary, no preamble."},
-            {"role":"user","content":")" + prompt.str() + R"("}],
-        "max_tokens":512,"temperature":0.3})";
+    // Build JSON body using nlohmann::json to avoid injection from user content
+    nlohmann::json json_body_obj = {
+        {"model", std::string(model)},
+        {"messages", nlohmann::json::array({
+            {{"role", "system"}, {"content", "You are a concise summarizer. Output ONLY the summary, no preamble."}},
+            {{"role", "user"}, {"content", prompt.str()}}
+        })},
+        {"max_tokens", 512},
+        {"temperature", 0.3}
+    };
+    std::string json_body = json_body_obj.dump();
 
     CURL* curl = curl_easy_init();
     if (!curl) {

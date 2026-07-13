@@ -125,7 +125,8 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
     agent_communication::SystemContext ctx;
     ctx.set_user_id(user_id);
 
-    // Batch 4 U2: Prepend user profile summary if available
+    // Batch 4 U2: Build user profile summary
+    std::string profile_prefix;
     if (!user_id.empty()) {
         std::string profile_raw;
         if (redis_->get(profileKey(user_id), profile_raw) && !profile_raw.empty()) {
@@ -136,8 +137,7 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
                 std::string summary = ProfileSummarizer::summarize(
                     identity_json, preferences_json);
                 if (!summary.empty()) {
-                    ctx.set_user_memory("[User Profile] " + summary + "\n" +
-                                        ctx.user_memory());
+                    profile_prefix = "[User Profile] " + summary + "\n";
                 }
             } catch (const nlohmann::json::exception&) {
                 // Malformed profile — skip silently
@@ -145,8 +145,8 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
         }
     }
 
-    // Tier 2: 用户长期记忆
-    ctx.set_user_memory(getUserMemory(user_id));
+    // Tier 2: User long-term memory (prepend profile if available)
+    ctx.set_user_memory(profile_prefix + getUserMemory(user_id));
 
     // Tier 1: 当前Agent对话历史 (路由前agent_id为空，跳过)
     if (!agent_id.empty()) {

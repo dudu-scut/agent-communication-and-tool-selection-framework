@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <sstream>
 
@@ -616,8 +617,9 @@ AgentInfo AgentRouter::selectByStrategy(const std::vector<AgentInfo>& candidates
             return selectLeastLoad(candidates);
         case RoutingStrategy::SKILL_MATCH:
         default:
-            // For skill match, weight by quality coefficient from feedback (Batch 2)
-            return selectWeightedByQuality(candidates);
+            // For skill match, weight by quality coefficient from feedback (Batch 2).
+            // Fall back to round-robin if Redis is unavailable (all coefficients equal default).
+            return selectWeightedByQualityWithFallback(candidates);
     }
 }
 
@@ -677,6 +679,36 @@ AgentInfo AgentRouter::selectWeightedByQuality(const std::vector<AgentInfo>& can
 
     // Fallback (should not reach here)
     return candidates.back();
+}
+
+AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<AgentInfo>& candidates) {
+    // Check if all candidates have the same quality coefficient (default 0.75),
+    // which happens when Redis is unavailable or no feedback data exists.
+    // In that case, fall back to round-robin for fair load distribution.
+    if (candidates.size() <= 1) return candidates[0];
+
+    std::vector<double> qcs;
+    qcs.reserve(candidates.size());
+    for (const auto& agent : candidates) {
+        std::string skill = agent.skills.empty() ? "" : agent.skills.front();
+        qcs.push_back(getQualityCoefficient(agent.id, skill));
+    }
+
+    // Check if all coefficients are identical (within epsilon)
+    bool all_same = true;
+    for (size_t i = 1; i < qcs.size(); ++i) {
+        if (std::abs(qcs[i] - qcs[0]) > 0.001) {
+            all_same = false;
+            break;
+        }
+    }
+
+    if (all_same) {
+        // Redis unavailable or no feedback data — use round-robin for fairness
+        return selectRoundRobin(candidates);
+    }
+
+    return selectWeightedByQuality(candidates);
 }
 
 // === Dynamic Intent Classification (P0-1 / P1-1) ===

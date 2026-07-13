@@ -29,6 +29,7 @@ void ServiceRegistry::recordAgentCall(const std::string& agent_id,
     // Circular buffer
     m.recent_results[m.buffer_idx] = success;
     m.buffer_idx = (m.buffer_idx + 1) % kSuccessBufferSize;
+    m.total_writes++;
 
     // EMA latency
     if (m.ema_latency_ms == 0.0) {
@@ -66,8 +67,8 @@ HealthStatus ServiceRegistry::evaluateHealth(const std::string& agent_id) {
     // we use a different metric: success rate across written entries using buffer_idx.
     // But buffer_idx wraps around. So we look at the full 100 - all are valid after 100 calls.
 
-    // Simplified: if buffer_idx < 100, only buffer_idx entries are valid.
-    int valid_count = (m.buffer_idx == 0 && total > 0) ? 100 : m.buffer_idx;
+    // Use total_writes to determine actual valid entries after wrap-around
+    int valid_count = (m.total_writes >= 100) ? 100 : m.buffer_idx;
     if (valid_count == 0) valid_count = 1; // avoid div by zero
 
     int success_count = 0;
@@ -105,9 +106,8 @@ void ServiceRegistry::evaluateAllHealth() {
         if (it == live_metrics_.end()) continue;
         const auto& m = it->second;
 
-        // Compute success rate for logging
-        int valid_count = m.buffer_idx;
-        if (valid_count == 0) valid_count = 100; // wrapped past all slots
+        // Compute success rate using total_writes for correct valid_count
+        int valid_count = (m.total_writes >= 100) ? 100 : m.buffer_idx;
         if (valid_count <= 0) valid_count = 1;
         int success_count = 0;
         for (int i = 0; i < valid_count && i < 100; ++i) {

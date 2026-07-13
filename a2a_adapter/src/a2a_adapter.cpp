@@ -10,6 +10,7 @@
 #include "agent_rpc/common/circuit_breaker.h"
 #include "agent_rpc/common/trace_context.h"
 #include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/registry/service_registry.h"
 #include "ai_query.pb.h"
 #include <a2a/core/exception.hpp>
 #include <nlohmann/json.hpp>
@@ -159,6 +160,10 @@ bool A2AAdapter::processQuery(
             end_time - start_time);
         response->set_processing_time_ms(duration.count());
 
+        // [Batch 5] Record agent call for health dashboard metrics
+        agent_rpc::registry::ServiceRegistry::recordAgentCall(
+            "orchestrator", true, static_cast<double>(duration.count()));
+
         // Success if we got any valid response (Task or Message)
         return true;
 
@@ -224,11 +229,8 @@ void A2AAdapter::processQueryStreaming(
             "Circuit breaker is OPEN — orchestrator is unavailable",
             request.context_id(), "error", &cb_event);
         callback(cb_event);
-        // End streaming trace span if it was started
-        auto* trace = agent_rpc::common::TraceContext::current();
-        if (trace) {
-            trace->endSpan();
-        }
+        // Note: Do NOT call endSpan() here — no startSpan() was called
+        // in this function yet. The caller manages its own span.
         return;
     }
 

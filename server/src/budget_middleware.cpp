@@ -95,14 +95,15 @@ BudgetMiddleware::Result BudgetMiddleware::checkAndDeduct(
         return REQUEST_OVER;
     }
 
+    // Track which tiers were incremented, so we can rollback on failure
+    bool global_incr = false, daily_incr = false, monthly_incr = false, session_incr = false;
+
     // 2. Global check
     {
         std::string gkey = globalKey();
         int64_t global_total;
-        // Use INCRBY to read + write atomically
         redis->incrby(gkey, estimated_cost_micro, global_total);
-        // Set global TTL (none — global never expires)
-        // If this is the first incr, set a long TTL
+        global_incr = true;
         if (global_total == estimated_cost_micro) {
             redis->expire(gkey, 86400 * 365); // 1 year
         }
@@ -110,6 +111,8 @@ BudgetMiddleware::Result BudgetMiddleware::checkAndDeduct(
             LOG_WARN("Budget: global budget exceeded (" +
                      std::to_string(global_total) + " > " +
                      std::to_string(global_limit) + ")");
+            // Rollback global counter before returning
+            redis->incrby(gkey, -estimated_cost_micro, global_total);
             return GLOBAL_OVER;
         }
     }
@@ -119,11 +122,15 @@ BudgetMiddleware::Result BudgetMiddleware::checkAndDeduct(
         std::string dkey = dailyKey(user_id);
         int64_t daily_total;
         redis->incrby(dkey, estimated_cost_micro, daily_total);
+        daily_incr = true;
         if (daily_total == estimated_cost_micro) {
             redis->expire(dkey, 86400); // 24h TTL
         }
         if (daily_total > daily_limit) {
             LOG_WARN("Budget: user daily budget exceeded for " + user_id);
+            // Rollback: decrement global + daily
+            if (global_incr) { std::string gkey = globalKey(); int64_t dummy; redis->incrby(gkey, -estimated_cost_micro, dummy); }
+            redis->incrby(dkey, -estimated_cost_micro, daily_total);
             return USER_DAILY_OVER;
         }
     }
@@ -133,11 +140,16 @@ BudgetMiddleware::Result BudgetMiddleware::checkAndDeduct(
         std::string mkey = monthlyKey(user_id);
         int64_t monthly_total;
         redis->incrby(mkey, estimated_cost_micro, monthly_total);
+        monthly_incr = true;
         if (monthly_total == estimated_cost_micro) {
             redis->expire(mkey, 86400 * 31); // 31 days TTL
         }
         if (monthly_total > monthly_limit) {
             LOG_WARN("Budget: user monthly budget exceeded for " + user_id);
+            // Rollback: decrement global + daily + monthly
+            if (global_incr) { std::string gkey = globalKey(); int64_t dummy; redis->incrby(gkey, -estimated_cost_micro, dummy); }
+            if (daily_incr) { std::string dkey = dailyKey(user_id); int64_t dummy; redis->incrby(dkey, -estimated_cost_micro, dummy); }
+            redis->incrby(mkey, -estimated_cost_micro, monthly_total);
             return USER_MONTHLY_OVER;
         }
     }
@@ -147,11 +159,17 @@ BudgetMiddleware::Result BudgetMiddleware::checkAndDeduct(
         std::string skey = sessionKey(user_id, context_id);
         int64_t session_total;
         redis->incrby(skey, estimated_cost_micro, session_total);
+        session_incr = true;
         if (session_total == estimated_cost_micro) {
             redis->expire(skey, 3600); // 1h TTL
         }
         if (session_total > sess_limit) {
             LOG_WARN("Budget: session budget exceeded for " + user_id + "/" + context_id);
+            // Rollback: decrement all tiers
+            if (global_incr) { std::string gkey = globalKey(); int64_t dummy; redis->incrby(gkey, -estimated_cost_micro, dummy); }
+            if (daily_incr) { std::string dkey = dailyKey(user_id); int64_t dummy; redis->incrby(dkey, -estimated_cost_micro, dummy); }
+            if (monthly_incr) { std::string mkey = monthlyKey(user_id); int64_t dummy; redis->incrby(mkey, -estimated_cost_micro, dummy); }
+            redis->incrby(skey, -estimated_cost_micro, session_total);
             return SESSION_OVER;
         }
     }

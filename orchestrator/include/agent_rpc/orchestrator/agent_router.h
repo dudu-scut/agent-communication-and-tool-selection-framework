@@ -376,6 +376,7 @@ private:
      * more likely to be selected. Uses a weighted random selection.
      */
     AgentInfo selectWeightedByQuality(const std::vector<AgentInfo>& candidates);
+    AgentInfo selectWeightedByQualityWithFallback(const std::vector<AgentInfo>& candidates);
 
     /**
      * @brief Rebuild the skill keyword index from current agents

@@ -4,6 +4,19 @@
 
 namespace agent_rpc { namespace server {
 
+grpc::Status SharingServiceImpl::ObserveSession(
+    grpc::ServerContext*, const agent_communication::ObserveSessionRequest* request,
+    grpc::ServerWriter<agent_communication::AIStreamEvent>* writer) {
+    // Placeholder: real-time session observation requires SSE stream multiplexing
+    // which is not yet wired up. Returns an empty stream immediately.
+    agent_communication::AIStreamEvent event;
+    event.set_event_type("status");
+    event.set_content("Session observation not yet implemented");
+    writer->Write(event);
+    LOG_INFO("ObserveSession: trace_id=" + request->trace_id());
+    return grpc::Status::OK;
+}
+
 grpc::Status SharingServiceImpl::ShareSession(
     grpc::ServerContext*, const agent_communication::ShareSessionRequest* request,
     agent_communication::ShareSessionResponse* response) {

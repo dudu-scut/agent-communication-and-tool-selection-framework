@@ -24,6 +24,7 @@ namespace registry {
 struct AgentLiveMetrics {
     std::array<bool, 100> recent_results{};
     int buffer_idx = 0;
+    int total_writes = 0;  // tracks total writes to determine if buffer has wrapped
     double ema_latency_ms = 0.0; // alpha=0.1
     std::atomic<int> active_requests{0};
     std::chrono::steady_clock::time_point last_heartbeat;
