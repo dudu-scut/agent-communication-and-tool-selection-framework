@@ -78,7 +78,7 @@ void AgentCommunicationServiceImpl::updateAgentHeartbeat(const std::string& agen
 void AgentCommunicationServiceImpl::cleanupOfflineAgents() {
     std::lock_guard<std::mutex> lock(agents_mutex_);
     auto now = std::chrono::steady_clock::now();
-    auto timeout = std::chrono::seconds(60);
+    auto timeout = std::chrono::seconds(300);  // 5 min grace period for agents without heartbeat
 
     auto it = agents_.begin();
     while (it != agents_.end()) {

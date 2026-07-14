@@ -146,8 +146,28 @@ def main():
     server = HTTPServer(("0.0.0.0", PORT), MockAgentHandler)
     print(f"[mock-agent] Listening on port {PORT}, PID={pid}", flush=True)
 
+    # Start heartbeat thread to prevent cleanup by gRPC server
+    import threading
+    heartbeat_stop = threading.Event()
+    def send_heartbeat():
+        while not heartbeat_stop.is_set():
+            try:
+                from urllib.request import Request, urlopen
+                req = Request(
+                    "http://127.0.0.1:8081/agent_communication.AgentCommunicationService/Heartbeat",
+                    data=b'{"agent_id":"mock-general-127.0.0.1-5100","load":0}',
+                    headers={"Content-Type": "application/json"})
+                urlopen(req, timeout=5)
+            except Exception:
+                pass
+            heartbeat_stop.wait(30)  # Send heartbeat every 30s
+
+    heartbeat_thread = threading.Thread(target=send_heartbeat, daemon=True)
+    heartbeat_thread.start()
+
     def shutdown(sig, frame):
         print("\n[mock-agent] Shutting down...", flush=True)
+        heartbeat_stop.set()
         server.shutdown()
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
