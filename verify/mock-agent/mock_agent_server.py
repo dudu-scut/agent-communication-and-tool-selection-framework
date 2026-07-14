@@ -165,13 +165,13 @@ def main():
     heartbeat_thread = threading.Thread(target=send_heartbeat, daemon=True)
     heartbeat_thread.start()
 
+    # Signal handler must NOT call server.shutdown() directly — it deadlocks
+    # because shutdown() waits for serve_forever() which is blocked by the signal.
+    # Instead, call shutdown() from a separate thread.
     def shutdown(sig, frame):
         print("\n[mock-agent] Shutting down...", flush=True)
         heartbeat_stop.set()
-        server.shutdown()
-        if os.path.exists(PID_FILE):
-            os.remove(PID_FILE)
-        sys.exit(0)
+        threading.Thread(target=lambda: (server.shutdown(), sys.exit(0)), daemon=True).start()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
