@@ -57,6 +57,7 @@ private:
     std::atomic<size_t> current_index_{0};
     mutable std::mutex endpoints_mutex_;
     std::vector<ServiceEndpoint> healthy_endpoints_;
+    std::map<std::string, bool> endpoint_health_;
 };
 
 // 随机负载均衡器
@@ -124,7 +125,7 @@ private:
 // 一致性哈希负载均衡器
 class ConsistentHashLoadBalancer : public LoadBalancer {
 public:
-    ConsistentHashLoadBalancer(int virtual_nodes = 150);
+    ConsistentHashLoadBalancer(int virtual_nodes = 250);
     ~ConsistentHashLoadBalancer() = default;
 
     ServiceEndpoint selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) override;
@@ -140,12 +141,12 @@ private:
     struct HashNode {
         std::string key;
         ServiceEndpoint endpoint;
-        uint32_t hash;
+        uint64_t hash;
     };
 
     void buildHashRing();
-    uint32_t hash(const std::string& key);
-    ServiceEndpoint findEndpoint(uint32_t hash_value);
+    uint64_t hash(const std::string& key) const;
+    ServiceEndpoint findEndpoint(uint64_t hash_value);
 
     int virtual_nodes_;
     mutable std::mutex ring_mutex_;
@@ -186,6 +187,36 @@ class LoadBalancerFactory {
 public:
     static std::unique_ptr<LoadBalancer> createLoadBalancer(LoadBalanceStrategy strategy);
     static std::vector<std::string> getAvailableStrategies();
+};
+
+// 负载均衡管理器 - 支持运行时策略切换
+class LoadBalancerManager {
+public:
+    explicit LoadBalancerManager(LoadBalanceStrategy initial_strategy = LoadBalanceStrategy::ROUND_ROBIN);
+    ~LoadBalancerManager() = default;
+
+    // 运行时切换负载均衡策略（线程安全）
+    void setStrategy(LoadBalanceStrategy strategy);
+
+    // 获取当前策略
+    LoadBalanceStrategy getCurrentStrategy() const;
+
+    // 获取当前策略名称
+    std::string getCurrentStrategyName() const;
+
+    // 选择端点（委托给当前负载均衡器）
+    ServiceEndpoint selectEndpoint(const std::vector<ServiceEndpoint>& endpoints);
+
+    // 更新端点列表
+    void updateEndpoints(const std::vector<ServiceEndpoint>& endpoints);
+
+    // 标记端点状态
+    void markEndpointStatus(const std::string& endpoint_id, bool healthy);
+
+private:
+    mutable std::mutex mutex_;
+    LoadBalanceStrategy current_strategy_;
+    std::unique_ptr<LoadBalancer> load_balancer_;
 };
 
 } // namespace common

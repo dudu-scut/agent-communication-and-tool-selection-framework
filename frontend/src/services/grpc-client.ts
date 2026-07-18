@@ -9,6 +9,8 @@ import type {
   AIQueryRequest,
   AIQueryResponse,
   AIStreamEvent,
+  AgentMetrics,
+  GetAgentMetricsResponse,
   GetAgentsResponse,
   FindAgentsRequest,
   FindAgentsResponse,
@@ -16,6 +18,8 @@ import type {
   RegisterResponse,
   LoginRequest,
   LoginResponse,
+  GetTraceDetailResponse,
+  GetCostReportResponse,
 } from '../types/proto'
 
 const BASE_URL = import.meta.env.VITE_API_BASE || ''
@@ -24,6 +28,7 @@ const BASE_URL = import.meta.env.VITE_API_BASE || ''
 const AI_QUERY = '/agent_communication.AIQueryService'
 const AGENT_COMM = '/agent_communication.AgentCommunicationService'
 const USER_AUTH = '/agent_communication.auth.UserService'
+const OBSERVABILITY = '/agent_communication.ObservabilityService'
 
 // Auth token accessor (set by auth store)
 let _getAuthToken: (() => string | null) | null = null
@@ -221,6 +226,27 @@ export async function findAgents(
   })
 }
 
+/**
+ * 获取指定Agent的运行时指标
+ * 对应 RPC: AIQueryService/GetAgentMetrics
+ */
+export async function getAgentMetrics(
+  agentId: string,
+): Promise<{ data: AgentMetrics | null; error?: string }> {
+  try {
+    const response = await unaryCall<{ agent_id: string }, GetAgentMetricsResponse>(
+      AGENT_COMM,
+      'GetAgentMetrics',
+      { agent_id: agentId },
+    )
+    return { data: response as AgentMetrics ?? null }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn(`Failed to get metrics for ${agentId}:`, e)
+    return { data: null, error: msg }
+  }
+}
+
 // ============================================================================
 // UserService (Auth)
 // ============================================================================
@@ -242,4 +268,40 @@ export async function login(
 ): Promise<LoginResponse> {
   const req: LoginRequest = { username, password }
   return unaryCall<LoginRequest, LoginResponse>(USER_AUTH, 'Login', req)
+}
+
+// ============================================================================
+// ObservabilityService
+// ============================================================================
+
+/**
+ * 获取追踪详情
+ */
+export async function getTraceDetail(traceId: string): Promise<GetTraceDetailResponse | null> {
+  try {
+    return await unaryCall<{ trace_id: string }, GetTraceDetailResponse>(
+      OBSERVABILITY, 'GetTraceDetail', { trace_id: traceId }
+    )
+  } catch (e) {
+    console.warn('Failed to get trace detail:', e)
+    return null
+  }
+}
+
+/**
+ * 获取成本报告
+ */
+export async function getCostReport(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<GetCostReportResponse | null> {
+  try {
+    return await unaryCall<{ user_id: string; start_date: string; end_date: string }, GetCostReportResponse>(
+      OBSERVABILITY, 'GetCostReport', { user_id: userId, start_date: startDate, end_date: endDate }
+    )
+  } catch (e) {
+    console.warn('Failed to get cost report:', e)
+    return null
+  }
 }

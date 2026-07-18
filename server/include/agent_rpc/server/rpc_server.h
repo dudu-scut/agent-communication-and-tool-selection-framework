@@ -29,6 +29,7 @@ class AuthServiceImpl;
 class AgentLifecycleServiceImpl;
 class SharingServiceImpl;
 class UserExperienceServiceImpl;
+class ObservabilityServiceImpl;
 
 // RPC服务器类
 class RpcServer {
@@ -96,6 +97,7 @@ private:
     std::unique_ptr<SharingServiceImpl> sharing_service_impl_;
     std::unique_ptr<AgentLifecycleServiceImpl> agent_lifecycle_service_impl_;
     std::unique_ptr<UserExperienceServiceImpl> user_experience_service_impl_;
+    std::unique_ptr<ObservabilityServiceImpl> observability_service_impl_;
     std::unique_ptr<common::RedisClient> redis_client_;
     
     // A2A配置

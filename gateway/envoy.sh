@@ -24,7 +24,7 @@ if ! command -v envoy &>/dev/null; then
     echo ""
     echo "安装方式（二选一）："
     echo "  1. 使用 Docker（推荐）:"
-    echo "     docker compose -f docker-compose.gateway.yaml up -d envoy"
+    echo "     docker compose -f deploy/docker-compose.gateway.yaml up -d envoy"
     echo ""
     echo "  2. 本地安装:"
     echo "     https://www.envoyproxy.io/docs/envoy/latest/start/install"

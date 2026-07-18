@@ -6,6 +6,7 @@
 #include "agent_rpc/server/sharing_service.h"
 #include "agent_rpc/server/agent_lifecycle_service.h"
 #include "agent_rpc/server/user_experience_service.h"
+#include "agent_rpc/server/observability_service.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/message_converter.h"
@@ -96,6 +97,7 @@ RpcServer::~RpcServer() {
     sharing_service_impl_.reset();
     agent_lifecycle_service_impl_.reset();
     user_experience_service_impl_.reset();
+    observability_service_impl_.reset();
     server_.reset();
     server_credentials_.reset();
     builders_.clear();
@@ -122,6 +124,9 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
 
     // Initialize lifecycle service AFTER Redis is connected
     agent_lifecycle_service_impl_ = std::make_unique<AgentLifecycleServiceImpl>(redis_client_.get());
+
+    // Initialize observability service (reads trace spans + cost data from Redis)
+    observability_service_impl_ = std::make_unique<ObservabilityServiceImpl>(redis_client_.get());
 
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
@@ -348,6 +353,12 @@ void RpcServer::setupServer() {
     if (user_experience_service_impl_) {
         builder.RegisterService(user_experience_service_impl_.get());
         LOG_INFO("User Experience Service registered");
+    }
+
+    // 注册可观测性服务 (GetTraceDetail, GetCostReport)
+    if (observability_service_impl_) {
+        builder.RegisterService(observability_service_impl_.get());
+        LOG_INFO("Observability Service registered");
     }
 
     // 注册认证拦截器 (Token验证)

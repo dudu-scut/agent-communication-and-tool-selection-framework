@@ -20,6 +20,10 @@ export interface ServiceInfo {
   metadata: Record<string, string>
   skills: string[]
   agent_card: string // JSON string of AgentCard
+  agent_metrics?: AgentMetrics
+  cacheable?: boolean
+  deployment_stage?: string
+  a2a_version?: string
 }
 
 // === ai_query.proto ===
@@ -110,16 +114,29 @@ export interface FindAgentsResponse {
 
 export interface AgentMetrics {
   agent_id: string
-  success_rate: number
+  success_rate: number        // 0~1
   avg_latency_ms: number
-  approval_rate: number
-  active_requests: number
-  circuit_breaker_trips: number
+  p95_latency_ms?: number
   total_requests: number
-  health_status: 'healthy' | 'degraded' | 'unhealthy'
-  last_heartbeat: number
+  approval_rate?: number      // 好评率
+
+  // 以下字段后端可能不返回，标记为optional
+  estimated_token_low?: number
+  estimated_token_high?: number
+  active_requests?: number
+  circuit_breaker_trips?: number
+  health_status?: string
+  last_heartbeat?: string
   cpu_percent?: number
   memory_mb?: number
+}
+
+export interface GetAgentMetricsRequest {
+  agent_id: string
+}
+
+export interface GetAgentMetricsResponse extends AgentMetrics {
+  error?: string
 }
 
 // === Budget ===
@@ -278,4 +295,53 @@ export interface AgentDisplayInfo {
   healthy: boolean
   lastHeartbeat?: number
   metrics?: AgentMetrics
+}
+
+// === observability.proto ===
+
+export interface TokenUsageRecord {
+  trace_id: string
+  user_id: string
+  context_id: string
+  agent_id: string
+  component: string
+  prompt_tokens: number
+  completion_tokens: number
+  cost_usd: number
+  latency_ms: number
+  created_at: string
+}
+
+export interface TraceSpan {
+  trace_id: string
+  span_id: string
+  parent_span_id: string
+  component: string
+  start_time: string
+  end_time: string
+  duration_ms: number
+  status: string
+  error_message: string
+  metadata_json: string
+}
+
+export interface CostRecord {
+  user_id: string
+  date: string           // YYYY-MM-DD
+  total_cost_usd: number
+  total_prompt_tokens: number
+  total_completion_tokens: number
+  total_requests: number
+}
+
+export interface GetTraceDetailResponse {
+  status: Status
+  spans: TraceSpan[]
+  trace_summary: string
+}
+
+export interface GetCostReportResponse {
+  status: Status
+  records: CostRecord[]
+  total_cost_usd: number
 }

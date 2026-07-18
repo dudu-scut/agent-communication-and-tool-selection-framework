@@ -139,7 +139,7 @@ cmd_clean() {
 # ============================================================================
 SERVER_PORT="${RPC_SERVER_PORT:-50051}"
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:5000}"
-GATEWAY_COMPOSE="$PROJECT_ROOT/docker-compose.gateway.yaml"
+GATEWAY_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.gateway.yaml"
 
 cmd_start() {
     banner "启动 gRPC 服务端"
@@ -508,7 +508,7 @@ cmd_verify() {
     if [ "$total_fail" -gt 0 ]; then
         echo " 失败: $total_fail/8 batches"
     fi
-    echo " 手动验证: 见 docs/verification-checklist.md"
+    echo " 手动验证: 见 docs/reports/verification-checklist.md"
     echo "========================================"
 
     return $(( total_fail > 0 ? 1 : 0 ))
@@ -676,8 +676,8 @@ usage() {
     echo "  LLM_API_URL          LLM API 地址"
     echo ""
     echo "快速启动:"
-    echo "  ./run.sh build && ./run.sh start"
-    echo "  ./run.sh gateway       # 如需浏览器访问"
+    echo "  ./run.sh build && ./run.sh start-all   # 编译 + 一键启动全部后端"
+    echo "  ./run.sh gateway                       # 如需浏览器访问（Docker 网关）"
     echo ""
 }
 

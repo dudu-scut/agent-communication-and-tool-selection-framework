@@ -191,20 +191,20 @@ private:
 void initializeAdvancedLogger(const LogConfig& config);
 void setLogLevel(LogLevel level);
 void setLogFile(const std::string& filename);
-void logTrace(const std::string& message);
-void logDebug(const std::string& message);
-void logInfo(const std::string& message);
-void logWarn(const std::string& message);
-void logError(const std::string& message);
-void logFatal(const std::string& message);
+void logTrace(const std::string& message, const std::string& source_file = "", int line_number = 0, const std::string& function_name = "");
+void logDebug(const std::string& message, const std::string& source_file = "", int line_number = 0, const std::string& function_name = "");
+void logInfo(const std::string& message, const std::string& source_file = "", int line_number = 0, const std::string& function_name = "");
+void logWarn(const std::string& message, const std::string& source_file = "", int line_number = 0, const std::string& function_name = "");
+void logError(const std::string& message, const std::string& source_file = "", int line_number = 0, const std::string& function_name = "");
+void logFatal(const std::string& message, const std::string& source_file = "", int line_number = 0, const std::string& function_name = "");
 void flushLogger();
 
-#define LOG_TRACE(msg) agent_rpc::common::logTrace(msg)
-#define LOG_DEBUG(msg) agent_rpc::common::logDebug(msg)
-#define LOG_INFO(msg) agent_rpc::common::logInfo(msg)
-#define LOG_WARN(msg) agent_rpc::common::logWarn(msg)
-#define LOG_ERROR(msg) agent_rpc::common::logError(msg)
-#define LOG_FATAL(msg) agent_rpc::common::logFatal(msg)
+#define LOG_TRACE(msg) agent_rpc::common::logTrace(msg, __FILE__, __LINE__, __func__)
+#define LOG_DEBUG(msg) agent_rpc::common::logDebug(msg, __FILE__, __LINE__, __func__)
+#define LOG_INFO(msg)  agent_rpc::common::logInfo(msg, __FILE__, __LINE__, __func__)
+#define LOG_WARN(msg)  agent_rpc::common::logWarn(msg, __FILE__, __LINE__, __func__)
+#define LOG_ERROR(msg) agent_rpc::common::logError(msg, __FILE__, __LINE__, __func__)
+#define LOG_FATAL(msg) agent_rpc::common::logFatal(msg, __FILE__, __LINE__, __func__)
 
 }  // namespace common
 }  // namespace agent_rpc

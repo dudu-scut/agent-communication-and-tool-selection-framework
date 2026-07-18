@@ -1,14 +1,19 @@
 <template>
   <div class="chat-view">
+    <!-- Decorative background blobs -->
+    <div class="bg-blob blob-1"></div>
+    <div class="bg-blob blob-2"></div>
+    <div class="bg-blob blob-3"></div>
+
     <div class="chat-main">
-      <div class="chat-header">
+      <div class="chat-header glass">
         <div class="header-brand">
           <div class="brand-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/>
             </svg>
           </div>
-          <h1>NexusAI</h1>
+          <h1 class="gradient-text">NexusAI</h1>
         </div>
         <div class="header-actions">
           <button class="btn-icon" @click="showActivityPanel = !showActivityPanel" :class="{ active: showActivityPanel }" title="Activity Log">
@@ -30,33 +35,75 @@
 
       <div class="chat-messages" ref="messagesRef">
         <div v-if="chatStore.messages.length === 0" class="empty-state">
-          <div class="empty-illustration">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
-              <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
-              <line x1="12" y1="22" x2="12" y2="15.5"/>
-              <polyline points="22 8.5 12 15.5 2 8.5"/>
-              <line x1="8" y1="11" x2="16" y2="11"/>
-              <line x1="8" y1="14" x2="14" y2="14"/>
-            </svg>
+          <div class="empty-hero">
+            <div class="empty-brand-wrapper">
+              <div class="brand-glow"></div>
+              <h2 class="empty-brand gradient-text">NexusAI</h2>
+            </div>
+            <p class="empty-tagline">Intelligent Multi-Agent Collaboration Platform</p>
+            <p class="empty-subtitle">AI auto-routes to the best Agent, supporting multi-agent collaboration for complex tasks</p>
           </div>
-          <h2>Ask NexusAI</h2>
-          <p>AI auto-routes to the best Agent, supporting multi-agent collaboration for complex tasks</p>
+
+          <div class="feature-grid">
+            <div class="feature-card" style="--delay: 0ms">
+              <div class="feature-icon" style="--icon-color: var(--brand-primary)">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              </div>
+              <div class="feature-text">
+                <span class="feature-title">Smart Routing</span>
+                <span class="feature-desc">Auto-selects the best agent for your task</span>
+              </div>
+            </div>
+            <div class="feature-card" style="--delay: 80ms">
+              <div class="feature-icon" style="--icon-color: var(--color-success)">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <div class="feature-text">
+                <span class="feature-title">Multi-Agent</span>
+                <span class="feature-desc">Orchestrate multiple agents in parallel</span>
+              </div>
+            </div>
+            <div class="feature-card" style="--delay: 160ms">
+              <div class="feature-icon" style="--icon-color: var(--color-warning)">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </div>
+              <div class="feature-text">
+                <span class="feature-title">Token Tracking</span>
+                <span class="feature-desc">Real-time cost & token consumption</span>
+              </div>
+            </div>
+            <div class="feature-card" style="--delay: 240ms">
+              <div class="feature-icon" style="--icon-color: var(--color-info)">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+              <div class="feature-text">
+                <span class="feature-title">Live Monitoring</span>
+                <span class="feature-desc">Activity feed & execution DAG</span>
+              </div>
+            </div>
+          </div>
+
           <div class="quick-prompts">
             <button
               v-for="prompt in quickPrompts"
               :key="prompt"
-              class="prompt-chip"
+              class="prompt-chip glass glass-hover"
               @click="quickSend(prompt)"
-            >{{ prompt }}</button>
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="prompt-spark"><path d="M12 3v1m0 16v1m-8-9H3m18 0h-1m-2.636-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m11.314 11.314l.707.707"/></svg>
+              {{ prompt }}
+            </button>
           </div>
         </div>
 
-        <MessageBubble
-          v-for="msg in chatStore.messages"
-          :key="msg.id"
-          :message="msg"
-          @feedback="handleFeedback"
-        />
+        <TransitionGroup name="message" tag="div" class="message-list">
+          <MessageBubble
+            v-for="msg in chatStore.messages"
+            :key="msg.id"
+            :message="msg"
+            @feedback="handleFeedback"
+          />
+        </TransitionGroup>
 
         <!-- Agent Selector -->
         <AgentSelector
@@ -67,8 +114,8 @@
         />
       </div>
 
-      <div class="chat-input">
-        <div class="input-wrapper">
+      <div class="chat-input-area">
+        <div class="input-wrapper glass" :class="{ 'input-focused': isFocused }">
           <textarea
             v-model="inputText"
             :placeholder="chatStore.isStreaming ? 'Agent is responding...' : 'Enter your question...'"
@@ -76,6 +123,8 @@
             @keydown.enter.exact.prevent="handleSend"
             @compositionstart="composing = true"
             @compositionend="composing = false"
+            @focus="isFocused = true"
+            @blur="isFocused = false"
             rows="1"
             @input="autoResize"
             ref="textareaRef"
@@ -104,7 +153,7 @@
 
     <!-- Activity Panel Sidebar -->
     <transition name="slide">
-      <div v-if="showActivityPanel" class="chat-sidebar">
+      <div v-if="showActivityPanel" class="chat-sidebar glass">
         <ActivityPanel :entries="activityEntries" />
       </div>
     </transition>
@@ -112,7 +161,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
@@ -124,11 +173,13 @@ import type { AgentDisplayInfo, ActivityEntry } from '../types/proto'
 const router = useRouter()
 const chatStore = useChatStore()
 const authStore = useAuthStore()
+const toast = inject<any>('toast')
 const inputText = ref('')
 const composing = ref(false)
 const messagesRef = ref<HTMLElement>()
 const textareaRef = ref<HTMLTextAreaElement>()
 const showActivityPanel = ref(false)
+const isFocused = ref(false)
 
 // Agent selector state
 const showAgentSelector = ref(false)
@@ -225,6 +276,7 @@ function exportMarkdown() {
   URL.revokeObjectURL(url)
 
   addActivity('complete', 'Conversation exported as Markdown')
+  toast?.addToast({ type: 'success', message: '对话已导出为 Markdown' })
 }
 
 // Watch for streaming events to populate activity feed
@@ -259,10 +311,68 @@ function scrollToBottom() {
 </script>
 
 <style scoped>
+@import "../styles/design-tokens.css";
+
+@keyframes messageSlideIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes blobFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 15px) scale(0.95); }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.85; filter: brightness(1.15); }
+}
+
 .chat-view {
   display: flex;
   height: 100vh;
-  background: #fff;
+  background: var(--bg-primary);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Decorative background blobs */
+.bg-blob {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(80px);
+  opacity: 0.15;
+  z-index: 0;
+}
+
+.blob-1 {
+  width: 500px;
+  height: 500px;
+  background: var(--brand-primary);
+  top: -100px;
+  left: -100px;
+  animation: blobFloat 20s ease-in-out infinite;
+}
+
+.blob-2 {
+  width: 400px;
+  height: 400px;
+  background: var(--brand-secondary);
+  bottom: -50px;
+  right: -50px;
+  animation: blobFloat 25s ease-in-out infinite reverse;
+}
+
+.blob-3 {
+  width: 300px;
+  height: 300px;
+  background: var(--brand-tertiary);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  animation: blobFloat 18s ease-in-out infinite 5s;
 }
 
 .chat-main {
@@ -270,43 +380,41 @@ function scrollToBottom() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
+  padding: var(--space-3) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
 }
 
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .brand-icon {
   display: flex;
   align-items: center;
-  color: #6366f1;
+  color: var(--brand-primary);
 }
 
 .header-brand h1 {
   font-size: 18px;
   font-weight: 700;
   margin: 0;
-  background: linear-gradient(135deg, #6366f1, #3b82f6);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .btn-icon {
@@ -316,58 +424,83 @@ function scrollToBottom() {
   width: 36px;
   height: 36px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #6b7280;
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-fast) var(--ease-default);
 }
 
 .btn-icon:hover {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
 }
 
 .btn-icon.active {
-  background: #eff6ff;
-  color: #3b82f6;
-  border-color: #bfdbfe;
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--brand-primary);
+  border-color: var(--border-brand);
 }
 
 .btn-text {
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
   text-decoration: none;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #374151;
-  transition: all 0.15s;
+  border: 1px solid var(--border-default);
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  transition: all var(--duration-fast) var(--ease-default);
   font-weight: 500;
 }
 
 .btn-text:hover {
-  background: #f3f4f6;
-  border-color: #d1d5db;
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 .btn-logout {
-  color: #9ca3af;
+  color: var(--text-tertiary);
   border-color: transparent;
 }
 
 .btn-logout:hover {
-  color: #dc2626;
+  color: var(--color-error);
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: var(--space-6);
   scroll-behavior: smooth;
 }
 
+.message-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Message transition animation */
+.message-enter-active {
+  animation: messageSlideIn 0.35s var(--ease-out);
+}
+
+.message-leave-active {
+  transition: all 0.2s var(--ease-in);
+}
+
+.message-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+}
+
+.message-move {
+  transition: transform 0.3s var(--ease-default);
+}
+
+/* Empty state */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -375,70 +508,208 @@ function scrollToBottom() {
   justify-content: center;
   height: 100%;
   text-align: center;
+  gap: var(--space-8);
 }
 
-.empty-illustration {
-  margin-bottom: 16px;
+.empty-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
 }
 
-.empty-state h2 {
-  font-size: 20px;
+.empty-brand-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-glow {
+  position: absolute;
+  width: 200px;
+  height: 60px;
+  background: radial-gradient(ellipse, rgba(99, 102, 241, 0.25), transparent 70%);
+  filter: blur(20px);
+  animation: breathe 4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.empty-brand {
+  font-size: 52px;
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  margin: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.empty-tagline {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0;
+  letter-spacing: 0.3px;
+}
+
+.empty-subtitle {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  margin: 0;
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+/* Feature grid */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  max-width: 480px;
+  width: 100%;
+}
+
+.feature-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  text-align: left;
+  transition: all var(--duration-normal) var(--ease-default);
+  animation: featureFadeIn 0.5s var(--ease-out) var(--delay, 0ms) both;
+  cursor: default;
+}
+
+.feature-card:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+@keyframes featureFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.feature-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--icon-color, var(--brand-primary));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.feature-title {
+  font-size: 13px;
   font-weight: 600;
-  color: #1f2937;
-  margin: 0 0 8px;
+  color: var(--text-primary);
 }
 
-.empty-state p {
-  color: #9ca3af;
-  font-size: 14px;
-  margin: 0 0 24px;
+.feature-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
 }
 
 .quick-prompts {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
   justify-content: center;
-  max-width: 500px;
+  max-width: 560px;
 }
 
 .prompt-chip {
-  padding: 8px 14px;
-  border: 1px solid #e5e7eb;
-  border-radius: 20px;
-  background: #fff;
-  color: #4b5563;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-xl);
+  color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-normal) var(--ease-default);
+}
+
+.prompt-spark {
+  color: var(--text-tertiary);
+  transition: color var(--duration-fast) var(--ease-default);
 }
 
 .prompt-chip:hover {
-  background: #f0f9ff;
-  border-color: #7dd3fc;
-  color: #0369a1;
+  color: var(--text-primary);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
-.chat-input {
-  padding: 16px 24px;
-  border-top: 1px solid #e5e7eb;
-  background: #fff;
+.prompt-chip:hover .prompt-spark {
+  color: var(--brand-primary);
+}
+
+/* Input area */
+.chat-input-area {
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .input-wrapper {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 14px;
-  padding: 8px 14px;
-  transition: border-color 0.15s, box-shadow 0.15s;
-  background: #fff;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  transition: all var(--duration-normal) var(--ease-default);
+  border: 1px solid var(--glass-border);
+  position: relative;
 }
 
-.input-wrapper:focus-within {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+.input-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: var(--brand-gradient);
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-default);
+  z-index: -1;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 1px;
+  pointer-events: none;
+}
+
+.input-wrapper.input-focused {
+  border-color: transparent;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
+}
+
+.input-wrapper.input-focused::before {
+  opacity: 1;
 }
 
 textarea {
@@ -451,68 +722,198 @@ textarea {
   font-family: inherit;
   min-height: 24px;
   background: transparent;
+  color: var(--text-primary);
 }
 
 textarea::placeholder {
-  color: #9ca3af;
+  color: var(--text-tertiary);
 }
 
 .btn-send, .btn-stop {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
+  justify-content: center;
+  gap: var(--space-2);
   border: none;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s;
+  transition: all var(--duration-fast) var(--ease-default);
+  flex-shrink: 0;
 }
 
 .btn-send {
-  background: #6366f1;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--brand-gradient);
   color: #fff;
 }
 
 .btn-send:hover:not(:disabled) {
-  background: #4f46e5;
-  transform: scale(1.02);
+  background: var(--brand-gradient-hover);
+  box-shadow: var(--shadow-glow-brand);
+  transform: scale(1.05);
+}
+
+.btn-send:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 .btn-send:disabled {
-  background: #c7d2fe;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .btn-stop {
-  background: #ef4444;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error);
   color: #fff;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .btn-stop:hover {
-  background: #dc2626;
+  background: var(--color-error);
+  box-shadow: var(--shadow-glow-error);
 }
 
-/* Sidebar */
+/* Sidebar - compatible with SideNav layout */
 .chat-sidebar {
   width: 320px;
-  border-left: 1px solid #e5e7eb;
-  padding: 16px;
+  min-width: 320px;
+  border-left: 1px solid var(--border-subtle);
+  padding: var(--space-4);
   overflow-y: auto;
-  background: #fafafa;
+  flex-shrink: 0;
 }
 
 .slide-enter-active,
 .slide-leave-active {
-  transition: all 0.25s ease;
+  transition: all 0.25s var(--ease-default);
 }
 
 .slide-enter-from,
 .slide-leave-to {
   width: 0;
+  min-width: 0;
   opacity: 0;
   padding: 0;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .chat-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-overlay);
+    width: 320px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .chat-header {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .chat-messages {
+    padding: var(--space-4);
+  }
+
+  .chat-input-area {
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-sidebar {
+    width: 100%;
+  }
+
+  .header-brand h1 {
+    font-size: 16px;
+  }
+
+  .btn-text {
+    display: none;
+  }
+
+  .empty-brand {
+    font-size: 36px;
+  }
+
+  .empty-tagline {
+    font-size: 13px;
+  }
+
+  .empty-subtitle {
+    font-size: 12px;
+    max-width: 320px;
+  }
+
+  .feature-grid {
+    grid-template-columns: 1fr;
+    max-width: 320px;
+  }
+
+  .quick-prompts {
+    max-width: 100%;
+  }
+
+  .prompt-chip {
+    font-size: 12px;
+    padding: var(--space-2) var(--space-3);
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-header {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .chat-messages {
+    padding: var(--space-3);
+  }
+
+  .chat-input-area {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .input-wrapper {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  textarea {
+    font-size: 14px;
+  }
+
+  .empty-brand {
+    font-size: 28px;
+  }
+
+  .bg-blob {
+    display: none;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .bg-blob {
+    animation: none;
+    display: none;
+  }
+
+  .empty-brand {
+    animation: none;
+  }
+
+  .brand-glow {
+    animation: none;
+  }
+
+  .feature-card {
+    animation: none;
+  }
 }
 </style>

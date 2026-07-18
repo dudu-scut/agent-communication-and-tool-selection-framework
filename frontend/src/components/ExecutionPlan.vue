@@ -102,10 +102,10 @@ function generateMermaid(plan: ExecutionPlan): string {
     }
   })
 
-  // Style
-  mermaid += '  classDef done fill:#dcfce7,stroke:#22c55e,color:#166534\n'
-  mermaid += '  classDef running fill:#dbeafe,stroke:#3b82f6,color:#1e40af\n'
-  mermaid += '  classDef failed fill:#fee2e2,stroke:#ef4444,color:#991b1b\n'
+  // Style — dark theme DAG node colors
+  mermaid += '  classDef done fill:rgba(16,185,129,0.15),stroke:#10b981,color:#f1f5f9\n'
+  mermaid += '  classDef running fill:rgba(59,130,246,0.15),stroke:#3b82f6,color:#f1f5f9\n'
+  mermaid += '  classDef failed fill:rgba(239,68,68,0.15),stroke:#ef4444,color:#f1f5f9\n'
 
   plan.tasks.forEach((task, i) => {
     if (task.status === 'completed') mermaid += `  class N${i + 1} done\n`
@@ -130,7 +130,17 @@ async function renderMermaid() {
     const mermaid = await import('mermaid')
     mermaid.default.initialize({
       startOnLoad: false,
-      theme: 'neutral',
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#111827',
+        primaryColor: '#6366f1',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#818cf8',
+        lineColor: '#818cf8',
+        secondaryColor: '#1e293b',
+        tertiaryColor: '#0f172a',
+      },
       securityLevel: 'loose',
       flowchart: {
         useMaxWidth: true,
@@ -144,7 +154,7 @@ async function renderMermaid() {
     )
     dagRef.value.innerHTML = svg
   } catch {
-    dagRef.value.innerHTML = '<p style="color:#9ca3af;font-size:12px;text-align:center">Flowchart render failed</p>'
+    dagRef.value.innerHTML = '<p style="color:var(--text-tertiary);font-size:12px;text-align:center">Flowchart render failed</p>'
   }
 }
 
@@ -155,67 +165,70 @@ function truncate(text: string, max: number): string {
 </script>
 
 <style scoped>
+@import "../styles/design-tokens.css";
+
 .execution-plan {
-  margin: 8px 0 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  margin: var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  background: #fafafa;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .plan-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: #f3f4f6;
-  border-bottom: 1px solid #e5e7eb;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
+  color: var(--text-primary);
 }
 
 .plan-icon {
   display: flex;
   align-items: center;
-  color: #6366f1;
+  color: var(--brand-primary);
 }
 
 .plan-badge {
   margin-left: auto;
   padding: 2px 8px;
-  border-radius: 10px;
-  background: #e5e7eb;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
   font-size: 12px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--text-tertiary);
 }
 
 /* DAG */
 .dag-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 8px 14px;
+  padding: var(--space-2) var(--space-4);
   border: none;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fafafa;
-  color: #6366f1;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--brand-primary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-fast) var(--ease-default);
 }
 
 .dag-toggle:hover {
-  background: #f0f0ff;
+  background: var(--glass-bg-hover);
 }
 
 .dag-container {
-  padding: 12px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  padding: var(--space-3);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .mermaid-container {
@@ -236,9 +249,9 @@ function truncate(text: string, max: number): string {
 }
 
 .task-card {
-  padding: 10px 14px;
-  border-bottom: 1px solid #f3f4f6;
-  transition: background 0.2s;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background var(--duration-normal) var(--ease-default);
 }
 
 .task-card:last-child {
@@ -246,22 +259,22 @@ function truncate(text: string, max: number): string {
 }
 
 .task-card.running {
-  background: #eff6ff;
+  background: rgba(59, 130, 246, 0.08);
 }
 
 .task-card.completed {
-  background: #f0fdf4;
+  background: rgba(16, 185, 129, 0.08);
 }
 
 .task-card.failed {
-  background: #fef2f2;
+  background: rgba(239, 68, 68, 0.08);
 }
 
 .task-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
   flex-wrap: wrap;
 }
 
@@ -274,10 +287,10 @@ function truncate(text: string, max: number): string {
   flex-shrink: 0;
 }
 
-.task-card.pending .task-status-icon { color: #9ca3af; }
-.task-card.running .task-status-icon { color: #3b82f6; }
-.task-card.completed .task-status-icon { color: #22c55e; }
-.task-card.failed .task-status-icon { color: #ef4444; }
+.task-card.pending .task-status-icon { color: var(--text-tertiary); }
+.task-card.running .task-status-icon { color: var(--color-info); }
+.task-card.completed .task-status-icon { color: var(--color-success); }
+.task-card.failed .task-status-icon { color: var(--color-error); }
 
 .spin {
   animation: spin 1s linear infinite;
@@ -291,53 +304,56 @@ function truncate(text: string, max: number): string {
 .task-id {
   font-size: 12px;
   font-weight: 600;
-  color: #6b7280;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
 }
 
 .task-skill {
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 4px;
-  background: #e5e7eb;
-  color: #4b5563;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
 }
 
 .task-agent {
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 4px;
-  background: #dbeafe;
-  color: #1e40af;
-  font-family: monospace;
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--brand-primary);
+  font-family: var(--font-mono);
+  border: 1px solid var(--border-brand);
 }
 
 .task-description {
   font-size: 13px;
-  color: #374151;
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 
 .task-deps {
   display: flex;
-  gap: 4px;
-  margin-top: 4px;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
   flex-wrap: wrap;
 }
 
 .dep-tag {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--text-muted);
 }
 
 .task-result {
-  margin-top: 6px;
+  margin-top: var(--space-2);
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   line-height: 1.4;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.03);
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
   white-space: pre-wrap;
   word-break: break-word;
 }

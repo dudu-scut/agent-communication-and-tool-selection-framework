@@ -366,28 +366,28 @@ void setLogFile(const std::string& filename) {
     g_logger = std::make_shared<AsyncLogger>(g_config);
 }
 
-void logTrace(const std::string& message) {
-    getOrCreateLogger()->trace(message);
+void logTrace(const std::string& message, const std::string& source_file, int line_number, const std::string& function_name) {
+    getOrCreateLogger()->trace(message, source_file, line_number, function_name);
 }
 
-void logDebug(const std::string& message) {
-    getOrCreateLogger()->debug(message);
+void logDebug(const std::string& message, const std::string& source_file, int line_number, const std::string& function_name) {
+    getOrCreateLogger()->debug(message, source_file, line_number, function_name);
 }
 
-void logInfo(const std::string& message) {
-    getOrCreateLogger()->info(message);
+void logInfo(const std::string& message, const std::string& source_file, int line_number, const std::string& function_name) {
+    getOrCreateLogger()->info(message, source_file, line_number, function_name);
 }
 
-void logWarn(const std::string& message) {
-    getOrCreateLogger()->warn(message);
+void logWarn(const std::string& message, const std::string& source_file, int line_number, const std::string& function_name) {
+    getOrCreateLogger()->warn(message, source_file, line_number, function_name);
 }
 
-void logError(const std::string& message) {
-    getOrCreateLogger()->error(message);
+void logError(const std::string& message, const std::string& source_file, int line_number, const std::string& function_name) {
+    getOrCreateLogger()->error(message, source_file, line_number, function_name);
 }
 
-void logFatal(const std::string& message) {
-    getOrCreateLogger()->fatal(message);
+void logFatal(const std::string& message, const std::string& source_file, int line_number, const std::string& function_name) {
+    getOrCreateLogger()->fatal(message, source_file, line_number, function_name);
 }
 
 void flushLogger() {

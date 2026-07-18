@@ -10,11 +10,13 @@
 #include "agent_rpc/common/circuit_breaker.h"
 #include "agent_rpc/common/trace_context.h"
 #include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/logger.h"
 #include "agent_rpc/registry/service_registry.h"
 #include "ai_query.pb.h"
 #include <a2a/core/exception.hpp>
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <thread>
 
 namespace agent_rpc {
 namespace a2a_adapter {
@@ -39,8 +41,7 @@ bool A2AAdapter::initialize(const A2AConfig& config) {
     // Validate and store configuration
     config_ = config;
     if (!config_.validate()) {
-        // Configuration had invalid values, defaults were applied
-        // Log warning here if logger is available
+        LOG_WARN("A2A configuration had invalid values, defaults were applied");
     }
     
     // Create A2A client
@@ -50,7 +51,7 @@ bool A2AAdapter::initialize(const A2AConfig& config) {
         initialized_ = true;
         return true;
     } catch (const std::exception& e) {
-        // Log error here
+        LOG_ERROR("Failed to create A2A client for orchestrator at " + config_.orchestrator_url + ": " + e.what());
         return false;
     }
 }
@@ -139,35 +140,66 @@ bool A2AAdapter::processQuery(
         // [Batch 3] Inject autonomy-level header
         injectAutonomyHeader(request, "orchestrator");
 
-        // Send message via A2A client
-        a2a::A2AResponse a2a_response = a2a_client_->send_message(params);
+        // Send message via A2A client with retry for transient network errors
+        int max_retries = config_.max_retries > 0 ? config_.max_retries : 1;
+        int retry_delay = config_.retry_delay_ms > 0 ? config_.retry_delay_ms : 1000;
+        std::string last_error;
 
-        // [Batch 1] Record agent call result
-        if (trace) {
-            trace->endSpan();
-            a2a_client_->clear_headers();
+        for (int attempt = 0; attempt < max_retries; ++attempt) {
+            try {
+                a2a::A2AResponse a2a_response = a2a_client_->send_message(params);
+
+                // Convert A2A response to RPC format FIRST — if this throws,
+                // we haven't corrupted trace/CB state yet. Only on success do
+                // we finalize the trace, clear headers, and record success.
+                response_adapter_->convertFromA2A(a2a_response, request.request_id(), "", response);
+
+                // Record agent call result (only after successful conversion)
+                if (trace) {
+                    trace->endSpan();
+                    a2a_client_->clear_headers();
+                }
+
+                // Record success
+                cb->recordSuccess();
+
+                // Calculate processing time
+                auto end_time = std::chrono::steady_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    end_time - start_time);
+                response->set_processing_time_ms(duration.count());
+
+                // Record agent call for health dashboard metrics
+                agent_rpc::registry::ServiceRegistry::recordAgentCall(
+                    "orchestrator", true, static_cast<double>(duration.count()));
+
+                // Success if we got any valid response (Task or Message)
+                return true;
+
+            } catch (const a2a::A2AException& e) {
+                // Protocol errors are not transient — do not retry.
+                // Re-throw so the outer A2AException handler applies the
+                // correct ErrorMapper::mapToGrpcStatus for the error code.
+                LOG_ERROR("A2A protocol error calling orchestrator: " + std::string(e.what()));
+                throw;
+            } catch (const std::exception& e) {
+                last_error = e.what();
+                if (attempt < max_retries - 1) {
+                    LOG_WARN("A2A call attempt " + std::to_string(attempt + 1) + "/" +
+                             std::to_string(max_retries) + " failed: " + last_error +
+                             " — retrying in " + std::to_string(retry_delay) + "ms");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay));
+                }
+            }
         }
 
-        // Record success
-        cb->recordSuccess();
-
-        // Convert A2A response to RPC format
-        response_adapter_->convertFromA2A(a2a_response, request.request_id(), "", response);
-
-        // Calculate processing time
-        auto end_time = std::chrono::steady_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-            end_time - start_time);
-        response->set_processing_time_ms(duration.count());
-
-        // [Batch 5] Record agent call for health dashboard metrics
-        agent_rpc::registry::ServiceRegistry::recordAgentCall(
-            "orchestrator", true, static_cast<double>(duration.count()));
-
-        // Success if we got any valid response (Task or Message)
-        return true;
+        // All retries exhausted, fall through to error handling below
+        LOG_ERROR("A2A call failed after " + std::to_string(max_retries) +
+                  " attempt(s): " + last_error);
+        throw std::runtime_error(last_error);
 
     } catch (const a2a::A2AException& e) {
+        LOG_ERROR("A2A protocol error calling orchestrator: " + std::string(e.what()));
         // Record failure to circuit breaker
         cb->recordFailure();
         // Record failure for health dashboard
@@ -188,6 +220,7 @@ bool A2AAdapter::processQuery(
         status->set_message(error_msg);
         return false;
     } catch (const std::exception& e) {
+        LOG_ERROR("Network/general error calling orchestrator: " + std::string(e.what()));
         // Record failure to circuit breaker
         cb->recordFailure();
         // Record failure for health dashboard

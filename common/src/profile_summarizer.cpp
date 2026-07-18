@@ -1,14 +1,31 @@
 #include "agent_rpc/common/profile_summarizer.h"
 
+#include "agent_rpc/common/env_loader.h"
+#include "agent_rpc/common/logger.h"
+#include "agent_rpc/common/redis_client.h"
+
+#include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace agent_rpc {
 namespace common {
 
 using json = nlohmann::json;
+
+// ---------------------------------------------------------------------------
+// CURL write callback (same pattern as context_compressor.cpp)
+// ---------------------------------------------------------------------------
+static size_t writeCallback(void* contents, size_t size, size_t nmemb,
+                             std::string* output) {
+    size_t total = size * nmemb;
+    output->append(static_cast<char*>(contents), total);
+    return total;
+}
 
 std::string ProfileSummarizer::summarize(const std::string& identity_json,
                                           const std::string& preferences_json,
@@ -86,7 +103,7 @@ std::string ProfileSummarizer::summarize(const std::string& identity_json,
         auto last_period = result.rfind("。");
         auto last_dot   = result.rfind('.');
         auto boundary   = std::max(last_period, last_dot);
-        if (boundary != std::string::npos && boundary > max_tokens / 2) {
+        if (boundary != std::string::npos && static_cast<int>(boundary) > max_tokens / 2) {
             result.resize(boundary + 1);  // Keep the period
         }
     }
@@ -95,11 +112,176 @@ std::string ProfileSummarizer::summarize(const std::string& identity_json,
 }
 
 void ProfileSummarizer::processPending() {
-    // Placeholder for future LLM-based extraction.
-    // Called periodically from BackgroundScheduler.
-    // In a future iteration, this would scan recent conversation
-    // history for identity/preference hints and persist them to
-    // the user_profiles table or Redis.
+    // ---------------------------------------------------------------
+    // LLM-based profile extraction (Batch 4 U2)
+    // Called periodically from BackgroundScheduler ("profile_extraction",
+    // every 5 min).  Reads pending user IDs from a Redis list, calls
+    // the DeepSeek chat-completions API to extract structured profiles,
+    // and persists the results back to Redis.
+    // ---------------------------------------------------------------
+
+    // 1. Connect to Redis
+    RedisClient redis;
+    std::string redis_host = envOrDefault("REDIS_HOST", "127.0.0.1");
+    int redis_port = envOrInt("REDIS_PORT", 6379);
+    if (!redis.connect(redis_host, redis_port)) {
+        LOG_WARN("ProfileSummarizer: Redis connection failed, skipping");
+        return;
+    }
+
+    // 2. Fetch pending user IDs from the list "profile:pending"
+    std::vector<std::string> pending_users;
+    if (!redis.lrange("profile:pending", 0, -1, pending_users) ||
+        pending_users.empty()) {
+        // No pending work — normal path
+        return;
+    }
+
+    // 3. Read LLM configuration from environment
+    std::string api_url  = envOrDefault("LLM_API_URL",
+                                         "https://api.deepseek.com/v1/chat/completions");
+    std::string api_key  = envOrDefault("LLM_API_KEY", "");
+    std::string model    = envOrDefault("LLM_MODEL", "deepseek-v4-flash");
+
+    if (api_key.empty()) {
+        LOG_WARN("ProfileSummarizer: LLM_API_KEY not set, skipping");
+        return;
+    }
+
+    // 4. Process each pending user
+    for (const auto& user_id : pending_users) {
+        try {
+            // 4a. Gather conversation data from Redis hash
+            //     Key pattern: "nexusai:memory:<user_id>" (user long-term memory)
+            std::map<std::string, std::string> user_memory;
+            redis.hgetall("nexusai:memory:" + user_id, user_memory);
+
+            // Also try to grab the most recent conversation list
+            // (we look for a well-known context key; fall back to empty)
+            std::vector<std::string> conv_msgs;
+            // Scan a few common context IDs — in practice the caller may
+            // store a list of context_ids per user; here we do best-effort.
+            std::string user_conv_key = "nexusai:user_convs:" + user_id;
+            std::vector<std::string> context_ids;
+            redis.lrange(user_conv_key, 0, -1, context_ids);
+
+            std::ostringstream history_oss;
+            for (const auto& ctx_id : context_ids) {
+                // Get last agent used in this context
+                std::string last_agent;
+                redis.get("nexusai:last_agent:" + ctx_id, last_agent);
+                if (last_agent.empty()) last_agent = "default";
+
+                std::vector<std::string> msgs;
+                std::string conv_key = "nexusai:conv:" + ctx_id + ":" + last_agent;
+                redis.lrange(conv_key, -20, -1, msgs);  // last 20 messages
+                for (const auto& m : msgs) {
+                    history_oss << m << "\n";
+                }
+            }
+
+            // Combine memory hints + conversation into the prompt
+            std::string conversation_history;
+            if (!user_memory.empty()) {
+                conversation_history += "User memory hints:\n";
+                for (const auto& [k, v] : user_memory) {
+                    conversation_history += "  " + k + ": " + v + "\n";
+                }
+            }
+            if (!history_oss.str().empty()) {
+                conversation_history += "\nRecent conversation:\n" + history_oss.str();
+            }
+
+            if (conversation_history.empty()) {
+                // No data to extract — remove from pending and continue
+                redis.ltrim("profile:pending", 1, 0);  // pop first element below
+                continue;
+            }
+
+            // 4b. Build LLM request body
+            json request_body = {
+                {"model", model},
+                {"messages", json::array({
+                    {{"role", "system"},
+                     {"content", "你是一个用户画像分析助手。请从以下对话和记忆中提取用户的"
+                                 "偏好、兴趣和沟通风格。以JSON格式输出："
+                                 "{\"interests\": [], \"preferences\": {}, "
+                                 "\"communication_style\": \"\"}"}},
+                    {{"role", "user"},
+                     {"content", conversation_history}}
+                })},
+                {"temperature", 0.3},
+                {"max_tokens", 500}
+            };
+            std::string json_body = request_body.dump();
+
+            // 4c. Call LLM API via libcurl
+            CURL* curl = curl_easy_init();
+            if (!curl) {
+                LOG_ERROR("ProfileSummarizer: curl_easy_init() failed");
+                break;  // curl unavailable — stop processing
+            }
+
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            std::string auth_header = "Authorization: Bearer " + api_key;
+            headers = curl_slist_append(headers, auth_header.c_str());
+
+            std::string response_body;
+            curl_easy_setopt(curl, CURLOPT_URL, api_url.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);  // dev only
+
+            CURLcode res = curl_easy_perform(curl);
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+
+            if (res != CURLE_OK) {
+                LOG_ERROR("ProfileSummarizer: LLM API call failed for user " +
+                          user_id + ": " + curl_easy_strerror(res));
+                continue;  // skip this user, try next
+            }
+
+            // 4d. Parse LLM response — extract choices[0].message.content
+            std::string profile_text;
+            try {
+                auto resp_json = json::parse(response_body);
+                if (resp_json.contains("choices") &&
+                    resp_json["choices"].is_array() &&
+                    !resp_json["choices"].empty()) {
+                    profile_text = resp_json["choices"][0]
+                                          .value("message", json::object())
+                                          .value("content", std::string());
+                }
+            } catch (const json::exception& e) {
+                LOG_ERROR("ProfileSummarizer: Failed to parse LLM response for " +
+                          user_id + ": " + e.what());
+                continue;
+            }
+
+            if (profile_text.empty()) {
+                LOG_WARN("ProfileSummarizer: Empty profile from LLM for user " +
+                         user_id);
+                continue;
+            }
+
+            // 4e. Persist extracted profile to Redis
+            redis.set("user_profile:" + user_id, profile_text);
+
+            LOG_INFO("ProfileSummarizer: Extracted profile for user " + user_id);
+
+        } catch (const std::exception& e) {
+            LOG_ERROR("ProfileSummarizer: Failed for user " + user_id + ": " +
+                      e.what());
+        }
+    }
+
+    // 5. Clear the pending list (all users processed or skipped)
+    redis.del("profile:pending");
 }
 
 }  // namespace common

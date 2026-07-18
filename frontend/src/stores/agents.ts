@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getAgents } from '../services/grpc-client'
-import type { AgentDisplayInfo, ServiceInfo } from '../types/proto'
+import { getAgents, getAgentMetrics } from '../services/grpc-client'
+import type { AgentDisplayInfo, AgentMetrics, ServiceInfo } from '../types/proto'
 
 export const useAgentsStore = defineStore('agents', () => {
   const agents = ref<AgentDisplayInfo[]>([])
@@ -24,6 +24,27 @@ export const useAgentsStore = defineStore('agents', () => {
       error.value = err instanceof Error ? err.message : 'Failed to fetch agents'
     } finally {
       loading.value = false
+    }
+  }
+
+  /**
+   * 获取指定Agent的运行时指标
+   * 返回 wrapper: { data: AgentMetrics | null, error?: string }
+   * 异常或后端返回空时，data 为 null 并携带 error
+   */
+  async function fetchAgentMetrics(
+    agentId: string,
+  ): Promise<{ data: AgentMetrics | null; error?: string }> {
+    try {
+      const result = await getAgentMetrics(agentId)
+      if (result.error) {
+        error.value = result.error
+      }
+      return result
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to fetch agent metrics'
+      error.value = msg
+      return { data: null, error: msg }
     }
   }
 
@@ -76,6 +97,7 @@ export const useAgentsStore = defineStore('agents', () => {
     lastFetched,
     error,
     fetchAgents,
+    fetchAgentMetrics,
     startPolling,
     stopPolling,
   }

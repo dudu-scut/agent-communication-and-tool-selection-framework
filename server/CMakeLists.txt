@@ -6,12 +6,16 @@ set(SERVER_SOURCES
     src/rpc_server.cpp
     src/agent_service.cpp
     src/ai_query_service.cpp
+    src/orchestration_service_impl.cpp
+    src/multi_agent_handler.cpp
+    src/query_helpers.cpp
     src/auth_service.cpp
     src/auth_interceptor.cpp
     src/budget_middleware.cpp
     src/sharing_service.cpp
     src/agent_lifecycle_service.cpp
     src/user_experience_service.cpp
+    src/observability_service.cpp
 )
 
 # 创建静态库

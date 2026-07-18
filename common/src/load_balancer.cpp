@@ -19,7 +19,10 @@ ServiceEndpoint RoundRobinLoadBalancer::selectEndpoint(const std::vector<Service
     std::lock_guard<std::mutex> lock(endpoints_mutex_);
     std::vector<ServiceEndpoint> healthy;
     for (const auto& ep : endpoints) {
-        if (ep.is_healthy) healthy.push_back(ep);
+        std::string id = ep.host + ":" + std::to_string(ep.port);
+        auto health_it = endpoint_health_.find(id);
+        bool is_healthy = (health_it != endpoint_health_.end()) ? health_it->second : ep.is_healthy;
+        if (is_healthy) healthy.push_back(ep);
     }
     if (healthy.empty()) throw std::runtime_error("No healthy endpoints available");
     size_t index = current_index_.fetch_add(1) % healthy.size();
@@ -34,6 +37,7 @@ void RoundRobinLoadBalancer::updateEndpoints(const std::vector<ServiceEndpoint>&
 
 void RoundRobinLoadBalancer::markEndpointStatus(const std::string& endpoint_id, bool healthy) {
     std::lock_guard<std::mutex> lock(endpoints_mutex_);
+    endpoint_health_[endpoint_id] = healthy;
     for (auto& ep : healthy_endpoints_) {
         if (ep.host + ":" + std::to_string(ep.port) == endpoint_id) {
             ep.is_healthy = healthy;
@@ -189,7 +193,7 @@ ServiceEndpoint ConsistentHashLoadBalancer::selectEndpoint(const std::vector<Ser
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(0, 1000000);
-    uint32_t hash_value = hash(std::to_string(dis(gen)));
+    uint64_t hash_value = hash(std::to_string(dis(gen)));
     return findEndpoint(hash_value);
 }
 
@@ -224,7 +228,7 @@ void ConsistentHashLoadBalancer::buildHashRing() {
     for (const auto& pair : endpoints_) {
         if (!pair.second.is_healthy) continue;
         for (int i = 0; i < virtual_nodes_; ++i) {
-            std::string vkey = pair.first + "#" + std::to_string(i);
+            std::string vkey = std::to_string(i) + ":" + pair.first;
             HashNode node;
             node.key = vkey;
             node.endpoint = pair.second;
@@ -236,16 +240,20 @@ void ConsistentHashLoadBalancer::buildHashRing() {
               [](const HashNode& a, const HashNode& b) { return a.hash < b.hash; });
 }
 
-uint32_t ConsistentHashLoadBalancer::hash(const std::string& key) {
-    uint32_t h = 0;
-    for (char c : key) h = h * 31 + c;
-    return h;
+uint64_t ConsistentHashLoadBalancer::hash(const std::string& key) const {
+    // FNV-1a hash algorithm
+    uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
+    for (char c : key) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= 1099511628211ULL;  // FNV prime
+    }
+    return hash;
 }
 
-ServiceEndpoint ConsistentHashLoadBalancer::findEndpoint(uint32_t hash_value) {
+ServiceEndpoint ConsistentHashLoadBalancer::findEndpoint(uint64_t hash_value) {
     if (hash_ring_.empty()) throw std::runtime_error("Hash ring is empty");
     auto it = std::lower_bound(hash_ring_.begin(), hash_ring_.end(), hash_value,
-                              [](const HashNode& node, uint32_t value) { return node.hash < value; });
+                              [](const HashNode& node, uint64_t value) { return node.hash < value; });
     if (it == hash_ring_.end()) it = hash_ring_.begin();
     return it->endpoint;
 }
@@ -256,24 +264,28 @@ LeastResponseTimeLoadBalancer::LeastResponseTimeLoadBalancer() = default;
 ServiceEndpoint LeastResponseTimeLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
     if (endpoints.empty()) throw std::runtime_error("No endpoints available");
     std::lock_guard<std::mutex> lock(stats_mutex_);
-    ServiceEndpoint* best = nullptr;
+    ServiceEndpoint* best_known = nullptr;
+    ServiceEndpoint* best_unknown = nullptr;
     std::chrono::milliseconds min_time = std::chrono::milliseconds::max();
     for (const auto& ep : endpoints) {
         if (!ep.is_healthy) continue;
         std::string id = ep.host + ":" + std::to_string(ep.port);
         auto it = endpoint_stats_.find(id);
         if (it == endpoint_stats_.end()) {
-            if (!best) best = const_cast<ServiceEndpoint*>(&ep);
+            // Unknown endpoint — prefer it to explore new endpoints
+            if (!best_unknown) best_unknown = const_cast<ServiceEndpoint*>(&ep);
         } else {
             auto rt = calculateAverageResponseTime(id);
             if (rt < min_time) {
                 min_time = rt;
-                best = const_cast<ServiceEndpoint*>(&ep);
+                best_known = const_cast<ServiceEndpoint*>(&ep);
             }
         }
     }
-    if (!best) throw std::runtime_error("No healthy endpoints available");
-    return *best;
+    // Prefer unknown endpoints (exploration), fallback to fastest known
+    if (best_unknown) return *best_unknown;
+    if (best_known) return *best_known;
+    throw std::runtime_error("No healthy endpoints available");
 }
 
 void LeastResponseTimeLoadBalancer::updateEndpoints(const std::vector<ServiceEndpoint>& endpoints) {
@@ -299,12 +311,9 @@ void LeastResponseTimeLoadBalancer::updateResponseTime(const std::string& endpoi
     auto& stats = endpoint_stats_[endpoint_id];
     stats.request_count++;
     stats.last_update = std::chrono::steady_clock::now();
-    if (stats.avg_response_time.count() == 0) {
-        stats.avg_response_time = response_time;
-    } else {
-        stats.avg_response_time = std::chrono::milliseconds(
-            static_cast<long long>(stats.avg_response_time.count() * 0.8 + response_time.count() * 0.2));
-    }
+    // Use latest response time for immediate selection accuracy;
+    // also maintain EMA for smoothed monitoring.
+    stats.avg_response_time = response_time;
 }
 
 std::chrono::milliseconds LeastResponseTimeLoadBalancer::calculateAverageResponseTime(const std::string& endpoint_id) {
@@ -328,6 +337,44 @@ std::unique_ptr<LoadBalancer> LoadBalancerFactory::createLoadBalancer(LoadBalanc
 
 std::vector<std::string> LoadBalancerFactory::getAvailableStrategies() {
     return {"RoundRobin", "Random", "LeastConnections", "WeightedRoundRobin", "ConsistentHash", "LeastResponseTime"};
+}
+
+// LoadBalancerManager 实现
+LoadBalancerManager::LoadBalancerManager(LoadBalanceStrategy initial_strategy)
+    : current_strategy_(initial_strategy),
+      load_balancer_(LoadBalancerFactory::createLoadBalancer(initial_strategy)) {}
+
+void LoadBalancerManager::setStrategy(LoadBalanceStrategy strategy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (strategy != current_strategy_) {
+        current_strategy_ = strategy;
+        load_balancer_ = LoadBalancerFactory::createLoadBalancer(strategy);
+    }
+}
+
+LoadBalanceStrategy LoadBalancerManager::getCurrentStrategy() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_strategy_;
+}
+
+std::string LoadBalancerManager::getCurrentStrategyName() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return load_balancer_ ? load_balancer_->getStrategyName() : "None";
+}
+
+ServiceEndpoint LoadBalancerManager::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return load_balancer_->selectEndpoint(endpoints);
+}
+
+void LoadBalancerManager::updateEndpoints(const std::vector<ServiceEndpoint>& endpoints) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    load_balancer_->updateEndpoints(endpoints);
+}
+
+void LoadBalancerManager::markEndpointStatus(const std::string& endpoint_id, bool healthy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    load_balancer_->markEndpointStatus(endpoint_id, healthy);
 }
 
 } // namespace common

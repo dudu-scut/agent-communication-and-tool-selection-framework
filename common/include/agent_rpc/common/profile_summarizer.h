@@ -6,13 +6,14 @@ namespace agent_rpc {
 namespace common {
 
 /**
- * @brief ProfileSummarizer — Template-based user profile summarization
+ * @brief ProfileSummarizer — User profile summarization with optional LLM extraction
  *
  * Batch 4, U2: Compresses identity and preference JSON into a short
  * human-readable summary string for injection into SystemContext.
  *
- * This basic version uses string formatting only (no LLM).  A future
- * iteration may add LLM-based extraction via processPending().
+ * The static summarize() method uses template-based formatting.
+ * processPending() uses an LLM API (DeepSeek) to extract structured
+ * profiles from conversation history stored in Redis.
  */
 class ProfileSummarizer {
 public:
@@ -34,10 +35,13 @@ public:
                                   int max_tokens = 300);
 
     /**
-     * Placeholder for future LLM-based extraction of identity / preferences
-     * from conversation history.  Currently a no-op.
+     * LLM-based extraction of user profiles from conversation history.
      *
-     * Intended to be called periodically from BackgroundScheduler.
+     * Called periodically from BackgroundScheduler.  Connects to Redis,
+     * reads pending user IDs from "profile:pending" list, gathers
+     * conversation data, calls the DeepSeek chat-completions API to
+     * extract structured profiles, and stores results in
+     * "user_profile:<user_id>".
      */
     static void processPending();
 };

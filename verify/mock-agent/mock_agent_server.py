@@ -86,7 +86,8 @@ class MockAgentHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        if self.path != "/tasks/send":
+        # Accept both root path "/" (A2A protocol) and "/tasks/send" (A2A tasks endpoint)
+        if self.path not in ("/", "/tasks/send"):
             self.send_response(404)
             self.end_headers()
             return
@@ -116,12 +117,78 @@ class MockAgentHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "internal error"}).encode())
             return
 
+        # Detect streaming request (A2A client sends Accept: text/event-stream)
+        accept_header = self.headers.get("Accept", "")
+        is_streaming = "text/event-stream" in accept_header
+
+        if is_streaming:
+            self._handle_streaming_post(query_text, mode, agent_id, extra_headers)
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(json.dumps(response_body).encode())
+
+    def _handle_streaming_post(self, query_text, mode, agent_id, extra_headers):
+        """Handle POST with SSE streaming response for A2A streaming protocol."""
+        if mode == "error":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            err = {"jsonrpc": "2.0", "error": {"code": -1, "message": "Mock error"}}
+            self.wfile.write(f"data: {json.dumps(err)}\n\n".encode())
+            self.wfile.flush()
+            return
+
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
         for key, value in (extra_headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(json.dumps(response_body).encode())
+
+        response_text = f"Mock response for: {query_text}"
+
+        # 1. Stream start status
+        start_event = {
+            "jsonrpc": "2.0",
+            "result": {"type": "status", "status": {"state": "working", "status_description": "processing"}}
+        }
+        self.wfile.write(f"data: {json.dumps(start_event)}\n\n".encode())
+        self.wfile.flush()
+
+        # 2. Content chunks (split into words for streaming effect)
+        words = response_text.split()
+        for i, word in enumerate(words):
+            chunk_text = word if i == 0 else f" {word}"
+            chunk_event = {
+                "jsonrpc": "2.0",
+                "result": {"type": "chunk", "content": chunk_text}
+            }
+            self.wfile.write(f"data: {json.dumps(chunk_event)}\n\n".encode())
+            self.wfile.flush()
+
+        # 3. Completion event with text in message parts
+        part_field = "kind" if self.headers.get("x-mock-mode", "normal") in ("version_v1_0", "normal") else "type"
+        complete_event = {
+            "jsonrpc": "2.0",
+            "result": {
+                "type": "status",
+                "status": {
+                    "state": "completed",
+                    "message": {
+                        "parts": [{part_field: "text", "text": response_text}]
+                    }
+                }
+            }
+        }
+        self.wfile.write(f"data: {json.dumps(complete_event)}\n\n".encode())
+        self.wfile.flush()
 
     def do_PUT(self):
         """Reset failure counters."""

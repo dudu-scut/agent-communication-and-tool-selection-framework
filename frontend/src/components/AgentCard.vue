@@ -50,99 +50,126 @@ defineProps<{
 </script>
 
 <style scoped>
+@import "../styles/design-tokens.css";
+
 .agent-card {
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  transition: box-shadow 0.15s;
+  transition: all var(--duration-normal) var(--ease-default);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
 }
 
 .agent-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
 }
 
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 16px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .agent-name {
   font-weight: 600;
   font-size: 15px;
   flex: 1;
+  color: var(--text-primary);
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #d1d5db;
+  background: var(--text-tertiary);
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .status-dot.healthy {
-  background: #22c55e;
+  background: var(--color-success);
+  box-shadow: var(--shadow-glow-success);
 }
 
 .status-text {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-tertiary);
 }
 
 .card-body {
-  padding: 14px 16px;
+  padding: var(--space-3) var(--space-4);
 }
 
 .info-row {
   display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
   font-size: 13px;
 }
 
 .label {
-  color: #9ca3af;
-  min-width: 36px;
+  color: var(--text-muted);
+  min-width: 48px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .value {
-  color: #374151;
-  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
 .skills, .tags {
-  margin-top: 12px;
+  margin-top: var(--space-3);
 }
 
 .skills .label, .tags .label {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
   font-size: 12px;
 }
 
 .skill-tags, .tag-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .skill-tag {
   padding: 2px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-full);
   font-size: 12px;
-  background: #ede9fe;
-  color: #6d28d9;
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--brand-secondary);
+  border: 1px solid var(--border-brand);
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+.skill-tag:hover {
+  background: rgba(139, 92, 246, 0.2);
+  transform: translateY(-1px);
 }
 
 .tag {
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+.tag:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-secondary);
 }
 </style>

@@ -344,3 +344,16 @@ target_include_directories(test_redis_services PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/../proto
 )
 add_test(NAME RedisServicesTest COMMAND test_redis_services)
+
+# LoadBalancer 高级测试 (WeightedRoundRobin / ConsistentHash / LeastResponseTime / Manager)
+add_executable(test_load_balancer_advanced test_load_balancer_advanced.cpp)
+target_link_libraries(test_load_balancer_advanced
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_load_balancer_advanced PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME LoadBalancerAdvancedTest COMMAND test_load_balancer_advanced)

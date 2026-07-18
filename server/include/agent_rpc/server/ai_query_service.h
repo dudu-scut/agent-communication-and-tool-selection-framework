@@ -4,6 +4,11 @@
  * 
  * Requirements: 2.1, 2.2, 2.5
  * Task 13: RPC服务扩展
+ *
+ * Architecture: This class composes three helper modules:
+ *   - OrchestrationServiceImpl  (ExecutePlan, ReplayQuery, ExportConversation)
+ *   - MultiAgentHandler         (multi-agent sync/stream query handling)
+ *   - QueryHelpers              (task status, metrics, agent-switch, UUID)
  */
 
 #pragma once
@@ -19,8 +24,10 @@
 #include "agent_rpc/orchestrator/task_planner.h"
 #include "agent_rpc/orchestrator/task_executor.h"
 #include "agent_rpc/server/budget_middleware.h"
-#include "agent_rpc/orchestrator/replay_service.h"
 #include "agent_rpc/orchestrator/result_aggregator.h"
+#include "agent_rpc/server/orchestration_service_impl.h"
+#include "agent_rpc/server/multi_agent_handler.h"
+#include "agent_rpc/server/query_helpers.h"
 
 #include "ai_query.grpc.pb.h"
 #include "ai_query.pb.h"
@@ -31,10 +38,8 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <string>
 #include <atomic>
-#include <unordered_map>
 
 namespace agent_rpc {
 namespace server {
@@ -44,6 +49,9 @@ namespace server {
  * 
  * Implements the AIQueryService gRPC service, bridging RPC requests
  * to the A2A protocol via the A2AAdapter.
+ *
+ * Also implements OrchestrationService (ExecutePlan, ReplayQuery, ExportConversation)
+ * via delegation to OrchestrationServiceImpl.
  */
 class AIQueryServiceImpl final : public agent_communication::AIQueryService::Service,
                                   public agent_communication::OrchestrationService::Service {
@@ -72,112 +80,43 @@ public:
     bool isAvailable() const;
     
     // ========================================================================
-    // gRPC Service Methods
+    // AIQueryService gRPC Methods
     // ========================================================================
     
-    /**
-     * @brief Synchronous AI query
-     * @param context gRPC server context
-     * @param request AI query request
-     * @param response AI query response
-     * @return gRPC status
-     */
     grpc::Status Query(
         grpc::ServerContext* context,
         const agent_communication::AIQueryRequest* request,
         agent_communication::AIQueryResponse* response) override;
     
-    /**
-     * @brief Streaming AI query
-     * @param context gRPC server context
-     * @param request AI query request
-     * @param writer Stream writer for events
-     * @return gRPC status
-     */
     grpc::Status QueryStream(
         grpc::ServerContext* context,
         const agent_communication::AIQueryRequest* request,
         grpc::ServerWriter<agent_communication::AIStreamEvent>* writer) override;
     
-    /**
-     * @brief Get query status
-     * @param context gRPC server context
-     * @param request Status request
-     * @param response Status response
-     * @return gRPC status
-     */
     grpc::Status GetQueryStatus(
         grpc::ServerContext* context,
         const agent_communication::QueryStatusRequest* request,
         agent_communication::QueryStatusResponse* response) override;
 
-    // ========================================================================
-    // Agent Metrics (Batch 2)
-    // ========================================================================
-
-    /**
-     * @brief Get agent runtime metrics from Redis
-     * @param context gRPC server context
-     * @param request Metrics request
-     * @param response Metrics response
-     * @return gRPC status
-     */
     grpc::Status GetAgentMetrics(
         grpc::ServerContext* context,
         const agent_communication::GetAgentMetricsRequest* request,
         agent_communication::GetAgentMetricsResponse* response) override;
 
     // ========================================================================
-    // DAG Execution (Batch 4 U4)
+    // OrchestrationService gRPC Methods (delegated to OrchestrationServiceImpl)
     // ========================================================================
 
-    /**
-     * @brief Execute a user-modified DAG plan
-     *
-     * Accepts a user-approved or user-modified DAG structure and feeds it
-     * to the TaskExecutor for execution.  Designed for the DAG Preview
-     * feature where users can review and adjust sub-agent assignments
-     * before execution.
-     *
-     * @param context gRPC server context
-     * @param request  ExecutePlan request with DAG structure
-     * @param response ExecutePlan response with trace_id
-     * @return gRPC status
-     */
     grpc::Status ExecutePlan(
         grpc::ServerContext* context,
         const agent_communication::ExecutePlanRequest* request,
         agent_communication::ExecutePlanResponse* response) override;
 
-    // ========================================================================
-    // Query Replay (Batch 5)
-    // ========================================================================
-
-    /**
-     * @brief Replay a previous query (exact or route-only)
-     *
-     * @param context gRPC server context
-     * @param request ReplayQuery request with trace_id and mode
-     * @param response ReplayQuery response with original and replayed outputs
-     * @return gRPC status
-     */
     grpc::Status ReplayQuery(
         grpc::ServerContext* context,
         const agent_communication::ReplayQueryRequest* request,
         agent_communication::ReplayQueryResponse* response) override;
 
-    // ========================================================================
-    // Batch 6: Export Conversation
-    // ========================================================================
-
-    /**
-     * @brief Export conversation as Markdown or HTML
-     *
-     * @param context gRPC server context
-     * @param request ExportConversation request with context_id and format
-     * @param response ExportConversation response with file data
-     * @return gRPC status
-     */
     grpc::Status ExportConversation(
         grpc::ServerContext* context,
         const agent_communication::ExportConversationRequest* request,
@@ -187,85 +126,26 @@ public:
     // Accessors
     // ========================================================================
     
-    /**
-     * @brief Get the A2A adapter
-     */
     a2a_adapter::A2AAdapter* getA2AAdapter() { return a2a_adapter_.get(); }
 
-    /**
-     * @brief Get the AgentRouter (P0-2: for registry unification)
-     * @return Pointer to AgentRouter, or nullptr if orchestrator not enabled
-     */
     orchestrator::AgentRouter* getAgentRouter() { return agent_router_.get(); }
 
-    /**
-     * @brief Get the MemoryService for memory system integration
-     */
     common::MemoryService* getMemoryService() { return memory_service_.get(); }
 
 private:
-    std::string generateRequestId();
-    void recordMetrics(const std::string& method, int64_t duration_ms, bool success);
-
     // ========================================================================
-    // Task Status Tracking (P2-1)
+    // Core dependencies
     // ========================================================================
-
-    struct TaskStatus {
-        std::string task_id;
-        std::string state;       // submitted | working | completed | failed | cancelled
-        std::chrono::steady_clock::time_point created_at;
-        std::chrono::steady_clock::time_point updated_at;
-        std::string agent_id;
-        std::string agent_name;
-        std::string error_message;
-    };
-
-    void updateTaskStatus(const std::string& task_id, const std::string& state,
-                          const std::string& agent_id = "",
-                          const std::string& agent_name = "",
-                          const std::string& error_msg = "");
-    void cleanupExpiredTasks();
-
-    // Memory: detect agent switch and generate cross-agent summary
-    void handleAgentSwitch(const std::string& user_id,
-                           const std::string& context_id,
-                           const std::string& current_agent_id);
-
-    // Memory: build context string from request's SystemContext for sub-agent injection
-    std::string buildMemoryContext(const agent_communication::AIQueryRequest* request) const;
-
-    mutable std::mutex task_status_mutex_;
-    std::unordered_map<std::string, TaskStatus> task_status_cache_;
-    std::atomic<uint64_t> status_query_count_{0};
-    
     std::unique_ptr<a2a_adapter::A2AAdapter> a2a_adapter_;
     std::shared_ptr<common::CircuitBreaker> circuit_breaker_;
     common::RpcConfig rpc_config_;
     std::atomic<bool> initialized_{false};
-    std::atomic<uint64_t> request_counter_{0};
     std::unique_ptr<common::MemoryService> memory_service_;
+    common::RedisClient* redis_client_ = nullptr;
 
     // ========================================================================
     // Multi-Agent Orchestration (P4-4)
     // ========================================================================
-
-    bool initializeOrchestrator(const std::string& api_key,
-                                const std::string& model,
-                                const std::string& api_url);
-
-    grpc::Status handleMultiAgentQuery(
-        grpc::ServerContext* context,
-        const agent_communication::AIQueryRequest* request,
-        agent_communication::AIQueryResponse* response,
-        const std::string& request_id);
-
-    grpc::Status handleMultiAgentQueryStream(
-        grpc::ServerContext* context,
-        const agent_communication::AIQueryRequest* request,
-        grpc::ServerWriter<agent_communication::AIStreamEvent>* writer,
-        const std::string& request_id);
-
     std::unique_ptr<orchestrator::AgentRouter> agent_router_;
     std::unique_ptr<orchestrator::TaskPlanner> task_planner_;
     std::unique_ptr<orchestrator::TaskExecutor> task_executor_;
@@ -274,11 +154,13 @@ private:
 
     // Memory: LLM client for cross-agent summary generation
     std::unique_ptr<LLMClient> memory_llm_client_;
-    std::mutex memory_llm_mutex_;
-    std::set<std::string> summary_in_progress_;  // context_ids with ongoing summary generation
 
-    // Redis client for feedback-driven routing and metrics (Batch 2)
-    common::RedisClient* redis_client_ = nullptr;
+    // ========================================================================
+    // Composed modules
+    // ========================================================================
+    std::unique_ptr<OrchestrationServiceImpl> orchestration_impl_;
+    std::unique_ptr<MultiAgentHandler> multi_agent_handler_;
+    QueryHelpers helpers_;
 };
 
 } // namespace server

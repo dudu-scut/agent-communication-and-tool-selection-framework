@@ -42,7 +42,7 @@
           </div>
           <div class="metric">
             <span class="metric-label">Approval</span>
-            <span class="metric-value">{{ (agent.metrics.approval_rate * 100).toFixed(0) }}%</span>
+            <span class="metric-value">{{ ((agent.metrics.approval_rate ?? 0) * 100).toFixed(0) }}%</span>
           </div>
         </div>
 
@@ -69,32 +69,39 @@ defineEmits<{ select: [agentId: string] }>()
 
 const sortedCandidates = computed(() => {
   return [...props.candidates].sort((a, b) => {
-    const aScore = a.metrics ? a.metrics.success_rate * 0.4 + a.metrics.approval_rate * 0.3 + (1 - a.metrics.avg_latency_ms / 10000) * 0.3 : 0
-    const bScore = b.metrics ? b.metrics.success_rate * 0.4 + b.metrics.approval_rate * 0.3 + (1 - b.metrics.avg_latency_ms / 10000) * 0.3 : 0
+    const aScore = a.metrics ? a.metrics.success_rate * 0.4 + (a.metrics.approval_rate ?? 0) * 0.3 + (1 - a.metrics.avg_latency_ms / 10000) * 0.3 : 0
+    const bScore = b.metrics ? b.metrics.success_rate * 0.4 + (b.metrics.approval_rate ?? 0) * 0.3 + (1 - b.metrics.avg_latency_ms / 10000) * 0.3 : 0
     return bScore - aScore
   })
 })
 </script>
 
 <style scoped>
+@import "../styles/design-tokens.css";
+
 .agent-selector {
-  margin: 12px 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  margin: var(--space-3) 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  background: #fff;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .selector-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: #f0f9ff;
-  border-bottom: 1px solid #bae6fd;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
   font-weight: 600;
-  color: #0369a1;
+  color: var(--text-secondary);
+}
+
+.selector-header svg {
+  color: var(--brand-primary);
 }
 
 .candidate-list {
@@ -104,10 +111,10 @@ const sortedCandidates = computed(() => {
 
 .candidate-card {
   position: relative;
-  padding: 12px 14px;
-  border-bottom: 1px solid #f3f4f6;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-default);
 }
 
 .candidate-card:last-child {
@@ -115,25 +122,25 @@ const sortedCandidates = computed(() => {
 }
 
 .candidate-card:hover {
-  background: #f8fafc;
+  background: var(--glass-bg-hover);
 }
 
 .candidate-card.selected {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
+  background: rgba(16, 185, 129, 0.08);
+  border-left: 2px solid var(--color-success);
 }
 
 .candidate-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-1);
 }
 
 .candidate-name {
   font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text-primary);
 }
 
 .health-dot {
@@ -143,32 +150,34 @@ const sortedCandidates = computed(() => {
 }
 
 .health-dot.healthy {
-  background: #22c55e;
-  box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
+  background: var(--color-success);
+  box-shadow: var(--shadow-glow-success);
 }
 
 .health-dot.unhealthy {
-  background: #ef4444;
+  background: var(--color-error);
+  box-shadow: var(--shadow-glow-error);
 }
 
 .candidate-skills {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 .skill-tag {
   padding: 1px 6px;
-  border-radius: 4px;
-  background: #f3f4f6;
-  color: #6b7280;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
   font-size: 11px;
+  border: 1px solid var(--border-subtle);
 }
 
 .candidate-metrics {
   display: flex;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .metric {
@@ -179,7 +188,7 @@ const sortedCandidates = computed(() => {
 
 .metric-label {
   font-size: 10px;
-  color: #9ca3af;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -187,23 +196,23 @@ const sortedCandidates = computed(() => {
 .metric-value {
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
 }
 
 .metric-value.good {
-  color: #16a34a;
+  color: var(--color-success);
 }
 
 .metric-value.warn {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .selected-check {
   position: absolute;
   top: 50%;
-  right: 14px;
+  right: var(--space-4);
   transform: translateY(-50%);
-  color: #16a34a;
+  color: var(--color-success);
 }
 </style>

@@ -178,6 +178,11 @@ AgentRouter 使用四级路由策略，你的 Agent 能否被选中取决于 ski
 
 因此，**skills 的 name 和 description 写得越精确，路由命中率越高**。避免使用过于宽泛的描述（如"处理各种任务"），应当具体到实际能力域。
 
+**反馈驱动路由（Batch 2）：** 在上述四级路由基础上，当同一 skill 有多个候选 Agent 时，平台会根据历史用户反馈（点赞/点踩）计算质量系数，对 Agent 做加权随机选择。质量系数范围 [0.5, 1.0]，点赞率越高的 Agent 被选中概率越大。这意味着：
+- 持续提供高质量响应的 Agent 会获得更多流量
+- 点踩率高的 Agent 会被自动降权
+- 你可以在 `AgentMetrics.approval_rate` 中查看自己的质量评分
+
 ---
 
 ## 第三步：通过 gRPC 注册
@@ -207,6 +212,10 @@ message RegisterAgentRequest {
 | `tags` | 否 | 标签列表，用于分类筛选 |
 | `metadata` | 否 | 键值对扩展信息 |
 | `agent_card` | 否 | 完整的 AgentCard JSON 字符串 |
+| `agent_metrics` | 否 | 运行时指标（成功率、延迟、token 估算等），心跳时可更新 |
+| `cacheable` | 否 | 响应是否可被语义缓存复用（Batch 3） |
+| `deployment_stage` | 否 | 部署阶段：`STABLE` / `CANARY` / `DEPRECATED`（Batch 6） |
+| `a2a_version` | 否 | A2A 协议版本，如 `"1.0"`、`"1.1"`（Batch 8） |
 
 **响应：**
 
@@ -231,6 +240,7 @@ message RegisterAgentResponse {
 ```protobuf
 message HeartbeatRequest {
     string agent_id = 1;               // 注册时获得的 agent_id
+    common.ServiceInfo agent_info = 2; // 可选，用于心跳时同步更新 Agent 元数据
 }
 
 message HeartbeatResponse {
@@ -239,7 +249,7 @@ message HeartbeatResponse {
 }
 ```
 
-**实现建议：** 用一个独立的后台线程/协程执行心跳循环，避免阻塞业务逻辑。心跳间隔建议 15 秒，给网络抖动留余量（60 秒超时 / 15 秒间隔 = 4 次容错机会）。
+**实现建议：** 用一个独立的后台线程/协程执行心跳循环，避免阻塞业务逻辑。心跳间隔建议 15 秒，给网络抖动留余量（60 秒超时 / 15 秒间隔 = 4 次容错机会）。心跳时可以附带 `agent_info` 字段来动态更新运行时指标（成功率、延迟等），让平台路由引擎获取最新数据。
 
 ---
 
@@ -473,6 +483,8 @@ class PlatformRegistrar:
                 port=AGENT_PORT,
                 skills=[s["name"] for s in AGENT_CARD["skills"]],
                 agent_card=json.dumps(AGENT_CARD, ensure_ascii=False),
+                a2a_version="1.0",                       # A2A 协议版本
+                deployment_stage="STABLE",                # 部署阶段: STABLE / CANARY / DEPRECATED
             ),
             heartbeat_interval=self._heartbeat_sec,
         )
@@ -502,7 +514,11 @@ class PlatformRegistrar:
                 break
             try:
                 self._stub.Heartbeat(
-                    agent_service_pb2.HeartbeatRequest(agent_id=self._agent_id),
+                    agent_service_pb2.HeartbeatRequest(
+                        agent_id=self._agent_id,
+                        # 可选：附带 agent_info 以同步更新元数据/指标
+                        # agent_info=common_pb2.ServiceInfo(...)
+                    ),
                     timeout=5,
                 )
             except grpc.RpcError as e:
@@ -581,14 +597,18 @@ A2A HTTP Server 监听 http://0.0.0.0:8080
 
 ```protobuf
 message ServiceInfo {
-    string service_name = 1;   // Agent 名称（必填）
-    string version = 2;        // 版本号（必填）
-    string host = 3;           // HTTP 监听地址（必填）
-    int32 port = 4;            // HTTP 监听端口（必填）
+    string service_name = 1;          // Agent 名称（必填）
+    string version = 2;               // 版本号（必填）
+    string host = 3;                  // HTTP 监听地址（必填）
+    int32 port = 4;                   // HTTP 监听端口（必填）
     repeated string tags = 5;
     map<string, string> metadata = 6;
-    repeated string skills = 7; // 技能名称列表（路由匹配的关键依据）
-    string agent_card = 8;      // AgentCard JSON
+    repeated string skills = 7;       // 技能名称列表（路由匹配的关键依据）
+    string agent_card = 8;            // AgentCard JSON
+    AgentMetrics agent_metrics = 9;   // 运行时指标（Batch 2）
+    bool cacheable = 10;              // 响应是否可被语义缓存复用（Batch 3）
+    string deployment_stage = 11;     // 部署阶段：STABLE / CANARY / DEPRECATED（Batch 6）
+    string a2a_version = 12;          // A2A 协议版本号（Batch 8）
 }
 ```
 
@@ -602,15 +622,61 @@ message Status {
 }
 ```
 
+### common.proto — AgentMetrics
+
+```protobuf
+message AgentMetrics {
+    string agent_id = 1;
+    double success_rate = 2;          // 成功率 (0.0–1.0)
+    double avg_latency_ms = 3;        // 平均延迟（毫秒）
+    double p95_latency_ms = 4;        // P95 延迟（毫秒）
+    int32 total_requests = 5;         // 累计请求数
+    double approval_rate = 6;         // 用户点赞率 (0.0–1.0)
+    int32 estimated_token_low = 7;    // 预估 token 消耗下限
+    int32 estimated_token_high = 8;   // 预估 token 消耗上限
+}
+```
+
+### agent_lifecycle.proto — 反馈与生命周期管理
+
+```protobuf
+service AgentLifecycleService {
+    // 提交对 Agent 响应的评分（点赞/点踩）
+    rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+
+    // 获取同类 Agent 的指标对比
+    rpc GetAgentCompare(GetAgentCompareRequest) returns (GetAgentCompareResponse);
+
+    // 设置用户对 Agent 的自主程度偏好
+    rpc SetAutonomyLevel(SetAutonomyLevelRequest) returns (SetAutonomyLevelResponse);
+
+    // 撤销 Agent 的某次操作
+    rpc UndoAction(UndoActionRequest) returns (UndoActionResponse);
+}
+```
+
 ### agent_service.proto — 接入相关的 RPC
 
 ```protobuf
 service AgentCommunicationService {
+    // Agent 注册与生命周期
     rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
     rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
     rpc UnregisterAgent(UnregisterAgentRequest) returns (UnregisterAgentResponse);
+
+    // Agent 发现
     rpc FindAgents(FindAgentsRequest) returns (FindAgentsResponse);
     rpc GetAgents(GetAgentsRequest) returns (GetAgentsResponse);
+
+    // 消息传递
+    rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+    rpc ReceiveMessage(ReceiveMessageRequest) returns (ReceiveMessageResponse);
+    rpc BroadcastMessage(BroadcastMessageRequest) returns (BroadcastMessageResponse);
+
+    // 流式 RPC
+    rpc ListenMessages(ReceiveMessageRequest) returns (stream Message);        // 服务端流式
+    rpc BatchSendMessages(stream SendMessageRequest) returns (SendMessageResponse); // 客户端流式
+    rpc RealTimeCommunication(stream Message) returns (stream Message);        // 双向流式
 }
 ```
 

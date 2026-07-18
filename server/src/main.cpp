@@ -21,6 +21,8 @@
 #include "agent_rpc/orchestrator/cron_scheduler.h"
 #include "agent_rpc/mcp/rag/semantic_cache_index.h"
 #include "agent_rpc/common/profile_summarizer.h"
+#include "agent_rpc/common/trace_context.h"
+#include "agent_rpc/common/redis_client.h"
 #include "agent_rpc/registry/service_registry.h"
 #include <curl/curl.h>
 #include <iostream>
@@ -28,6 +30,8 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <queue>
+#include <mutex>
 
 using namespace agent_rpc::server;
 using namespace agent_rpc::common;
@@ -36,10 +40,76 @@ using namespace agent_rpc::common;
 std::atomic<bool> g_running{true};
 RpcServer* g_server = nullptr;
 
+// ============================================================================
+// Global span queue for span_batch_flush BackgroundScheduler task.
+// TraceContext::endSpan() pushes completed spans here via the SpanExporter
+// callback; the periodic task drains them into Redis in batches.
+// ============================================================================
+namespace {
+
+struct QueuedSpan {
+    std::string trace_id;
+    std::string user_id;
+    std::string span_id;
+    std::string name;
+    std::string component;
+    int duration_ms;
+    std::string status;
+    std::string metadata_json;
+};
+
+std::mutex g_span_queue_mutex;
+std::queue<QueuedSpan> g_span_queue;
+
+static constexpr size_t kSpanBatchMax = 500;  // max spans per flush
+
+void pushSpanToQueue(const Span& span, const std::string& trace_id,
+                     const std::string& user_id) {
+    QueuedSpan qs;
+    qs.trace_id    = trace_id;
+    qs.user_id     = user_id;
+    qs.span_id     = span.span_id;
+    qs.name        = span.name;
+    qs.component   = span.component;
+    qs.duration_ms = span.duration_ms;
+    qs.status      = span.status;
+    qs.metadata_json = span.metadata_json;
+    std::lock_guard<std::mutex> lock(g_span_queue_mutex);
+    g_span_queue.push(std::move(qs));
+}
+
+}  // anonymous namespace
+
 void signalHandler(int signal) {
     std::cout << "\n收到信号 " << signal << ", 正在关闭服务器..." << std::endl;
     g_running = false;
     // 不在信号处理函数中调用 stop()，让主循环处理
+}
+
+void crashHandler(int sig) {
+    // Best-effort crash diagnostics: flush the async logger before terminating.
+    // NOTE: signal handlers run in a restricted context — avoid heap allocation,
+    // non-reentrant functions, and I/O beyond async-signal-safe write().
+    const char* names[] = {
+        "UNKNOWN", "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL",
+        "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL",
+        "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM",
+        "SIGTERM"
+    };
+    const char* name = (sig > 0 && sig < 16) ? names[sig] : "UNKNOWN";
+    // Write directly to stderr (async-signal-safe).
+    // NOTE: We intentionally do NOT call flushLogger() here — it acquires
+    // mutexes and is not async-signal-safe. If the crash interrupted code
+    // holding any of those mutexes, the handler would deadlock and never
+    // produce a core dump.
+    const char msg[] = "\n[FATAL] rpc_server crashed with signal ";
+    if (write(STDERR_FILENO, msg, sizeof(msg) - 1) < 0) {}
+    if (write(STDERR_FILENO, name, strlen(name)) < 0) {}
+    const char msg2[] = "\n[FATAL] Check logs for last recorded entries before this point.\n";
+    if (write(STDERR_FILENO, msg2, sizeof(msg2) - 1) < 0) {}
+    // Re-raise the signal with default handler to produce core dump
+    signal(sig, SIG_DFL);
+    raise(sig);
 }
 
 void printUsage(const char* program) {
@@ -127,6 +197,11 @@ int main(int argc, char* argv[]) {
     // 设置信号处理
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
+    // Crash signal handlers for diagnostic logging before termination
+    signal(SIGSEGV, crashHandler);
+    signal(SIGABRT, crashHandler);
+    signal(SIGFPE, crashHandler);
+    signal(SIGILL, crashHandler);
 
     LogConfig log_config;
     log_config.level = LogLevel::Level_INFO;
@@ -271,25 +346,215 @@ int main(int argc, char* argv[]) {
         std::chrono::seconds(60));
 
     // Batch 6: Register canary evaluation task (every 600 seconds)
+    // Canary evaluation compares canary vs stable agent metrics from Redis
+    // and progressively promotes or rolls back canary deployments.
+    //
+    // Redis data layout:
+    //   canary:active_set           — SET of skill names with active canary deployments
+    //   canary:{skill_name}         — HASH {canary_agent_id, stable_agent_id, version,
+    //                                  weight, stage, deploy_time}
+    //   agent_metrics:{agent_id}    — HASH {success_rate, avg_latency_ms, ...}
+    //                                  (written by FeedbackAggregator::recalculateMetrics)
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "canary_evaluation",
         [&server]() {
-            // Canary evaluation placeholder: evaluates canary deployments
-            // by comparing agent metrics between canary and stable versions.
-            // Full implementation will read from canary_deployments table
-            // and compare feedback/quality coefficients.
-            LOG_INFO("Canary evaluation: checking deployment health...");
-            auto* ai_service = server.getAIQueryService().get();
-            if (ai_service) {
-                auto* router = ai_service->getAgentRouter();
-                if (router) {
-                    auto agents = router->getHealthyAgents();
-                    LOG_INFO("Canary evaluation: " + std::to_string(agents.size()) +
-                             " healthy agents available");
+            LOG_INFO("Canary evaluation: starting evaluation cycle...");
+
+            auto* redis = server.getRedisClient();
+            if (!redis || !redis->isConnected()) {
+                LOG_WARN("Canary evaluation: Redis unavailable, skipping this cycle");
+                return;
+            }
+
+            // 1. Retrieve all active canary skill names from the tracking set
+            std::vector<std::string> canary_skills;
+            if (!redis->lrange("canary:active_list", 0, -1, canary_skills)) {
+                LOG_WARN("Canary evaluation: failed to read canary:active_list");
+                return;
+            }
+
+            if (canary_skills.empty()) {
+                LOG_DEBUG("Canary evaluation: no active canary deployments");
+                return;
+            }
+
+            LOG_INFO("Canary evaluation: evaluating " + std::to_string(canary_skills.size()) +
+                     " active canary deployment(s)");
+
+            int promoted = 0, rolled_back = 0, increased = 0;
+
+            for (const auto& skill_name : canary_skills) {
+                try {
+                    // 2. Read canary deployment info
+                    std::map<std::string, std::string> canary_info;
+                    if (!redis->hgetall("canary:" + skill_name, canary_info) || canary_info.empty()) {
+                        LOG_WARN("Canary evaluation: no info for skill '" + skill_name + "', skipping");
+                        continue;
+                    }
+
+                    std::string stage = canary_info.count("stage") ? canary_info["stage"] : "";
+
+                    // Only evaluate deployments in PROMOTING stage
+                    if (stage != "PROMOTING") {
+                        LOG_DEBUG("Canary evaluation: skill '" + skill_name +
+                                  "' stage=" + stage + ", skipping");
+                        continue;
+                    }
+
+                    std::string canary_agent_id = canary_info.count("canary_agent_id")
+                                                      ? canary_info["canary_agent_id"] : "";
+                    std::string stable_agent_id = canary_info.count("stable_agent_id")
+                                                      ? canary_info["stable_agent_id"] : "";
+                    if (canary_agent_id.empty() || stable_agent_id.empty()) {
+                        LOG_WARN("Canary evaluation: missing agent IDs for skill '" + skill_name + "'");
+                        continue;
+                    }
+
+                    // 3. Fetch metrics for canary and stable versions
+                    std::map<std::string, std::string> canary_metrics;
+                    std::map<std::string, std::string> stable_metrics;
+                    redis->hgetall("agent_metrics:" + canary_agent_id, canary_metrics);
+                    redis->hgetall("agent_metrics:" + stable_agent_id, stable_metrics);
+
+                    // Parse metrics with safe defaults
+                    auto safeDouble = [](const std::map<std::string, std::string>& m,
+                                         const std::string& key, double fallback) -> double {
+                        auto it = m.find(key);
+                        if (it == m.end() || it->second.empty()) return fallback;
+                        try { return std::stod(it->second); }
+                        catch (...) { return fallback; }
+                    };
+
+                    double canary_sr  = safeDouble(canary_metrics, "success_rate", 0.0);
+                    double stable_sr  = safeDouble(stable_metrics, "success_rate", 0.0);
+                    double canary_lat = safeDouble(canary_metrics, "avg_latency_ms", 999999.0);
+                    double stable_lat = safeDouble(stable_metrics, "avg_latency_ms", 999999.0);
+
+                    // 4. Decision: canary passes if success_rate >= 95% of stable
+                    //    AND avg_latency <= 120% of stable
+                    bool should_promote = (canary_sr >= stable_sr * 0.95) &&
+                                          (canary_lat <= stable_lat * 1.2);
+
+                    if (should_promote) {
+                        // 5a. Progressive promotion: increase weight by 10%
+                        int current_weight = 0;
+                        try {
+                            current_weight = std::stoi(
+                                canary_info.count("weight") ? canary_info["weight"] : "10");
+                        } catch (...) { current_weight = 10; }
+
+                        int new_weight = std::min(current_weight + 10, 100);
+                        redis->hset("canary:" + skill_name, "weight", std::to_string(new_weight));
+
+                        if (new_weight >= 100) {
+                            // Full promotion: canary is now the stable version
+                            redis->hset("canary:" + skill_name, "stage", "STABLE");
+                            LOG_INFO("Canary evaluation: PROMOTED '" + skill_name +
+                                     "' (agent=" + canary_agent_id + ") to STABLE "
+                                     "[sr=" + std::to_string(canary_sr) +
+                                     "%, lat=" + std::to_string(canary_lat) + "ms]");
+                            ++promoted;
+                        } else {
+                            LOG_INFO("Canary evaluation: increased weight to " +
+                                     std::to_string(new_weight) + "% for '" + skill_name +
+                                     "' [sr=" + std::to_string(canary_sr) +
+                                     "%, lat=" + std::to_string(canary_lat) + "ms]");
+                            ++increased;
+                        }
+                    } else {
+                        // 5b. Rollback: canary underperforms stable
+                        redis->hset("canary:" + skill_name, "stage", "ROLLING_BACK");
+                        redis->hset("canary:" + skill_name, "weight", "0");
+                        LOG_WARN("Canary evaluation: ROLLING BACK '" + skill_name +
+                                 "' (agent=" + canary_agent_id + ") "
+                                 "[canary_sr=" + std::to_string(canary_sr) +
+                                 "%, stable_sr=" + std::to_string(stable_sr) +
+                                 "%, canary_lat=" + std::to_string(canary_lat) +
+                                 "ms, stable_lat=" + std::to_string(stable_lat) + "ms]");
+                        ++rolled_back;
+                    }
+
+                    // Update last evaluation timestamp
+                    auto now_ts = std::to_string(
+                        std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count());
+                    redis->hset("canary:" + skill_name, "last_evaluation_at", now_ts);
+
+                } catch (const std::exception& e) {
+                    LOG_WARN("Canary evaluation: error processing skill '" +
+                             skill_name + "': " + e.what());
                 }
             }
+
+            LOG_INFO("Canary evaluation: cycle complete — promoted=" +
+                     std::to_string(promoted) + ", increased=" + std::to_string(increased) +
+                     ", rolled_back=" + std::to_string(rolled_back));
         },
         std::chrono::seconds(600));
+
+    // ========================================================================
+    // Batch 8: Span batch flush (every 1 second)
+    // Drains completed spans from the global queue and writes them to Redis
+    // as a JSON list under key "trace:spans:<trace_id>".
+    // ========================================================================
+
+    // Register the SpanExporter callback so TraceContext::endSpan() pushes
+    // completed spans into the global queue.
+    agent_rpc::common::TraceContext::setSpanExporter(pushSpanToQueue);
+
+    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
+        "span_batch_flush",
+        [&server]() {
+            // Drain up to kSpanBatchMax spans from the queue
+            std::queue<QueuedSpan> batch;
+            {
+                std::lock_guard<std::mutex> lock(g_span_queue_mutex);
+                size_t count = std::min(g_span_queue.size(), kSpanBatchMax);
+                for (size_t i = 0; i < count; ++i) {
+                    batch.push(std::move(g_span_queue.front()));
+                    g_span_queue.pop();
+                }
+            }
+
+            if (batch.empty()) return;
+
+            auto* redis = server.getRedisClient();
+            if (!redis || !redis->isConnected()) {
+                // Redis unavailable — put spans back (best-effort)
+                size_t requeued = batch.size();
+                std::lock_guard<std::mutex> lock(g_span_queue_mutex);
+                while (!batch.empty()) {
+                    g_span_queue.push(std::move(batch.front()));
+                    batch.pop();
+                }
+                LOG_WARN("Span batch flush: Redis unavailable, re-queued " +
+                         std::to_string(requeued) + " spans");
+                return;
+            }
+
+            // Group spans by trace_id and RPUSH each batch as a JSON string
+            size_t flushed = 0;
+            while (!batch.empty()) {
+                auto& qs = batch.front();
+                // Build a compact JSON representation
+                std::string json = "{\"trace_id\":\"" + qs.trace_id +
+                    "\",\"span_id\":\"" + qs.span_id +
+                    "\",\"name\":\"" + qs.name +
+                    "\",\"component\":\"" + qs.component +
+                    "\",\"duration_ms\":" + std::to_string(qs.duration_ms) +
+                    ",\"status\":\"" + qs.status + "\"}";
+
+                std::string key = "trace:spans:" + qs.trace_id;
+                redis->rpush(key, json);
+                // Set 24h TTL on the trace key (refreshed on each push)
+                redis->expire(key, 86400);
+                ++flushed;
+                batch.pop();
+            }
+
+            LOG_DEBUG("Span batch flush: wrote " + std::to_string(flushed) + " spans to Redis");
+        },
+        std::chrono::seconds(1));
 
     // 主循环
     while (g_running) {

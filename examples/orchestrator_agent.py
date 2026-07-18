@@ -66,33 +66,45 @@ _heartbeat_running = threading.Event()  # Fix #35: use threading.Event for threa
 _shutdown_requested = threading.Event()  # Fix #31: signal handler only sets flag
 
 
-def register():
+def register(max_retries=5, retry_delay=3):
+    """Register with NexusAI platform. Retries only on transient network errors
+    (connection refused, timeout), not on server-returned protocol errors."""
     global _agent_id
-    try:
-        data = http_post_json(
-            f"{NEXUSAI_PROXY}/agent_communication.AgentCommunicationService/RegisterAgent",
-            {
-                "agent_info": {
-                    "host": AGENT_HOST,
-                    "port": AGENT_PORT,
-                    "service_name": AGENT_NAME,
-                    "version": AGENT_VERSION,
-                    "skills": [s["name"] for s in AGENT_CARD["skills"]],
-                    "metadata": {"type": "orchestrator"},
-                    "agent_card": json.dumps(AGENT_CARD, ensure_ascii=False),
+    for attempt in range(1, max_retries + 1):
+        try:
+            data = http_post_json(
+                f"{NEXUSAI_PROXY}/agent_communication.AgentCommunicationService/RegisterAgent",
+                {
+                    "agent_info": {
+                        "host": AGENT_HOST,
+                        "port": AGENT_PORT,
+                        "service_name": AGENT_NAME,
+                        "version": AGENT_VERSION,
+                        "skills": [s["name"] for s in AGENT_CARD["skills"]],
+                        "metadata": {"type": "orchestrator"},
+                        "agent_card": json.dumps(AGENT_CARD, ensure_ascii=False),
+                    },
+                    "heartbeat_interval": HEARTBEAT_INTERVAL,
                 },
-                "heartbeat_interval": HEARTBEAT_INTERVAL,
-            },
-        )
-        if "error" in data:
-            logger.warning(f"注册失败: {data['error']}")
-            return False
-        _agent_id = data.get("agent_id", "")
-        logger.info(f"注册成功, agent_id={_agent_id}")
-        return True
-    except Exception as e:
-        logger.warning(f"注册失败: {e}")  # Fix #34: log instead of silent pass
-        return False
+            )
+            if "error" in data:
+                # Server-returned errors are NOT transient — fail immediately
+                logger.warning(f"注册失败: {data['error']}")
+                return False
+            _agent_id = data.get("agent_id", "")
+            if not _agent_id:
+                logger.warning("注册响应缺少 agent_id")
+                return False
+            logger.info(f"注册成功, agent_id={_agent_id} (attempt {attempt})")
+            return True
+        except Exception as e:
+            # Network-level exceptions are transient — retry with backoff
+            logger.warning(f"注册失败 (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(retry_delay)
+            else:
+                return False
+    return False
 
 
 def _heartbeat_loop():
@@ -135,7 +147,8 @@ def unregister():
 
 class A2AHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass  # Suppress default logging
+        """Log HTTP requests to logger at DEBUG level for diagnostics."""
+        logger.debug(f"[A2A HTTP] {args[0] if args else format}")
 
     def do_GET(self):
         if self.path == "/.well-known/agent-card.json":

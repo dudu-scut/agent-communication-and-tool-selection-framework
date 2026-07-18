@@ -18,6 +18,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <string>
 
 namespace agent_rpc {
@@ -72,7 +73,11 @@ inline int envOrInt(const char* name, int fallback) {
  */
 inline int loadEnvFile(const std::string& path = ".env") {
     std::ifstream file(path);
-    if (!file.is_open()) return 0;
+    if (!file.is_open()) {
+        // Log to stderr as a fallback — logger may not be initialized yet
+        std::cerr << "[WARN] .env file not found at '" << path << "', using defaults" << std::endl;
+        return 0;
+    }
 
     int count = 0;
     std::string line;

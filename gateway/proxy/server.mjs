@@ -160,9 +160,12 @@ function streamCall(serviceName, methodName, body, metadata, res) {
   stream.on('error', (err) => {
     if (ended) return;
     ended = true;
+    const codeLabel = err.code != null ? err.code : 'N/A';
+    console.error(`[proxy] Stream error (${serviceName}.${methodName}):`, err.message, `(code: ${codeLabel})`);
     const errJson = JSON.stringify({
       event_type: 'error',
       content: err.message || 'Stream error',
+      code: err.code != null ? err.code : 'N/A',
     });
     res.write(`data: ${errJson}\n\n`);
     res.end();
@@ -258,6 +261,8 @@ function handleRequest(req, res) {
       });
       res.end(JSON.stringify(sanitizeBuffers(response)));
     } catch (err) {
+      const codeLabel = err.code != null ? err.code : 'N/A';
+      console.error(`[proxy] RPC error (${serviceName}.${methodName}):`, err.message, `(code: ${codeLabel})`);
       const status = err.code === grpc.status.UNAUTHENTICATED ? 401
         : err.code === grpc.status.NOT_FOUND ? 404
         : err.code === grpc.status.ALREADY_EXISTS ? 409
@@ -269,7 +274,7 @@ function handleRequest(req, res) {
       });
       res.end(JSON.stringify({
         error: err.message || 'RPC failed',
-        code: err.code,
+        code: err.code != null ? err.code : 'N/A',
         details: err.details,
       }));
     }
