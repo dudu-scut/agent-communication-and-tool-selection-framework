@@ -1,6 +1,8 @@
 #include "agent_rpc/common/logger.h"
 
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -41,8 +43,14 @@ std::string LogFormatter::format(const LogEntry& entry) const {
               1000;
 
     std::ostringstream oss;
+    std::tm local_tm;
+#ifdef _WIN32
+    localtime_s(&local_tm, &time_t);
+#else
+    localtime_r(&time_t, &local_tm);
+#endif
     oss << "["
-        << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S")
+        << std::put_time(&local_tm, "%Y-%m-%d %H:%M:%S")
         << "." << std::setfill('0') << std::setw(3) << ms.count() << "] "
         << "[" << getLevelString(entry.level) << "] "
         << "[" << entry.thread_id << "]";
@@ -181,16 +189,26 @@ void FileAppender::rotateFiles() {
         file_.close();
     }
 
+    // Rotate .N → .(N+1), removing oldest if it exists.
+    // Check return values to detect and log failures (disk full, permissions).
     for (int i = max_files_ - 1; i >= 1; --i) {
         const auto src = file_path_ + "." + std::to_string(i);
         const auto dst = file_path_ + "." + std::to_string(i + 1);
-        std::remove(dst.c_str());
-        std::rename(src.c_str(), dst.c_str());
+        std::remove(dst.c_str());  // Best-effort: dst may not exist
+        if (std::rename(src.c_str(), dst.c_str()) != 0 && errno != ENOENT) {
+            // Log via stderr since the logger itself may be affected
+            std::fprintf(stderr, "[Logger] rotateFiles: rename(%s, %s) failed: %s\n",
+                         src.c_str(), dst.c_str(), std::strerror(errno));
+        }
     }
 
     const auto first_rotated = file_path_ + ".1";
-    std::remove(first_rotated.c_str());
-    std::rename(file_path_.c_str(), first_rotated.c_str());
+    std::remove(first_rotated.c_str());  // Best-effort
+    if (std::rename(file_path_.c_str(), first_rotated.c_str()) != 0) {
+        std::fprintf(stderr, "[Logger] rotateFiles: rename(%s, %s) failed: %s\n",
+                     file_path_.c_str(), first_rotated.c_str(), std::strerror(errno));
+        // Continue anyway — open a fresh log file to avoid data loss
+    }
 
     file_.open(file_path_, std::ios::trunc);
     current_size_ = 0;

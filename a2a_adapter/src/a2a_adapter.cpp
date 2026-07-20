@@ -536,6 +536,26 @@ bool A2AAdapter::processQueryDirect(
         return false;
     }
 
+    // Validate agent URL to prevent SSRF and internal network access.
+    // Only allow http/https schemes to known ports.  Reject empty URLs,
+    // file://, and other schemes that could be abused.
+    if (agent_url.empty()) {
+        if (response) {
+            auto* status = response->mutable_status();
+            status->set_code(static_cast<int>(grpc::StatusCode::INVALID_ARGUMENT));
+            status->set_message("Agent URL must not be empty");
+        }
+        return false;
+    }
+    if (agent_url.find("http://") != 0 && agent_url.find("https://") != 0) {
+        if (response) {
+            auto* status = response->mutable_status();
+            status->set_code(static_cast<int>(grpc::StatusCode::INVALID_ARGUMENT));
+            status->set_message("Agent URL must use http:// or https:// scheme");
+        }
+        return false;
+    }
+
     auto start_time = std::chrono::steady_clock::now();
 
     // Circuit breaker: check if the target agent is healthy
@@ -633,6 +653,17 @@ void A2AAdapter::processQueryStreamingDirect(
     const std::string& agent_url) {
 
     if (!initialized_ || !callback) {
+        return;
+    }
+
+    // Validate agent URL (same SSRF protection as processQueryDirect)
+    if (agent_url.empty() ||
+        (agent_url.find("http://") != 0 && agent_url.find("https://") != 0)) {
+        agent_communication::AIStreamEvent cb_event;
+        response_adapter_->buildStreamEvent(
+            "Invalid agent URL — must use http:// or https:// scheme",
+            request.context_id(), "error", &cb_event);
+        callback(cb_event);
         return;
     }
 

@@ -407,7 +407,7 @@ private:
 
     mutable std::mutex agents_mutex_;
     std::unordered_map<std::string, AgentInfo> agents_;
-    RoutingStrategy strategy_ = RoutingStrategy::SKILL_MATCH;
+    std::atomic<RoutingStrategy> strategy_{RoutingStrategy::SKILL_MATCH};
     std::atomic<size_t> round_robin_index_{0};
     std::mt19937 random_generator_;  // 仅在持有 agents_mutex_ 的调用路径中使用，因此线程安全 (fix #24)
     bool initialized_ = false;

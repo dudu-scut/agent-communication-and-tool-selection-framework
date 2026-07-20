@@ -357,3 +357,73 @@ target_include_directories(test_load_balancer_advanced PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
 )
 add_test(NAME LoadBalancerAdvancedTest COMMAND test_load_balancer_advanced)
+
+# CircuitBreaker 边缘情况测试（bug-hunt: 状态转换、并发、配置验证）
+add_executable(test_circuit_breaker_edge test_circuit_breaker_edge.cpp)
+target_link_libraries(test_circuit_breaker_edge
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_circuit_breaker_edge PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME CircuitBreakerEdgeTest COMMAND test_circuit_breaker_edge)
+
+# TaskStateValidator 一致性测试（bug-hunt: isValidTransition ↔ getValidNextStates 一致性）
+add_executable(test_task_state_validator test_task_state_validator.cpp)
+target_link_libraries(test_task_state_validator
+    a2a_adapter
+    a2a
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_task_state_validator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+)
+add_test(NAME TaskStateValidatorTest COMMAND test_task_state_validator)
+
+# LoadBalancer 边缘情况测试（bug-hunt: const_cast、ConsistentHash 回归、空列表）
+add_executable(test_load_balancer_edges test_load_balancer_edges.cpp)
+target_link_libraries(test_load_balancer_edges
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_load_balancer_edges PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME LoadBalancerEdgesTest COMMAND test_load_balancer_edges)
+
+# AgentInfo 边缘情况测试（bug-hunt: hasSkill/hasAnySkill 空输入语义、getSkillDescription 区分度）
+add_executable(test_agent_info_edges test_agent_info_edges.cpp)
+target_link_libraries(test_agent_info_edges
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_agent_info_edges PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../orchestrator/include
+)
+add_test(NAME AgentInfoEdgesTest COMMAND test_agent_info_edges)
+
+# ErrorMapper 边缘情况测试（bug-hunt: 错误码映射完整性、网络异常分类）
+add_executable(test_error_mapper test_error_mapper.cpp)
+target_link_libraries(test_error_mapper
+    a2a_adapter
+    a2a
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_error_mapper PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+)
+add_test(NAME ErrorMapperTest COMMAND test_error_mapper)

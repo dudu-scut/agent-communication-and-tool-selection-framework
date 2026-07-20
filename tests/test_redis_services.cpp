@@ -32,10 +32,11 @@ int getRedisPort() {
     return p ? std::atoi(p) : 6379;
 }
 
-// Unique prefix for each test run to avoid collisions
+// Unique prefix for each test run to avoid collisions.
+// Uses '_' instead of ':' for compatibility with Redis key sanitization in MemoryService.
 std::string testPrefix() {
     static int counter = 0;
-    return "nexusai_test:" + std::to_string(counter++);
+    return "nexusai_test_" + std::to_string(counter++);
 }
 
 }  // namespace
@@ -184,7 +185,7 @@ protected:
 };
 
 TEST_F(MemoryFixture, ConversationHistory) {
-    auto ctx = testPrefix() + ":ctx";
+    auto ctx = testPrefix() + "_ctx";  // sanitization-safe (no colons)
     auto agent = "agent-1";
 
     memory->appendMessage(ctx, agent, "user", "你好");
@@ -195,13 +196,13 @@ TEST_F(MemoryFixture, ConversationHistory) {
     EXPECT_TRUE(history.find("你好") != std::string::npos);
     EXPECT_TRUE(history.find("排序算法") != std::string::npos);
 
-    // Cleanup
+    // Cleanup — keys match sanitized MemoryService internals (colons → underscores)
     redis.del("nexusai:conv:" + ctx + ":" + agent);
     redis.del("nexusai:last_agent:" + ctx);
 }
 
 TEST_F(MemoryFixture, LastAgentTracking) {
-    auto ctx = testPrefix() + ":ctx";
+    auto ctx = testPrefix() + "_ctx";  // sanitization-safe
 
     memory->setLastAgent(ctx, "agent-a");
     EXPECT_EQ(memory->getLastAgent(ctx), "agent-a");
@@ -213,7 +214,7 @@ TEST_F(MemoryFixture, LastAgentTracking) {
 }
 
 TEST_F(MemoryFixture, UserMemory) {
-    auto uid = testPrefix() + ":uid";
+    auto uid = testPrefix() + "_uid";  // sanitization-safe
 
     memory->setUserMemory(uid, "language", "Chinese");
     memory->setUserMemory(uid, "timezone", "UTC+8");
@@ -226,7 +227,8 @@ TEST_F(MemoryFixture, UserMemory) {
 }
 
 TEST_F(MemoryFixture, UserMemoryFromHints) {
-    auto uid = testPrefix() + ":uid";
+    // Use sanitization-safe IDs (no colons — they get replaced by '_')
+    auto uid = testPrefix() + "_uid";
     auto key = "nexusai:memory:" + uid;
 
     // Pre-set a field
@@ -256,7 +258,7 @@ TEST_F(MemoryFixture, UserMemoryFromHints) {
 }
 
 TEST_F(MemoryFixture, CrossAgentSummary) {
-    auto ctx = testPrefix() + ":ctx";
+    auto ctx = testPrefix() + "_ctx";  // sanitization-safe (no colons)
 
     EXPECT_EQ(memory->getCrossAgentSummary(ctx), "");
 
@@ -268,8 +270,8 @@ TEST_F(MemoryFixture, CrossAgentSummary) {
 }
 
 TEST_F(MemoryFixture, BuildSystemContext) {
-    auto uid = testPrefix() + ":uid";
-    auto ctx = testPrefix() + ":ctx";
+    auto uid = testPrefix() + "_uid";  // sanitization-safe (no colons)
+    auto ctx = testPrefix() + "_ctx";
     auto agent = "agent-1";
 
     // Set up some data
@@ -291,7 +293,7 @@ TEST_F(MemoryFixture, BuildSystemContext) {
 }
 
 TEST_F(MemoryFixture, HistoryTrimming) {
-    auto ctx = testPrefix() + ":ctx";
+    auto ctx = testPrefix() + "_ctx";  // sanitization-safe
     auto agent = "agent-trim";
 
     // Append more than 50 messages (kMaxHistoryPerAgent)

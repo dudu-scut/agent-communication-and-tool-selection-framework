@@ -1,12 +1,24 @@
 #include "agent_rpc/server/sharing_service.h"
+#include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include <uuid/uuid.h>
 
 namespace agent_rpc { namespace server {
 
+namespace {
+bool checkAuth() {
+    if (!AuthInterceptor::isAuthenticated()) {
+        LOG_WARN("Unauthenticated access attempt to sharing service");
+        return false;
+    }
+    return true;
+}
+} // anonymous namespace
+
 grpc::Status SharingServiceImpl::ObserveSession(
-    grpc::ServerContext*, const agent_communication::ObserveSessionRequest* request,
+    grpc::ServerContext* ctx, const agent_communication::ObserveSessionRequest* request,
     grpc::ServerWriter<agent_communication::AIStreamEvent>* writer) {
+    if (!checkAuth()) return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     // Placeholder: real-time session observation requires SSE stream multiplexing
     // which is not yet wired up. Returns an empty stream immediately.
     agent_communication::AIStreamEvent event;
@@ -18,8 +30,9 @@ grpc::Status SharingServiceImpl::ObserveSession(
 }
 
 grpc::Status SharingServiceImpl::ShareSession(
-    grpc::ServerContext*, const agent_communication::ShareSessionRequest* request,
+    grpc::ServerContext* ctx, const agent_communication::ShareSessionRequest* request,
     agent_communication::ShareSessionResponse* response) {
+    if (!checkAuth()) return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     uuid_t uuid; char uuid_str[37];
     uuid_generate(uuid); uuid_unparse_lower(uuid, uuid_str);
     response->mutable_status()->set_code(0);
@@ -31,8 +44,9 @@ grpc::Status SharingServiceImpl::ShareSession(
 }
 
 grpc::Status SharingServiceImpl::SaveTemplate(
-    grpc::ServerContext*, const agent_communication::SaveTemplateRequest* request,
+    grpc::ServerContext* ctx, const agent_communication::SaveTemplateRequest* request,
     agent_communication::SaveTemplateResponse* response) {
+    if (!checkAuth()) return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     uuid_t uuid; char uuid_str[37];
     uuid_generate(uuid); uuid_unparse_lower(uuid, uuid_str);
     response->mutable_status()->set_code(0);
@@ -43,8 +57,9 @@ grpc::Status SharingServiceImpl::SaveTemplate(
 }
 
 grpc::Status SharingServiceImpl::UseTemplate(
-    grpc::ServerContext*, const agent_communication::UseTemplateRequest* request,
+    grpc::ServerContext* ctx, const agent_communication::UseTemplateRequest* request,
     agent_communication::UseTemplateResponse* response) {
+    if (!checkAuth()) return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("OK");
     response->set_context_id("ctx-from-template-" + request->template_id());

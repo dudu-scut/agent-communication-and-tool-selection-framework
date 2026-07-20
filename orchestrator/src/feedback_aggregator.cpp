@@ -27,21 +27,32 @@ std::string FeedbackAggregator::pgUrl() {
     return "postgresql://localhost:5432/nexus";
 }
 
-std::string FeedbackAggregator::execPsql(const std::string& sql) {
-    // Escape double quotes in the SQL for shell safety
+// Escape a string for safe use within a shell double-quoted argument.
+// Escapes backslash, double-quote, backtick, and dollar sign to prevent
+// command injection via $(), ``, and other shell metacharacters.
+static std::string shellEscape(const std::string& s) {
     std::string escaped;
-    escaped.reserve(sql.size() + 16);
-    for (char c : sql) {
-        if (c == '"') {
-            escaped += "\\\"";
-        } else if (c == '\'') {
-            escaped += "'\\''";
-        } else {
-            escaped += c;
+    escaped.reserve(s.size() + 16);
+    for (char c : s) {
+        switch (c) {
+            case '\\': escaped += "\\\\"; break;
+            case '"':  escaped += "\\\""; break;
+            case '`':  escaped += "\\`";  break;
+            case '$':  escaped += "\\$";  break;
+            case '\n': escaped += " ";    break;  // newlines break shell commands
+            case '\r': escaped += "";     break;  // strip CR
+            default:   escaped += c;      break;
         }
     }
+    return escaped;
+}
 
-    std::string cmd = "psql \"" + pgUrl() + "\" -t -A -c \"" + escaped + "\" 2>/dev/null";
+std::string FeedbackAggregator::execPsql(const std::string& sql) {
+    // Use proper shell escaping to prevent command injection
+    std::string escaped_sql = shellEscape(sql);
+    std::string escaped_url = shellEscape(pgUrl());
+
+    std::string cmd = "psql \"" + escaped_url + "\" -t -A -c \"" + escaped_sql + "\" 2>/dev/null";
 
     std::array<char, 4096> buffer;
     std::string result;

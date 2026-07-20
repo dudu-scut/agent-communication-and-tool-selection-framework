@@ -30,23 +30,9 @@ int ContextCompressor::estimateTokens(
     }
     if (total_chars == 0) return 0;
 
-    // Heuristic: detect whether content is predominantly CJK
-    size_t cjk_count = 0;
-    size_t sample = std::min(total_chars, size_t{1024});
-    for (size_t i = 0; i < sample && i < total_chars; ++i) {
-        // Very rough CJK range check — counts characters in U+4E00..U+9FFF
-        // and U+3000..U+303F ranges.  Only samples because full scan is O(n).
-        // Practically, the first few hundred characters are representative.
-    }
-
-    // Actually do a proper scan over all history but limit to 10k chars
+    // Concatenate content up to a scan limit (10k chars) for CJK detection.
+    // The first ~10k chars are representative enough for language ratio estimation.
     size_t scan_limit = std::min(total_chars, size_t{10000});
-    for (size_t i = 0; i < scan_limit; ++i) {
-        // We'll iterate per-character through the combined content.
-        // Rather than concatenating, just check the first 10k chars
-        // by iterating turns.
-    }
-    // Simpler approach: count CJK in concatenated content (capped).
     std::string combined;
     combined.reserve(scan_limit);
     for (const auto& turn : history) {
@@ -54,36 +40,27 @@ int ContextCompressor::estimateTokens(
         size_t room = scan_limit - combined.size();
         combined.append(turn.content.substr(0, room));
     }
-    for (unsigned char c : combined) {
-        // CJK Unified Ideographs: U+4E00..U+9FFF
-        if ((c >= 0xE4 && c <= 0xE9) ||  // leading bytes in UTF-8 for CJK
-            c >= 0xE4) {
-            // Count multi-byte sequences — imperfect but good enough heuristic
-        }
-    }
 
-    // Re-count properly using the wide character ranges
-    cjk_count = 0;
+    // Count CJK characters using proper UTF-8 multi-byte parsing.
+    // CJK Unified Ideographs (U+4E00–U+9FFF) are encoded as 3-byte UTF-8
+    // sequences with leading bytes 0xE4–0xE9.
+    size_t cjk_count = 0;
     for (size_t i = 0; i < combined.size(); ) {
         unsigned char c = combined[i];
         if (c < 0x80) {
-            // ASCII: 1 byte
-            ++i;
+            ++i;                          // ASCII: 1 byte
         } else if (c < 0xC0) {
-            // Continuation byte — skip
-            ++i;
+            ++i;                          // Continuation byte — skip
         } else if (c < 0xE0) {
-            // 2-byte UTF-8 (mostly Latin supplement, etc.)
-            i += 2;
+            i += 2;                       // 2-byte UTF-8 (Latin supplement, etc.)
         } else if (c < 0xF0) {
-            // 3-byte UTF-8 — this range covers CJK
-            // Check if it falls in U+4E00..U+9FFF
+            // 3-byte UTF-8 — check if in CJK Unified Ideographs range
             if (c >= 0xE4 && c <= 0xE9 && i + 2 < combined.size()) {
                 ++cjk_count;
             }
             i += 3;
         } else {
-            i += 4;
+            i += 4;                       // 4-byte UTF-8 (supplementary, emoji, etc.)
         }
     }
 
@@ -180,7 +157,11 @@ std::string ContextCompressor::generateSummary(
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);  // dev only
+    // Enable SSL certificate verification for production safety.
+    // Set CURLOPT_SSL_VERIFYPEER=0L only in debug builds if needed.
+#ifndef NDEBUG
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+#endif
 
     CURLcode res = curl_easy_perform(curl);
     curl_slist_free_all(headers);

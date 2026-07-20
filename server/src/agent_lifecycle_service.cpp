@@ -1,4 +1,5 @@
 #include "agent_rpc/server/agent_lifecycle_service.h"
+#include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include <json/json.h>
 
@@ -7,8 +8,10 @@ namespace agent_rpc { namespace server {
 AgentLifecycleServiceImpl::AgentLifecycleServiceImpl(common::RedisClient* redis) : redis_(redis) {}
 
 grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
-    grpc::ServerContext*, const agent_communication::SubmitFeedbackRequest* request,
+    grpc::ServerContext* ctx, const agent_communication::SubmitFeedbackRequest* request,
     agent_communication::SubmitFeedbackResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("OK");
 
@@ -36,8 +39,10 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
 }
 
 grpc::Status AgentLifecycleServiceImpl::GetAgentCompare(
-    grpc::ServerContext*, const agent_communication::GetAgentCompareRequest* /*request*/,
+    grpc::ServerContext* ctx, const agent_communication::GetAgentCompareRequest* /*request*/,
     agent_communication::GetAgentCompareResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     // Placeholder: returns empty comparison until agent metrics aggregation is wired up
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("Not yet implemented — agent metrics aggregation pending");
@@ -45,8 +50,10 @@ grpc::Status AgentLifecycleServiceImpl::GetAgentCompare(
 }
 
 grpc::Status AgentLifecycleServiceImpl::SetAutonomyLevel(
-    grpc::ServerContext*, const agent_communication::SetAutonomyLevelRequest* request,
+    grpc::ServerContext* ctx, const agent_communication::SetAutonomyLevelRequest* request,
     agent_communication::SetAutonomyLevelResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     // Store autonomy level in Redis
     if (redis_) {
         std::string key = "autonomy:" + request->user_id() + ":" + request->agent_id();
@@ -64,8 +71,10 @@ grpc::Status AgentLifecycleServiceImpl::SetAutonomyLevel(
 }
 
 grpc::Status AgentLifecycleServiceImpl::UndoAction(
-    grpc::ServerContext*, const agent_communication::UndoActionRequest* /*request*/,
+    grpc::ServerContext* ctx, const agent_communication::UndoActionRequest* /*request*/,
     agent_communication::UndoActionResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     // Placeholder: undo requires action history persistence which is not yet implemented
     response->mutable_status()->set_code(1);
     response->mutable_status()->set_message("Undo not yet implemented — action history persistence pending");

@@ -82,7 +82,7 @@ LeastConnectionsLoadBalancer::LeastConnectionsLoadBalancer() = default;
 ServiceEndpoint LeastConnectionsLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
     if (endpoints.empty()) throw std::runtime_error("No endpoints available");
     std::lock_guard<std::mutex> lock(endpoints_mutex_);
-    ServiceEndpoint* best = nullptr;
+    std::string best_id;
     int min_conn = INT_MAX;
     for (const auto& ep : endpoints) {
         if (!ep.is_healthy) continue;
@@ -90,13 +90,20 @@ ServiceEndpoint LeastConnectionsLoadBalancer::selectEndpoint(const std::vector<S
         int conn = connection_counts_[id];
         if (conn < min_conn) {
             min_conn = conn;
-            best = const_cast<ServiceEndpoint*>(&ep);
+            best_id = id;
         }
     }
-    if (!best) throw std::runtime_error("No healthy endpoints available");
-    std::string id = best->host + ":" + std::to_string(best->port);
-    connection_counts_[id]++;
-    return *best;
+    if (best_id.empty()) throw std::runtime_error("No healthy endpoints available");
+    connection_counts_[best_id]++;
+    // Return copy from endpoints_ map (mutable) — avoids const_cast UB
+    auto it = endpoints_.find(best_id);
+    if (it != endpoints_.end()) return it->second;
+    // Fallback: find in the input vector (shouldn't normally reach here)
+    for (const auto& ep : endpoints) {
+        std::string id = ep.host + ":" + std::to_string(ep.port);
+        if (id == best_id) return ep;
+    }
+    throw std::runtime_error("No healthy endpoints available");
 }
 
 void LeastConnectionsLoadBalancer::updateEndpoints(const std::vector<ServiceEndpoint>& endpoints) {
@@ -264,8 +271,8 @@ LeastResponseTimeLoadBalancer::LeastResponseTimeLoadBalancer() = default;
 ServiceEndpoint LeastResponseTimeLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
     if (endpoints.empty()) throw std::runtime_error("No endpoints available");
     std::lock_guard<std::mutex> lock(stats_mutex_);
-    ServiceEndpoint* best_known = nullptr;
-    ServiceEndpoint* best_unknown = nullptr;
+    std::string best_unknown_id;
+    std::string best_known_id;
     std::chrono::milliseconds min_time = std::chrono::milliseconds::max();
     for (const auto& ep : endpoints) {
         if (!ep.is_healthy) continue;
@@ -273,18 +280,26 @@ ServiceEndpoint LeastResponseTimeLoadBalancer::selectEndpoint(const std::vector<
         auto it = endpoint_stats_.find(id);
         if (it == endpoint_stats_.end()) {
             // Unknown endpoint — prefer it to explore new endpoints
-            if (!best_unknown) best_unknown = const_cast<ServiceEndpoint*>(&ep);
+            if (best_unknown_id.empty()) best_unknown_id = id;
         } else {
             auto rt = calculateAverageResponseTime(id);
             if (rt < min_time) {
                 min_time = rt;
-                best_known = const_cast<ServiceEndpoint*>(&ep);
+                best_known_id = id;
             }
         }
     }
     // Prefer unknown endpoints (exploration), fallback to fastest known
-    if (best_unknown) return *best_unknown;
-    if (best_known) return *best_known;
+    if (!best_unknown_id.empty()) {
+        for (const auto& ep : endpoints) {
+            if (ep.host + ":" + std::to_string(ep.port) == best_unknown_id) return ep;
+        }
+    }
+    if (!best_known_id.empty()) {
+        for (const auto& ep : endpoints) {
+            if (ep.host + ":" + std::to_string(ep.port) == best_known_id) return ep;
+        }
+    }
     throw std::runtime_error("No healthy endpoints available");
 }
 

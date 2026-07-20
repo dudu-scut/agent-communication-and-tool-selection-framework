@@ -71,21 +71,37 @@ public:
         int max_history = 10) const;
 
 private:
-    // Redis key helpers
+    // Sanitize a key component for safe use in colon-delimited Redis keys.
+    // Replaces ':' with '_' to prevent key namespace boundary injection,
+    // and strips control characters (newlines, nulls, etc.).
+    static std::string sanitizeKeyComponent(const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) {
+            if (c == ':')       out += '_';
+            else if (c == '\n') out += ' ';
+            else if (c == '\r') {}           // strip CR
+            else if (c >= 0x01 && c < 0x20) {}  // strip control chars
+            else out += c;
+        }
+        return out;
+    }
+
+    // Redis key helpers — all components sanitized to prevent injection
     static std::string convKey(const std::string& ctx, const std::string& agent) {
-        return "nexusai:conv:" + ctx + ":" + agent;
+        return "nexusai:conv:" + sanitizeKeyComponent(ctx) + ":" + sanitizeKeyComponent(agent);
     }
     static std::string lastAgentKey(const std::string& ctx) {
-        return "nexusai:last_agent:" + ctx;
+        return "nexusai:last_agent:" + sanitizeKeyComponent(ctx);
     }
     static std::string memoryKey(const std::string& uid) {
-        return "nexusai:memory:" + uid;
+        return "nexusai:memory:" + sanitizeKeyComponent(uid);
     }
     static std::string summaryKey(const std::string& ctx) {
-        return "nexusai:summary:" + ctx;
+        return "nexusai:summary:" + sanitizeKeyComponent(ctx);
     }
     static std::string profileKey(const std::string& uid) {
-        return "user_profile:" + uid;
+        return "user_profile:" + sanitizeKeyComponent(uid);
     }
 
     static constexpr int kMaxHistoryPerAgent = 50;

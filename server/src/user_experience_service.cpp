@@ -1,4 +1,5 @@
 #include "agent_rpc/server/user_experience_service.h"
+#include "agent_rpc/server/auth_interceptor.h"
 #include "agent_rpc/common/logger.h"
 #include <uuid/uuid.h>
 
@@ -6,9 +7,11 @@ namespace agent_rpc {
 namespace server {
 
 grpc::Status UserExperienceServiceImpl::InterventionResponse(
-    grpc::ServerContext*,
+    grpc::ServerContext* ctx,
     const agent_communication::InterventionResponseRequest* request,
     agent_communication::InterventionResponseResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("OK");
     LOG_INFO("InterventionResponse: trace=" + request->trace_id() + " decision=" + request->decision());
@@ -16,9 +19,11 @@ grpc::Status UserExperienceServiceImpl::InterventionResponse(
 }
 
 grpc::Status UserExperienceServiceImpl::SandboxQuery(
-    grpc::ServerContext*,
+    grpc::ServerContext* ctx,
     const agent_communication::SandboxQueryRequest* request,
     agent_communication::SandboxQueryResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
     (void)request;
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("OK");

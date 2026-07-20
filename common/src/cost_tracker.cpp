@@ -96,7 +96,13 @@ void CostTracker::updateRedisBudget(const std::string& user_id, double cost_usd)
              << std::setw(2) << (tm_buf.tm_mon + 1) << "-"
              << std::setw(2) << tm_buf.tm_mday;
 
-    std::string key = "cost:" + user_id + ":" + date_key.str();
+    // Sanitize user_id: replace ':' to prevent Redis key namespace injection
+    std::string safe_user_id = user_id;
+    for (auto& c : safe_user_id) {
+        if (c == ':') c = '_';
+    }
+
+    std::string key = "cost:" + safe_user_id + ":" + date_key.str();
     int64_t new_total;
     redis_->incrby(key, micro, new_total);
     redis_->expire(key, 90000);

@@ -116,6 +116,23 @@ std::string ExportService::toHTML(const std::string& markdown) {
          << "<div class=\"content\">\n";
 
     // Simple Markdown-to-HTML conversion: preserve paragraphs
+    // HTML-escapes content to prevent XSS injection from message bodies
+    auto htmlEscape = [](const std::string& s) -> std::string {
+        std::string escaped;
+        escaped.reserve(s.size());
+        for (char c : s) {
+            switch (c) {
+                case '&': escaped += "&amp;"; break;
+                case '<': escaped += "&lt;"; break;
+                case '>': escaped += "&gt;"; break;
+                case '"': escaped += "&quot;"; break;
+                case '\'': escaped += "&#39;"; break;
+                default:  escaped += c; break;
+            }
+        }
+        return escaped;
+    };
+
     std::istringstream stream(markdown);
     std::string line;
     while (std::getline(stream, line)) {
@@ -136,7 +153,7 @@ std::string ExportService::toHTML(const std::string& markdown) {
         }
         // Skip blockquote markers
         if (line.rfind("> ", 0) == 0) {
-            html << line.substr(2);
+            html << htmlEscape(line.substr(2));
             continue;
         }
         // Skip list items
@@ -148,7 +165,7 @@ std::string ExportService::toHTML(const std::string& markdown) {
             html << "</div></div>";
             continue;
         }
-        html << line;
+        html << htmlEscape(line);
     }
 
     html << "</div>\n"
