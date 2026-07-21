@@ -135,8 +135,9 @@ export interface GetAgentMetricsRequest {
   agent_id: string
 }
 
-export interface GetAgentMetricsResponse extends AgentMetrics {
-  error?: string
+export interface GetAgentMetricsResponse {
+  status: Status
+  metrics: AgentMetrics
 }
 
 // === Budget ===

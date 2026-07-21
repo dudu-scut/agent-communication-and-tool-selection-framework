@@ -42,6 +42,7 @@ function loadProto(file) {
 // Load all proto packages
 const agentProto = loadProto('agent_service.proto');
 const queryProto = loadProto('ai_query.proto');
+const observabilityProto = loadProto('observability.proto');
 const userProto = loadProto('user.proto');
 
 // ── Create gRPC Clients ─────────────────────────────────────────────────
@@ -57,6 +58,9 @@ function initClients() {
   // agent_communication.AIQueryService
   clients['agent_communication.AIQueryService'] =
     new queryProto.agent_communication.AIQueryService(GRPC_TARGET, creds);
+
+  clients['agent_communication.ObservabilityService'] =
+    new observabilityProto.agent_communication.ObservabilityService(GRPC_TARGET, creds);
 
   // agent_communication.auth.UserService
   clients['agent_communication.auth.UserService'] =

@@ -136,7 +136,6 @@ export function queryStream(
     signal: controller.signal,
   })
     .then(async (resp) => {
-      clearTimeout(timeoutId)
       if (!resp.ok) {
         throw new Error(`QueryStream failed: ${resp.status}`)
       }
@@ -181,6 +180,7 @@ export function queryStream(
           // ignore
         }
       }
+      clearTimeout(timeoutId)
     })
     .catch((err) => {
       clearTimeout(timeoutId)
@@ -235,11 +235,11 @@ export async function getAgentMetrics(
 ): Promise<{ data: AgentMetrics | null; error?: string }> {
   try {
     const response = await unaryCall<{ agent_id: string }, GetAgentMetricsResponse>(
-      AGENT_COMM,
+      AI_QUERY,
       'GetAgentMetrics',
       { agent_id: agentId },
     )
-    return { data: response as AgentMetrics ?? null }
+    return { data: response.metrics ?? null }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.warn(`Failed to get metrics for ${agentId}:`, e)
