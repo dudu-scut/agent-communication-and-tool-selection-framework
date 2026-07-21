@@ -44,6 +44,10 @@ const agentProto = loadProto('agent_service.proto');
 const queryProto = loadProto('ai_query.proto');
 const observabilityProto = loadProto('observability.proto');
 const userProto = loadProto('user.proto');
+const orchestrationProto = loadProto('orchestration.proto');
+const sharingProto = loadProto('sharing.proto');
+const lifecycleProto = loadProto('agent_lifecycle.proto');
+const experienceProto = loadProto('user_experience.proto');
 
 // ── Create gRPC Clients ─────────────────────────────────────────────────
 const clients = {};
@@ -70,8 +74,37 @@ function initClients() {
   clients['agent_communication.HealthService'] =
     new agentProto.agent_communication.HealthService(GRPC_TARGET, creds);
 
+  // agent_communication.OrchestrationService
+  clients['agent_communication.OrchestrationService'] =
+    new orchestrationProto.agent_communication.OrchestrationService(GRPC_TARGET, creds);
+
+  // agent_communication.SharingService
+  clients['agent_communication.SharingService'] =
+    new sharingProto.agent_communication.SharingService(GRPC_TARGET, creds);
+
+  // agent_communication.AgentLifecycleService
+  clients['agent_communication.AgentLifecycleService'] =
+    new lifecycleProto.agent_communication.AgentLifecycleService(GRPC_TARGET, creds);
+
+  // agent_communication.UserExperienceService
+  clients['agent_communication.UserExperienceService'] =
+    new experienceProto.agent_communication.UserExperienceService(GRPC_TARGET, creds);
+
   console.log(`gRPC clients initialized → ${GRPC_TARGET}`);
 }
+
+// ── Streaming RPC Classification ───────────────────────────────────────
+const SERVER_STREAMING_RPCS = new Set([
+  'agent_communication.AIQueryService/QueryStream',
+  'agent_communication.AgentCommunicationService/ListenMessages',
+  'agent_communication.HealthService/Watch',
+  'agent_communication.SharingService/ObserveSession',
+]);
+
+const UNSUPPORTED_STREAMING_RPCS = new Set([
+  'agent_communication.AgentCommunicationService/BatchSendMessages',
+  'agent_communication.AgentCommunicationService/RealTimeCommunication',
+]);
 
 // ── Helper: Extract auth metadata ───────────────────────────────────────
 function buildMetadata(headers) {
@@ -251,8 +284,23 @@ function handleRequest(req, res) {
 
     const metadata = buildMetadata(req.headers);
 
-    // Check if server-streaming
-    if (methodName === 'QueryStream' || methodName === 'ListenMessages' || methodName === 'Watch') {
+    // Classify RPC by streaming type
+    const rpcPath = serviceName + '/' + methodName;
+
+    // Client-streaming and bidirectional are unsupported over HTTP JSON
+    if (UNSUPPORTED_STREAMING_RPCS.has(rpcPath)) {
+      res.writeHead(501, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      });
+      return res.end(JSON.stringify({
+        error: 'RPC streaming mode is not supported by the JSON proxy',
+        rpc: rpcPath,
+      }));
+    }
+
+    // Server-streaming → SSE
+    if (SERVER_STREAMING_RPCS.has(rpcPath)) {
       return streamCall(serviceName, methodName, parsed, metadata, res);
     }
 
