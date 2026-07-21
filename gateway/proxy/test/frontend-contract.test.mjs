@@ -28,3 +28,56 @@ test('stream timeout remains active until the response reader finishes', () => {
   assert.ok(createReader >= 0);
   assert.ok(clearBeforeReader > createReader);
 });
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
+}
+
+const protoFiles = [
+  'agent_service.proto',
+  'ai_query.proto',
+  'user.proto',
+  'observability.proto',
+  'orchestration.proto',
+  'sharing.proto',
+  'agent_lifecycle.proto',
+  'user_experience.proto',
+];
+
+test('proxy registers every gRPC service declared by project protos', () => {
+  for (const file of protoFiles) {
+    const source = fs.readFileSync(path.join(root, 'proto', file), 'utf8');
+    const packageName = /\bpackage\s+([\w.]+)\s*;/.exec(source)?.[1];
+
+    assert.ok(packageName, 'missing package in ' + file);
+
+    for (const match of source.matchAll(/\bservice\s+(\w+)\s*\{/g)) {
+      const fullName = packageName + '.' + match[1];
+      const registration = new RegExp(
+        "clients\\['" + escapeRegExp(fullName) + "'\\]",
+      );
+      assert.match(proxy, registration, 'proxy missing client registration for ' + fullName);
+    }
+  }
+});
+
+test('proxy explicitly classifies every streaming RPC', () => {
+  const serverStreaming = [
+    'agent_communication.AIQueryService/QueryStream',
+    'agent_communication.AgentCommunicationService/ListenMessages',
+    'agent_communication.HealthService/Watch',
+    'agent_communication.SharingService/ObserveSession',
+  ];
+  const unsupported = [
+    'agent_communication.AgentCommunicationService/BatchSendMessages',
+    'agent_communication.AgentCommunicationService/RealTimeCommunication',
+  ];
+
+  for (const rpc of [...serverStreaming, ...unsupported]) {
+    assert.match(
+      proxy,
+      new RegExp(escapeRegExp(rpc)),
+      'proxy source missing streaming RPC classification for ' + rpc,
+    );
+  }
+});
