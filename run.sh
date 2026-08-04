@@ -139,7 +139,7 @@ cmd_clean() {
 # ============================================================================
 SERVER_PORT="${RPC_SERVER_PORT:-50051}"
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:5000}"
-GATEWAY_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.gateway.yaml"
+GATEWAY_COMPOSE="$PROJECT_ROOT/docker-compose.yml"
 
 cmd_start() {
     banner "启动 gRPC 服务端"
@@ -312,7 +312,7 @@ cmd_stop() {
                 name=$(basename "$pid_file" .pid)
                 info "停止进程 $pid ($name)"
                 kill "$pid"
-                ((stopped++))
+                stopped=$((stopped + 1))
             fi
             rm -f "$pid_file"
         done
@@ -339,6 +339,10 @@ cmd_stop() {
 # setup - 环境检测
 # ============================================================================
 cmd_setup() {
+    if ! check_wsl_ready || ! cmd_require_dependencies; then
+        return 1
+    fi
+
     banner "环境检测"
 
     check_tool() {
@@ -485,10 +489,10 @@ cmd_verify() {
 
         if "$script"; then
             batch_results+=("Batch $batch — PASS")
-            ((total_pass++))
+            total_pass=$((total_pass + 1))
         else
             batch_results+=("Batch $batch — FAIL")
-            ((total_fail++))
+            total_fail=$((total_fail + 1))
         fi
         echo ""
     done
@@ -586,6 +590,77 @@ cmd_start_orchestrator() {
 }
 
 # ============================================================================
+check_wsl_ready() {
+    if [ "$(uname -s)" != "Linux" ] || ! grep -qiE '(microsoft|wsl)' /proc/sys/kernel/osrelease 2>/dev/null; then
+        error "Run this command from WSL2 Ubuntu. See scripts/bootstrap-wsl.sh."
+        return 1
+    fi
+    if ! grep -qi 'wsl2' /proc/sys/kernel/osrelease; then
+        error "WSL1 is unsupported; use WSL2."
+        return 1
+    fi
+    case "$PROJECT_ROOT" in
+        /mnt/*) error "Move the repository to the WSL Linux filesystem before running services."; return 1 ;;
+    esac
+}
+
+cmd_require_dependencies() {
+    local missing=0
+    local command_name
+    for command_name in cmake g++ make pkg-config redis-server psql node npm python3 openssl docker; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+            error "Missing required command: $command_name"
+            missing=1
+        fi
+    done
+    for package_name in grpc++ protobuf jsoncpp hiredis; do
+        if ! pkg-config --exists "$package_name" 2>/dev/null; then
+            error "Missing required pkg-config package: $package_name"
+            missing=1
+        fi
+    done
+    if ! docker compose version >/dev/null 2>&1; then
+        error "Docker Compose v2 is required for the containerized stack."
+        missing=1
+    fi
+    return "$missing"
+}
+
+cmd_start_proxy() {
+    local proxy_dir="$PROJECT_ROOT/gateway/proxy"
+    local proxy_port="${PROXY_PORT:-8081}"
+    local pid_file="$PIDS_DIR/proxy.pid"
+    local log_file="$LOGS_DIR/proxy.log"
+    [ -f "$proxy_dir/server.mjs" ] || { error "Missing Node proxy: $proxy_dir/server.mjs"; return 1; }
+    command -v node >/dev/null 2>&1 || { error "Node.js is required for the JSON proxy."; return 1; }
+    mkdir -p "$LOGS_DIR" "$PIDS_DIR"
+    if [ -f "$pid_file" ]; then
+        local old_pid
+        old_pid=$(cat "$pid_file")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            info "Node JSON proxy already running (PID: $old_pid)"
+            return 0
+        fi
+        rm -f "$pid_file"
+    fi
+    if [ ! -d "$proxy_dir/node_modules" ]; then
+        (cd "$proxy_dir" && npm ci)
+    fi
+    (cd "$proxy_dir" && GRPC_TARGET="${GRPC_TARGET:-localhost:50051}" PROXY_PORT="$proxy_port" node server.mjs) >> "$log_file" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$pid_file"
+    for _ in {1..10}; do
+        if kill -0 "$pid" 2>/dev/null && (echo > "/dev/tcp/127.0.0.1/$proxy_port") 2>/dev/null; then
+            info "Node JSON proxy healthy (PID: $pid, port: $proxy_port)"
+            return 0
+        fi
+        sleep 1
+    done
+    error "Node JSON proxy failed its listener health check; see $log_file"
+    rm -f "$pid_file"
+    return 1
+}
+
 # ============================================================================
 # start-all - 一键启动全部后端服务（在 WSL 终端中执行）
 # ============================================================================
@@ -606,7 +681,7 @@ cmd_start_all() {
         export PATH="$HOME/.local/bin:$PATH"
         if command -v node &>/dev/null; then
             info "启动 Node gRPC 代理 (端口 8081)..."
-            (cd "$proxy_dir" && GRPC_TARGET="localhost:50051" node server.mjs &>/dev/null &)
+            cmd_start_proxy
             sleep 2
             echo "  Node 代理: http://localhost:8081 → localhost:50051"
         else

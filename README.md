@@ -14,6 +14,26 @@
 
 </div>
 
+## Supported platform path (PR1)
+
+Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Linux filesystem (for example `~/src/nexusai`), not under `/mnt/c`. Bootstrap the documented toolchain and a development certificate with:
+
+```bash
+./scripts/bootstrap-wsl.sh
+```
+
+The browser path is JSON only: `Browser/Vite -> Node JSON proxy (:8081) -> gRPC RPC server (:50051)`. Vite forwards only browser RPC paths to the local Node proxy. Envoy and gRPC-Web are deprecated and are not part of the supported deployment.
+
+For the complete containerized stack, use the root Compose file:
+
+```bash
+docker compose up --build
+```
+
+It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <http://localhost:8080>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required.
+
+MCP/RAG is optional and disabled by default. Enable it deliberately when configuring CMake with `-DENABLE_MCP=ON`.
+
 ---
 
 ## 这是什么？
@@ -321,7 +341,7 @@ cd build && ctest --output-on-failure   # 或单独运行
 
 ```bash
 # 一键启动全部后端（Redis + Agent + Proxy + Orchestrator + gRPC Server）
-./scripts/start_backend.sh
+./run.sh start-all
 
 # 启动 Node.js gRPC Proxy（Windows PowerShell，新窗口）
 $env:GRPC_TARGET="localhost:50051"

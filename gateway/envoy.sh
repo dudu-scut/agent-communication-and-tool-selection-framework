@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Envoy 启动脚本（本地开发用）
+# DEPRECATED: use ./run.sh start-all or docker compose up; the Node JSON proxy is the supported gateway.
 # ============================================================================
 # gRPC-Web ↔ gRPC 协议转换，替代 improbable/grpcwebproxy。
 # 生产环境建议使用 docker-compose 部署。

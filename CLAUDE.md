@@ -3,6 +3,15 @@
 This file provides guidance to Claude Code when working with this repository.
 
 > 详尽的项目介绍、架构设计、技术亮点和求职竞争力分析见 [docs/NexusAI-project-introduction.md](docs/NexusAI-project-introduction.md)。
+## PR1 platform baseline
+
+- Work in WSL2 Ubuntu on the Linux filesystem; run `./scripts/bootstrap-wsl.sh` before the first build.
+- The supported browser protocol is JSON: `Browser/Vite -> Node JSON proxy :8081 -> RPC server :50051`. Vite proxies only the Node proxy.
+- `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `http://localhost:8080`.
+- Compose services use DNS names. The proxy must use `GRPC_TARGET=rpc-server:50051` in containers.
+- Envoy/gRPC-Web is deprecated and is not a production path.
+- MCP/RAG is optional and off by default (`-DENABLE_MCP=ON` is required to build it).
+
 
 ## Quick Commands
 
@@ -36,15 +45,15 @@ registry/       → ServiceRegistry (agent discovery, health)
 a2a/            → Pure A2A protocol library (C++ A2AClient, JSON-RPC, AgentCard)
 a2a_adapter/    → Protobuf ↔ A2A JSON-RPC bridge (sync/async/streaming/direct)
 orchestrator/   → AgentRouter (Embedding→LLM→Keyword→Fallback) + TaskPlanner + TaskExecutor + ResultAggregator
-mcp/            → MCPClient (STDIO+SSE) + RAG-MCP (EmbeddingService + VectorIndex + SemanticCache)
+mcp/            → Optional MCPClient (disabled unless ENABLE_MCP=ON)
 server/         → gRPC Server :50051 (9 services, AuthInterceptor, CostInterceptor)
 client/         → Interactive gRPC CLI
 frontend/       → Vue 3 + TS + Vite SPA (10 views: Chat, Topology, Dashboard, Monitor, Admin, Sandbox, Compare, Share, Templates, Login)
-gateway/        → Nginx + Envoy (Docker) + Node.js gRPC Proxy (:8081)
+gateway/        → Node JSON-to-gRPC Proxy (:8081); frontend Nginx is the container entrypoint
 tests/          → 17 suites (GTest + RapidCheck property-based)
 ```
 
-**Data flow:** `Browser → Nginx :8080 → Envoy :8081 → gRPC Server :50051 → A2AAdapter → Orchestrator :5000 → Agents`
+**Data flow:** `Browser → Nginx :8080 → Node JSON Proxy :8081 → gRPC Server :50051 → A2AAdapter → Orchestrator :5000 → Agents`
 
 ## Key Abstractions
 
@@ -74,7 +83,7 @@ Load via `.env` file at project root (auto-loaded by `run.sh` and `env_loader`).
 | 5000 | Orchestrator | HTTP/A2A |
 | 5100 | Mock Agent | HTTP/A2A |
 | 8080 | Nginx (browser) | HTTP/1.1 |
-| 8081 | Envoy / Node Proxy | gRPC-Web ↔ gRPC |
+| 8081 | Node JSON Proxy | HTTP JSON ↔ gRPC |
 | 6379 | Redis | TCP |
 
 ## Conventions
