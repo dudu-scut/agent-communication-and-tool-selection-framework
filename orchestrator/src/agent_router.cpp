@@ -7,9 +7,11 @@
 
 #include "agent_rpc/orchestrator/agent_router.h"
 #include "agent_rpc/common/redis_client.h"
+#ifdef AGENT_RPC_ENABLE_MCP
 #include <agent_rpc/mcp/rag/embedding_service.h>
 #include <agent_rpc/mcp/rag/vector_index.h>
 #include <agent_rpc/mcp/rag/embedding_cache.h>
+#endif
 #include <a2a/llm_client.hpp>
 #include <algorithm>
 #include <cctype>
@@ -848,6 +850,7 @@ std::string AgentRouter::analyzeIntentWithLLM(const std::string& question) {
     return {};  // LLM returned a skill that's not registered
 }
 
+#ifdef AGENT_RPC_ENABLE_MCP
 // === Embedding-based Routing (P3) ===
 
 bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
@@ -1016,6 +1019,21 @@ std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string& questi
 
     return {};
 }
+
+#else
+bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
+    embedding_config_ = config;
+    embedding_config_.enabled = false;
+    return !config.enabled;
+}
+
+bool AgentRouter::isEmbeddingEnabled() const { return false; }
+
+void AgentRouter::buildSkillEmbeddingIndex() {}
+
+std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string&) { return {}; }
+#endif
 
 // === Batch 2: Fallback and Feedback-Driven Routing ===
 

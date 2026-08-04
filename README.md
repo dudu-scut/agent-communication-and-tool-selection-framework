@@ -22,7 +22,7 @@ Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Lin
 ./scripts/bootstrap-wsl.sh
 ```
 
-The browser path is JSON only: `Browser/Vite -> Node JSON proxy (:8081) -> gRPC RPC server (:50051)`. Vite forwards only browser RPC paths to the local Node proxy. Envoy and gRPC-Web are deprecated and are not part of the supported deployment.
+The browser path is JSON only: `Browser/Vite -> Node JSON proxy (:8081) -> gRPC RPC server (:50051)`. Vite forwards only browser RPC paths to the local Node proxy.
 
 For the complete containerized stack, use the root Compose file:
 
@@ -70,7 +70,7 @@ MCP/RAG is optional and disabled by default. Enable it deliberately when configu
                                      │  HTTP / SSE
                         ┌────────────▼────────────┐
                         │   Node.js Proxy (:8081)  │
-                        │   gRPC-Web ↔ gRPC        │
+                        │   HTTP JSON ↔ gRPC        │
                         └────────────┬────────────┘
                                      │  gRPC / Protobuf
                         ┌────────────▼────────────┐
@@ -197,11 +197,11 @@ agent-communication-and-tool-selection-framework/
 │
 ├── gateway/                         # API 网关
 │   ├── proxy/server.mjs             #   Node.js gRPC Proxy（主力）
-│   ├── envoy.yaml                   #   Envoy 配置（Docker 备选）
+│   ├── proxy/Dockerfile              #   Node JSON proxy image
 │   └── nginx.conf                   #   Nginx 配置
 │
 ├── deploy/                          # 部署编排
-│   └── docker-compose.gateway.yaml  #   Docker 网关（Nginx + Envoy）
+│   └── ../docker-compose.yml         #   Root container stack
 │
 ├── tests/                           # 测试（17 套，GTest + RapidCheck）
 │   ├── e2e/                         #   E2E 测试脚本

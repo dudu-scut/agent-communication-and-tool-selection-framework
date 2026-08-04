@@ -19,12 +19,19 @@ set(SERVER_SOURCES
 )
 
 # 创建静态库
+
 add_library(agent_rpc_server STATIC ${SERVER_SOURCES})
 
 # ============================================================================
 # RPC Server 可执行文件
 # ============================================================================
 add_executable(rpc_server src/main.cpp)
+if(ENABLE_MCP)
+    target_include_directories(rpc_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../mcp/include)
+    target_compile_definitions(rpc_server PRIVATE AGENT_RPC_ENABLE_MCP=1)
+    target_compile_definitions(agent_rpc_server PRIVATE AGENT_RPC_ENABLE_MCP=1)
+endif()
+
 target_link_libraries(rpc_server
     agent_rpc_server
     agent_rpc_common

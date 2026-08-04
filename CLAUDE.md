@@ -9,7 +9,7 @@ This file provides guidance to Claude Code when working with this repository.
 - The supported browser protocol is JSON: `Browser/Vite -> Node JSON proxy :8081 -> RPC server :50051`. Vite proxies only the Node proxy.
 - `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `http://localhost:8080`.
 - Compose services use DNS names. The proxy must use `GRPC_TARGET=rpc-server:50051` in containers.
-- Envoy/gRPC-Web is deprecated and is not a production path.
+- The Node JSON-to-gRPC proxy is the only supported browser gateway.
 - MCP/RAG is optional and off by default (`-DENABLE_MCP=ON` is required to build it).
 
 
@@ -25,7 +25,7 @@ This file provides guidance to Claude Code when working with this repository.
 ./run.sh setup          # 环境检测
 
 # 前端 (Windows 原生)
-cd frontend && npm install && npm run dev   # Vite :5173 → Envoy :8081 → gRPC :50051
+cd frontend && npm install && npm run dev   # Vite :5173 → Node proxy :8081 → gRPC :50051
 
 # 单测
 cd build && ctest --output-on-failure

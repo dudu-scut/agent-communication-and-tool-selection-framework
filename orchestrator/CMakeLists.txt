@@ -43,7 +43,6 @@ target_include_directories(orchestrator
         ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
         ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../mcp/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
         ${CMAKE_BINARY_DIR}/proto
 )
@@ -52,11 +51,19 @@ target_link_libraries(orchestrator
     PUBLIC
         a2a
         a2a_adapter
-        agent_rpc_mcp
         ${GRPC_LIBRARIES}
         ${PROTOBUF_LIBRARIES}
         CURL::libcurl
 )
+
+
+if(ENABLE_MCP)
+    target_include_directories(orchestrator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../mcp/include
+    )
+    target_link_libraries(orchestrator PUBLIC agent_rpc_mcp)
+    target_compile_definitions(orchestrator PRIVATE AGENT_RPC_ENABLE_MCP=1)
+endif()
 
 # Embedding routing requires C++20 (MCP module uses C++20)
 target_compile_features(orchestrator PUBLIC cxx_std_20)

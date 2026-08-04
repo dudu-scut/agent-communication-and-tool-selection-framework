@@ -8,7 +8,7 @@
 #   ./run.sh clean              清理构建目录
 #   ./run.sh start              启动 gRPC 服务端 (后台运行)
 #   ./run.sh redis              启动 Redis 服务
-#   ./run.sh gateway            启动 API 网关 (Nginx + Envoy, 需 Docker)
+#   ./run.sh gateway            启动 containerized API stack (Docker)
 #   ./run.sh frontend-dev       启动前端开发服务器
 #   ./run.sh frontend-build     构建前端生产包
 #   ./run.sh stop               停止所有服务 (含 Docker 容器)
@@ -272,7 +272,7 @@ cmd_gateway() {
         exit 1
     fi
 
-    info "启动 Nginx + Envoy 网关..."
+    info "启动 containerized JSON gateway stack..."
     docker compose -f "$GATEWAY_COMPOSE" up -d
 
     sleep 2
@@ -282,9 +282,9 @@ cmd_gateway() {
         echo ""
         info "API 网关启动成功"
         echo ""
-        echo "  浏览器入口:   http://localhost:8080  (gRPC-Web)"
+        echo "  浏览器入口:   http://localhost:8080  (HTTP JSON)"
         echo "  后端入口:     localhost:8082          (gRPC 直连)"
-        echo "  Envoy:         localhost:8081"
+        echo "  Node JSON proxy: internal :8081"
         echo ""
         echo "  查看日志:     docker compose -f $GATEWAY_COMPOSE logs -f"
         echo "  停止网关:     ./run.sh stop"
@@ -675,7 +675,7 @@ cmd_start_all() {
         cmd_start_mock_agent
     fi
 
-    # 3. Node gRPC Proxy (gRPC-Web :8081 → gRPC :50051)
+    # 3. Node JSON Proxy (:8081 -> gRPC :50051)
     local proxy_dir="$PROJECT_ROOT/gateway/proxy"
     if [ -f "$proxy_dir/server.mjs" ]; then
         export PATH="$HOME/.local/bin:$PATH"
@@ -722,7 +722,7 @@ usage() {
     echo "  clean          清理构建目录"
     echo "  start          启动 gRPC 服务端 (后台运行, 自动启动 Redis)"
     echo "  redis          启动 Redis 服务"
-    echo "  gateway        启动 API 网关: Nginx + Envoy (需 Docker)"
+    echo "  gateway        启动 containerized JSON gateway stack (Docker)"
     echo "  frontend-dev   启动前端开发服务器 (Vite HMR)"
     echo "  frontend-build 构建前端生产包"
     echo "  stop           停止所有服务 (本地进程 + Docker 容器 + Mock Agent)"
