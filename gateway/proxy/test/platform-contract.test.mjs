@@ -58,6 +58,10 @@ test('Compose gates the JSON gateway and publishes only HTTPS web traffic', () =
   assert.ok(fs.existsSync(path.join(root, 'docker/Dockerfile.rpc-server')));
   assert.match(compose, /dockerfile:\s*docker\/Dockerfile\.rpc-server/);
   assert.match(rpcServer, /healthcheck:/);
+  const rpcDockerfile = read('docker/Dockerfile.rpc-server');
+  assert.doesNotMatch(rpcServer, /kill\s+-0\s+1/);
+  assert.match(rpcServer, /test:\s+\[\"CMD-SHELL\",\s+\"nc -z -w 1 127\.0\.0\.1 50051\"\]/);
+  assert.match(rpcDockerfile, /netcat-openbsd/);
   assert.match(proxy, /depends_on:\s*\n\s+rpc-server:\s*\n\s+condition:\s+service_healthy/);
   assert.match(proxy, /healthcheck:/);
   assert.match(frontend, /depends_on:\s*\n\s+proxy:\s*\n\s+condition:\s+service_healthy/);
