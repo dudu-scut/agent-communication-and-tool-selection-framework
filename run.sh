@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
 # NexusAI 项目运行脚本 (Linux)
 #
@@ -58,6 +58,45 @@ info()  { echo -e "\033[32m[INFO]\033[0m  $1"; }
 warn()  { echo -e "\033[33m[WARN]\033[0m  $1"; }
 error() { echo -e "\033[31m[ERROR]\033[0m $1"; }
 
+is_pid_running() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+stop_pid() {
+    local pid="$1"
+    is_pid_running "$pid" || return 1
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        is_pid_running "$pid" || break
+        sleep 0.2
+    done
+    if is_pid_running "$pid"; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    return 0
+}
+
+wait_for_tcp() {
+    local host="$1" port="$2" pid="$3"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        is_pid_running "$pid" || return 1
+        if (echo > "/dev/tcp/$host/$port") 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+on_signal() {
+    local status=$?
+    trap - INT TERM
+    cmd_stop || true
+    exit "${status:-130}"
+}
+trap on_signal INT TERM
 # ============================================================================
 # build - 编译项目
 # ============================================================================
@@ -165,18 +204,18 @@ cmd_start() {
     fi
 
     # 环境变量传递
-    local env_vars=""
+    local -a server_env=()
     if [ -n "${LLM_API_KEY:-}" ]; then
-        env_vars="LLM_API_KEY=$LLM_API_KEY"
+        server_env+=("LLM_API_KEY=$LLM_API_KEY")
         info "LLM 多 Agent 编排: 已启用"
     else
         info "LLM 多 Agent 编排: 未启用 (设置 LLM_API_KEY 可启用)"
     fi
     if [ -n "${LLM_MODEL:-}" ]; then
-        env_vars="$env_vars LLM_MODEL=$LLM_MODEL"
+        server_env+=("LLM_MODEL=$LLM_MODEL")
     fi
     if [ -n "${LLM_API_URL:-}" ]; then
-        env_vars="$env_vars LLM_API_URL=$LLM_API_URL"
+        server_env+=("LLM_API_URL=$LLM_API_URL")
     fi
 
     mkdir -p "$LOGS_DIR" "$PIDS_DIR"
@@ -200,8 +239,8 @@ cmd_start() {
     info "日志: $LOGS_DIR/rpc_server.log"
 
     # 后台启动
-    if [ -n "$env_vars" ]; then
-        env $env_vars "$bin" "${args[@]}" >> "$LOGS_DIR/rpc_server.log" 2>&1 &
+    if [ "${#server_env[@]}" -gt 0 ]; then
+        env "${server_env[@]}" "$bin" "${args[@]}" >> "$LOGS_DIR/rpc_server.log" 2>&1 &
     else
         "$bin" "${args[@]}" >> "$LOGS_DIR/rpc_server.log" 2>&1 &
     fi
@@ -210,7 +249,7 @@ cmd_start() {
 
     # 等待启动
     sleep 1
-    if kill -0 "$pid" 2>/dev/null; then
+    if wait_for_tcp 127.0.0.1 "$SERVER_PORT" "$pid"; then
         info "rpc_server 启动成功 (PID: $pid)"
         echo ""
         echo "  gRPC 地址:    0.0.0.0:$SERVER_PORT"
@@ -222,6 +261,7 @@ cmd_start() {
     else
         error "rpc_server 启动失败，查看日志:"
         tail -20 "$LOGS_DIR/rpc_server.log" 2>/dev/null || true
+        stop_pid "$pid" || true
         rm -f "$pid_file"
         exit 1
     fi
@@ -273,7 +313,7 @@ cmd_gateway() {
     fi
 
     info "启动 containerized JSON gateway stack..."
-    docker compose -f "$GATEWAY_COMPOSE" up -d
+    docker compose -f "$GATEWAY_COMPOSE" up --build -d
 
     sleep 2
 
@@ -282,8 +322,7 @@ cmd_gateway() {
         echo ""
         info "API 网关启动成功"
         echo ""
-        echo "  浏览器入口:   http://localhost:8080  (HTTP JSON)"
-        echo "  后端入口:     localhost:8082          (gRPC 直连)"
+        echo "  浏览器入口:   https://localhost:8443  (HTTPS JSON)"
         echo "  Node JSON proxy: internal :8081"
         echo ""
         echo "  查看日志:     docker compose -f $GATEWAY_COMPOSE logs -f"
@@ -311,7 +350,7 @@ cmd_stop() {
                 local name
                 name=$(basename "$pid_file" .pid)
                 info "停止进程 $pid ($name)"
-                kill "$pid"
+                stop_pid "$pid" || true
                 stopped=$((stopped + 1))
             fi
             rm -f "$pid_file"
@@ -414,7 +453,7 @@ cmd_frontend_dev() {
 
     if [ ! -d "node_modules" ]; then
         info "安装前端依赖..."
-        npm install
+        npm ci
     fi
 
     info "启动 Vite 开发服务器 (HMR)..."
@@ -441,7 +480,7 @@ cmd_frontend_build() {
 
     if [ ! -d "node_modules" ]; then
         info "安装前端依赖..."
-        npm install
+        npm ci
     fi
 
     info "构建中..."
@@ -545,6 +584,7 @@ cmd_start_mock_agent() {
             warn "Mock Agent 已在运行 (PID: $old_pid)"
             return 0
         fi
+        stop_pid "$old_pid" || true
         rm -f "$pid_file"
     fi
 
@@ -558,6 +598,7 @@ cmd_start_mock_agent() {
         info "Mock Agent 启动成功 (PID: $pid)"
     else
         error "Mock Agent 启动失败"
+        stop_pid "$pid" || true
         rm -f "$pid_file"
         exit 1
     fi
@@ -657,6 +698,7 @@ cmd_start_proxy() {
         sleep 1
     done
     error "Node JSON proxy failed its listener health check; see $log_file"
+    stop_pid "$pid" || true
     rm -f "$pid_file"
     return 1
 }

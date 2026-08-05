@@ -7,7 +7,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 - Work in WSL2 Ubuntu on the Linux filesystem; run `./scripts/bootstrap-wsl.sh` before the first build.
 - The supported browser protocol is JSON: `Browser/Vite -> Node JSON proxy :8081 -> RPC server :50051`. Vite proxies only the Node proxy.
-- `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `http://localhost:8080`.
+- `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `https://localhost:8443`.
 - Compose services use DNS names. The proxy must use `GRPC_TARGET=rpc-server:50051` in containers.
 - The Node JSON-to-gRPC proxy is the only supported browser gateway.
 - MCP/RAG is optional and off by default (`-DENABLE_MCP=ON` is required to build it).
@@ -25,7 +25,7 @@ This file provides guidance to Claude Code when working with this repository.
 ./run.sh setup          # 环境检测
 
 # 前端 (Windows 原生)
-cd frontend && npm install && npm run dev   # Vite :5173 → Node proxy :8081 → gRPC :50051
+cd frontend && npm ci && npm run dev   # Vite :5173 → Node proxy :8081 → gRPC :50051
 
 # 单测
 cd build && ctest --output-on-failure
@@ -82,7 +82,7 @@ Load via `.env` file at project root (auto-loaded by `run.sh` and `env_loader`).
 | 50051 | RPC Server | gRPC/2 |
 | 5000 | Orchestrator | HTTP/A2A |
 | 5100 | Mock Agent | HTTP/A2A |
-| 8080 | Nginx (browser) | HTTP/1.1 |
+| 8443 | Nginx (browser) | HTTPS |
 | 8081 | Node JSON Proxy | HTTP JSON ↔ gRPC |
 | 6379 | Redis | TCP |
 

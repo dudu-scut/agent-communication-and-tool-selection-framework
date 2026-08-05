@@ -30,7 +30,7 @@ For the complete containerized stack, use the root Compose file:
 docker compose up --build
 ```
 
-It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <http://localhost:8080>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required.
+It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <https://localhost:8443>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The bootstrap-generated `certs/dev/dev-ca-cert.pem` is for local trust only; production must provide managed certificates through the `FRONTEND_TLS_*_FILE` variables.
 
 MCP/RAG is optional and disabled by default. Enable it deliberately when configuring CMake with `-DENABLE_MCP=ON`.
 
@@ -283,7 +283,7 @@ agent-communication-and-tool-selection-framework/
 ### 启动前端
 
 ```bash
-cd frontend && npm install   # 首次
+cd frontend && npm ci   # 首次
 cd frontend && npm run dev    # Vite :5173
 ```
 
@@ -296,7 +296,7 @@ cd frontend && npm run dev    # Vite :5173
 | 要求 | 版本 | 说明 |
 | ------ | ------ | ------ |
 | 操作系统 | Linux (Ubuntu 20.04+) | C++ 编译运行 |
-| CMake | 3.15+ | 构建系统 |
+| CMake | 3.20+ | 构建系统 |
 | GCC | 10+（C++20） | 编译器 |
 | gRPC | 1.51.1+ | RPC 框架 |
 | Redis | 6.0+ | 缓存/存储 |

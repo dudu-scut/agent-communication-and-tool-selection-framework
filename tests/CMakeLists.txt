@@ -200,12 +200,13 @@ target_include_directories(test_ai_query_integration PRIVATE
 
 add_test(NAME AIQueryIntegrationTest COMMAND test_ai_query_integration)
 
+if(ENABLE_MCP)
 # MCP Agent集成测试
 # **Feature: a2a-integration, Task 20: MCP 集成测试**
 # **Validates: Requirements 12.1, 12.3, 12.5**
 add_executable(test_mcp_integration test_mcp_integration.cpp)
 
-target_link_libraries(test_mcp_integration 
+target_link_libraries(test_mcp_integration
     agent_rpc_mcp
     agent_rpc_common
     rapidcheck
@@ -226,7 +227,7 @@ add_test(NAME MCPIntegrationTest COMMAND test_mcp_integration)
 # **Validates: Requirements 1.3, 3.2, 3.3, 3.4, 4.1, 4.3, 7.2, 7.3**
 add_executable(test_rag_mcp_properties test_rag_mcp_properties.cpp)
 
-target_link_libraries(test_rag_mcp_properties 
+target_link_libraries(test_rag_mcp_properties
     agent_rpc_mcp
     agent_rpc_common
     rapidcheck
@@ -242,6 +243,8 @@ target_include_directories(test_rag_mcp_properties PRIVATE
 )
 
 add_test(NAME RAGMCPPropertiesTest COMMAND test_rag_mcp_properties)
+endif()
+
 
 add_executable(test_service_registry test_service_registry.cpp)
 target_link_libraries(test_service_registry

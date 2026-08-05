@@ -8,7 +8,8 @@
     "start": "node server.mjs",
     "typecheck": "node --check server.mjs",
     "lint": "npm run typecheck",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "build": "npm run typecheck"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",
