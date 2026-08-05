@@ -160,6 +160,14 @@ target_include_directories(test_agent_router_properties PRIVATE
 )
 
 add_test(NAME AgentRouterPropertiesTest COMMAND test_agent_router_properties)
+# Link contract guard: consumers of orchestrator must receive agent_rpc_common
+# transitively because orchestrator sources reference RedisClient symbols.
+add_executable(test_orchestrator_common_link test_orchestrator_common_link.cpp)
+target_link_libraries(test_orchestrator_common_link
+    PRIVATE
+    orchestrator
+)
+add_test(NAME OrchestratorCommonLinkTest COMMAND test_orchestrator_common_link)
 
 # 安装测试
 install(TARGETS test_serialization

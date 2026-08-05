@@ -49,6 +49,7 @@ target_include_directories(orchestrator
 
 target_link_libraries(orchestrator
     PUBLIC
+        agent_rpc_common
         a2a
         a2a_adapter
         ${GRPC_LIBRARIES}
