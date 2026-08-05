@@ -378,21 +378,19 @@ cmd_stop() {
 # setup - 环境检测
 # ============================================================================
 cmd_setup() {
-    if ! check_wsl_ready || ! cmd_require_dependencies; then
+    banner "Environment checks"
+    if ! cmd_require_dependencies; then
         return 1
     fi
 
-    banner "环境检测"
-
     check_tool() {
-        local name="$1"
-        local cmd="$2"
+        local name="$1" cmd="$2"
         if command -v "$cmd" &>/dev/null; then
             local ver
             ver=$("$cmd" --version 2>&1 | head -1)
-            echo "  $name: ✅ $ver"
+            echo "  $name: OK $ver"
         else
-            echo "  $name: ❌ 未安装"
+            echo "  $name: MISSING"
         fi
     }
 
@@ -645,26 +643,93 @@ check_wsl_ready() {
     esac
 }
 
-cmd_require_dependencies() {
-    local missing=0
-    local command_name
-    for command_name in cmake g++ make pkg-config redis-server psql node npm python3 openssl docker; do
-        if ! command -v "$command_name" >/dev/null 2>&1; then
-            error "Missing required command: $command_name"
-            missing=1
-        fi
-    done
-    for package_name in grpc++ protobuf jsoncpp hiredis; do
-        if ! pkg-config --exists "$package_name" 2>/dev/null; then
-            error "Missing required pkg-config package: $package_name"
-            missing=1
-        fi
-    done
-    if ! docker compose version >/dev/null 2>&1; then
-        error "Docker Compose v2 is required for the containerized stack."
-        missing=1
+version_at_least() {
+    local actual="${1#v}"
+    local required="$2"
+    if command -v dpkg >/dev/null 2>&1; then
+        dpkg --compare-versions "$actual" ge "$required"
+    else
+        [ "$(printf '%s\n' "$required" "$actual" | sort -V | head -n 1)" = "$required" ]
     fi
-    return "$missing"
+}
+
+check_development_package() {
+    local label="$1" pkg_config_name="$2"
+    shift 2
+    local ubuntu_package
+    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists "$pkg_config_name" 2>/dev/null; then
+        return 0
+    fi
+    if command -v dpkg-query >/dev/null 2>&1; then
+        for ubuntu_package in "$@"; do
+            if dpkg-query -W -f='${db:Status-Status}' "$ubuntu_package" 2>/dev/null | grep -qx installed; then
+                return 0
+            fi
+        done
+    fi
+    missing+=("$label (pkg-config: $pkg_config_name; Ubuntu packages: $*)")
+    return 0
+}
+
+cmd_require_dependencies() {
+    local -a missing=()
+    local command_name package_name compose_version="" cmake_version=""
+
+    if ! check_wsl_ready >/dev/null 2>&1; then
+        missing+=("WSL2/Linux context (use WSL2 and keep the repository outside /mnt/*)")
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        missing+=("Docker CLI (docker)")
+        missing+=("Docker Compose v2 (docker compose; Docker CLI unavailable)")
+    else
+        if ! compose_version="$(docker compose version --short 2>/dev/null)"; then
+            missing+=("Docker Compose v2 (docker compose)")
+        elif ! version_at_least "${compose_version#v}" "2.0"; then
+            missing+=("Docker Compose v2 (found: $compose_version)")
+        fi
+    fi
+
+    if ! command -v cmake >/dev/null 2>&1; then
+        missing+=("CMake >=3.20 (cmake)")
+    else
+        if ! cmake_version="$(cmake --version 2>/dev/null | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')"; then
+            cmake_version=""
+        fi
+        if [ -z "$cmake_version" ] || ! version_at_least "$cmake_version" "3.20"; then
+            missing+=("CMake >=3.20 (found: $cmake_version)")
+        fi
+    fi
+
+    if ! command -v g++ >/dev/null 2>&1; then
+        missing+=("C++20-capable compiler (g++)")
+    elif ! printf 'int main() { return 0; }\n' | g++ -std=c++20 -x c++ -fsyntax-only - >/dev/null 2>&1; then
+        missing+=("C++20-capable compiler (g++ -std=c++20 probe failed)")
+    fi
+
+    for command_name in make pkg-config protoc grpc_cpp_plugin redis-server redis-cli psql pg_config node npm python3 openssl grpcurl; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+            missing+=("required command: $command_name")
+        fi
+    done
+
+    for package_name in grpc++ protobuf jsoncpp hiredis libcurl libsodium; do
+        if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists "$package_name" 2>/dev/null; then
+            missing+=("pkg-config package: $package_name")
+        fi
+    done
+
+    check_development_package "GTest" gtest libgtest-dev
+    check_development_package "RapidCheck" rapidcheck rapidcheck librapidcheck-dev
+    check_development_package "libpqxx" libpqxx libpqxx-dev
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        error "Missing required PR1 dependencies (all checks completed):"
+        printf '  - %s\n' "${missing[@]}"
+        return 1
+    fi
+    info "All PR1 WSL dependencies are available."
+    return 0
 }
 
 cmd_start_proxy() {

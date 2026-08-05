@@ -134,6 +134,29 @@ test('run.sh uses portable Bash paths and cleans failed background services', ()
   assert.doesNotMatch(script, /\/mnt\/c\/Users\//);
 });
 
+test('run.sh setup aggregates the complete PR1 dependency inventory', () => {
+  const script = read('run.sh');
+  const setupStart = script.indexOf('cmd_setup() {');
+  const dependencyStart = script.indexOf('check_development_package() {');
+  const commandCheckStart = script.indexOf('cmd_require_dependencies() {');
+  assert.ok(setupStart >= 0 && dependencyStart > setupStart && commandCheckStart > dependencyStart);
+  const setup = script.slice(setupStart, commandCheckStart);
+  const proxyStart = script.indexOf('cmd_start_proxy() {', commandCheckStart);
+  assert.ok(proxyStart > dependencyStart);
+  const dependencies = script.slice(dependencyStart, proxyStart);
+  assert.doesNotMatch(setup, /check_wsl_ready\s*\|\|\s*!\s*cmd_require_dependencies/);
+  assert.match(setup, /if\s+!\s+cmd_require_dependencies[\s\S]*return 1/);
+  assert.match(dependencies, /local\s+-a\s+missing=\(\)/);
+  assert.match(dependencies, /printf[\s\S]*missing/);
+  for (const check of [
+    /check_wsl_ready/, /docker/, /Docker Compose v2/, /docker\s+compose\s+version/, /cmake/, /3\.20/,
+    /g\+\+/, /-std=c\+\+20/, /protoc/, /grpc_cpp_plugin/, /dpkg-query/, /gtest/i, /rapidcheck/i,
+    /libcurl|curl-config/i, /openssl/i, /libsodium|sodium/i, /libpqxx|pqxx/i,
+    /redis-server/, /redis-cli/, /psql/, /pg_config/, /node/, /npm/, /python3/, /grpcurl/
+  ]) {
+    assert.match(dependencies, check, `missing setup dependency check: ${check}`);
+  }
+});
 test('Frontend declares Vite environment types used by the JSON client', () => {
   const envFile = path.join(root, 'frontend/src/env.d.ts');
 
