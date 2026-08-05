@@ -30,8 +30,9 @@ done
 
 REQUIRED_PACKAGES=(
   build-essential cmake pkg-config
-  libgrpc++-dev libprotobuf-dev protobuf-compiler libjsoncpp-dev
+  libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc libjsoncpp-dev
   libhiredis-dev libcurl4-openssl-dev libssl-dev uuid-dev
+  libgtest-dev librapidcheck-dev
   postgresql-client redis-server nodejs npm openssl
 )
 
