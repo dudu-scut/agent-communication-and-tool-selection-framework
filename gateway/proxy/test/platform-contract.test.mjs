@@ -44,7 +44,7 @@ test('WSL bootstrap refuses Windows mounts and documents its package checks', ()
   const bootstrap = read('scripts/bootstrap-wsl.sh');
 
   assert.match(bootstrap, /\/mnt\//);
-  for (const packageName of ['build-essential', 'cmake', 'pkg-config', 'libgrpc\+\+-dev', 'protobuf-compiler-grpc', 'libgtest-dev', 'librapidcheck-dev', 'postgresql-client', 'redis-server']) {
+  for (const packageName of ['build-essential', 'cmake', 'pkg-config', 'libgrpc\+\+-dev', 'protobuf-compiler-grpc', 'libgtest-dev', 'librapidcheck-dev', 'nlohmann-json3-dev', 'postgresql-client', 'redis-server']) {
     assert.ok(bootstrap.includes(packageName), `missing package check: ${packageName}`);
   }
 });
