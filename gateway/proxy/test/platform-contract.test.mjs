@@ -24,6 +24,14 @@ test('production compose uses the JSON proxy and service DNS', () => {
   assert.doesNotMatch(compose, /host\.docker\.internal|172\.\d+\.\d+\.\d+/);
 });
 
+test('RPC Dockerfile preserves the repository source hierarchy', () => {
+  const rpcDockerfile = read('docker/Dockerfile.rpc-server');
+
+  assert.match(rpcDockerfile, /WORKDIR\s+\/src\s*\r?\nCOPY\s+\.\s+\./);
+  assert.doesNotMatch(rpcDockerfile, /COPY\s+CMakeLists\.txt\s+\.\//);
+  assert.doesNotMatch(rpcDockerfile, /COPY\s+proto\s+common\s+registry\s+a2a\s+a2a_adapter\s+orchestrator\s+server\s+client\s+\.\//);
+});
+
 test('Vite forwards browser RPCs only to the local JSON proxy', () => {
   const vite = read('frontend/vite.config.ts');
 

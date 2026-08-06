@@ -7,8 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-COPY CMakeLists.txt ./
-COPY proto common registry a2a a2a_adapter orchestrator server client ./
+COPY . .
 RUN cmake -S . -B /build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_MCP=OFF \
     && cmake --build /build --parallel
 
