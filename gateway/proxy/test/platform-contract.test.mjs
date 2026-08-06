@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,6 +57,16 @@ test('run script manages a proxy PID without set -e unsafe postincrements', () =
   assert.match(script, /proxy\.log/);
   assert.doesNotMatch(script, /\(\([^\n]*\+\+\)\)/);
   assert.doesNotMatch(script, /\/mnt\/c\/Users\//);
+});
+
+test('run.sh is tracked as executable for the WSL command path', () => {
+  const indexEntry = execFileSync('git', ['ls-files', '--stage', '--', 'run.sh'], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim();
+  const [mode] = indexEntry.split(/\s+/, 1);
+
+  assert.equal(mode, '100755', 'run.sh must be tracked as executable for ./run.sh commands');
 });
 
 test('run.sh start-all delegates to the root Compose gateway without legacy runtime paths', () => {
