@@ -453,6 +453,18 @@ target_include_directories(test_postgres_config PRIVATE
 )
 add_test(NAME PostgresConfigTest COMMAND test_postgres_config)
 
+add_executable(test_postgres_migration_api test_postgres_migration_api.cpp)
+target_link_libraries(test_postgres_migration_api
+    ${AGENT_RPC_PQXX_TARGET}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_postgres_migration_api PRIVATE
+    NEXUSAI_MIGRATION_RUNNER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/src/migration_runner.cpp"
+)
+add_test(NAME PostgresMigrationApiTest COMMAND test_postgres_migration_api)
+
 find_package(Python3 COMPONENTS Interpreter)
 find_program(DOCKER_EXECUTABLE docker)
 set(NEXUSAI_DOCKER_AVAILABLE OFF)

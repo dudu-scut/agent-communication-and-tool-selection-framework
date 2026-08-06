@@ -11,6 +11,12 @@
 
 #include <openssl/sha.h>
 
+#include <pqxx/version>
+
+#if !defined(PQXX_VERSION_MAJOR)
+#error "libpqxx must expose PQXX_VERSION_MAJOR"
+#endif
+
 namespace agent_rpc::db {
 namespace {
 
@@ -62,8 +68,14 @@ void MigrationRunner::migrate(const std::filesystem::path& directory) {
         const std::string sql = readFile(migration.path);
         bool applied = false;
         store_.executeTransaction([&](pqxx::work& transaction) {
+#if PQXX_VERSION_MAJOR >= 8
+            const pqxx::result result = transaction.exec(
+                "SELECT checksum FROM schema_migrations WHERE version = $1",
+                pqxx::params{migration.version});
+#else  // libpqxx 6.x/7.x
             const pqxx::result result = transaction.exec_params(
                 "SELECT checksum FROM schema_migrations WHERE version = $1", migration.version);
+#endif
             if (!result.empty()) {
                 if (result.front()["checksum"].as<std::string>() != migration.checksum) {
                     throw std::runtime_error("migration checksum mismatch for " + migration.version);
@@ -72,9 +84,15 @@ void MigrationRunner::migrate(const std::filesystem::path& directory) {
             }
 
             transaction.exec(sql);
+#if PQXX_VERSION_MAJOR >= 8
+            transaction.exec(
+                "INSERT INTO schema_migrations(version, filename, checksum) VALUES ($1, $2, $3)",
+                pqxx::params{migration.version, migration.path.filename().string(), migration.checksum});
+#else  // libpqxx 6.x/7.x
             transaction.exec_params(
                 "INSERT INTO schema_migrations(version, filename, checksum) VALUES ($1, $2, $3)",
                 migration.version, migration.path.filename().string(), migration.checksum);
+#endif
             applied = true;
         });
         applied_any = applied_any || applied;
