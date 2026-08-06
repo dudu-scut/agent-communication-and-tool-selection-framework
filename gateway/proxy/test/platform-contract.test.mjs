@@ -32,6 +32,16 @@ test('RPC Dockerfile preserves the repository source hierarchy', () => {
   assert.doesNotMatch(rpcDockerfile, /COPY\s+proto\s+common\s+registry\s+a2a\s+a2a_adapter\s+orchestrator\s+server\s+client\s+\.\//);
 });
 
+test('RPC builder installs the nlohmann JSON development headers', () => {
+  const rpcDockerfile = read('docker/Dockerfile.rpc-server');
+  const builderAptInstall = rpcDockerfile.match(
+    /FROM\s+\S+\s+AS\s+build[\s\S]*?\bRUN\s+apt-get update && apt-get install -y --no-install-recommends([\s\S]*?)\r?\n\s+&& rm -rf \/var\/lib\/apt\/lists\/\*/,
+  );
+
+  assert.ok(builderAptInstall, 'missing builder apt install block');
+  assert.match(builderAptInstall[1], /(?:^|[\s\\])nlohmann-json3-dev(?:[\s\\]|$)/);
+});
+
 test('Vite forwards browser RPCs only to the local JSON proxy', () => {
   const vite = read('frontend/vite.config.ts');
 
