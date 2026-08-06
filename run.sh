@@ -44,6 +44,7 @@ REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
 readonly NEXUSAI_LIBPQXX_VERSION_PIN="8.0.1"
+readonly NEXUSAI_LIBPQXX_SOURCE_SHA256_PIN="24f878a1b4249035e4b6c07d49351506bf99f88df584d36bf198d58ebf293823"
 if [ -n "${XDG_DATA_HOME:-}" ]; then
     NEXUSAI_LIBPQXX_DEFAULT_PREFIX="$XDG_DATA_HOME/nexusai/libpqxx-${NEXUSAI_LIBPQXX_VERSION_PIN}"
 else
@@ -62,7 +63,7 @@ controlled_libpqxx_prefix() {
     marker="$prefix/.nexusai-libpqxx"
     [ -f "$marker" ] || return 1
     grep -Fqx "version=$NEXUSAI_LIBPQXX_VERSION_PIN" "$marker" || return 1
-    grep -Eq '^source_sha256=[0-9a-f]{64}$' "$marker" || return 1
+    grep -Fqx "source_sha256=$NEXUSAI_LIBPQXX_SOURCE_SHA256_PIN" "$marker" || return 1
     printf '%s\n' "$prefix"
 }
 

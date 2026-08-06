@@ -46,21 +46,24 @@ libpqxx_major_from_version() {
 
 libpqxx_system_version() {
   local version="" package_name
-  if command -v pkg-config >/dev/null 2>&1; then
-    version="$(pkg-config --modversion libpqxx 2>/dev/null || true)"
-  fi
-  if [ -z "$version" ] && command -v dpkg-query >/dev/null 2>&1; then
+  # Read the apt-owned package database first. This deliberately ignores any
+  # user PKG_CONFIG_PATH so a pre-existing custom prefix cannot mask stock 7.x.
+  if command -v dpkg-query >/dev/null 2>&1; then
     for package_name in libpqxx-dev libpqxx-8.0 libpqxx-7.10 libpqxx-7.8t64 libpqxx-6.4; do
       version="$(dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true)"
       if [ -n "$version" ] && [ "$version" != "unknown" ]; then
+        version="${version#*:}"
         break
       fi
       version=""
     done
   fi
+  if [ -z "$version" ] && command -v pkg-config >/dev/null 2>&1; then
+    version="$(env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR -u PKG_CONFIG_SYSROOT_DIR \
+      pkg-config --modversion libpqxx 2>/dev/null || true)"
+  fi
   printf '%s\n' "$version"
 }
-
 libpqxx_pkg_config_version_for_prefix() {
   local prefix="$1" package_config package_config_dir
   for package_config in \
@@ -86,7 +89,7 @@ validate_libpqxx_prefix() {
       ;;
   esac
   case "$NEXUSAI_LIBPQXX_PREFIX" in
-    /usr|/usr/*|/lib|/lib/*|/lib64|/lib64/*|/bin|/bin/*|/sbin|/sbin/*|/etc|/etc/*)
+    /usr|/usr/*|/lib|/lib/*|/lib64|/lib64/*|/bin|/bin/*|/sbin|/sbin/*|/etc|/etc/*|/mnt|/mnt/*)
       echo "Refusing to install libpqxx into a system prefix: $NEXUSAI_LIBPQXX_PREFIX" >&2
       return 1
       ;;
@@ -216,7 +219,7 @@ case "$PROJECT_ROOT" in
     ;;
 esac
 
-for command_name in dpkg-query apt-get grep openssl sed head tr sha256sum tar cmake; do
+for command_name in dpkg-query apt-get grep openssl sed head tr sha256sum tar; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Missing prerequisite command: $command_name" >&2
     exit 1
@@ -247,6 +250,11 @@ if [ "${#missing[@]}" -gt 0 ]; then
   sudo apt-get install -y "${missing[@]}"
 else
   echo "All documented Ubuntu packages are installed."
+fi
+
+if ! command -v cmake >/dev/null 2>&1; then
+  echo "CMake is missing after installing the documented Ubuntu packages." >&2
+  exit 1
 fi
 
 # On Ubuntu 26.04, replace only the unsupported stock major (<8) with the

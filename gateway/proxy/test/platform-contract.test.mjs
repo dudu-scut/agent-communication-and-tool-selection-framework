@@ -143,8 +143,13 @@ test('WSL bootstrap pins and verifies the Ubuntu 26.04 libpqxx workaround', () =
   assert.match(bootstrap, /libpqxx_is_ubuntu_2604/);
   assert.match(bootstrap, /ensure_libpqxx_for_ubuntu_2604/);
   assert.match(bootstrap, /Refusing to overwrite an existing uncontrolled libpqxx prefix/);
+  assert.ok(bootstrap.includes('/mnt|/mnt/*'), 'prefix validation must reject /mnt paths');
+  assert.match(bootstrap, /libpqxx_system_version[\s\S]*dpkg-query[\s\S]*env -u PKG_CONFIG_PATH/);
+  assert.match(bootstrap, /All documented Ubuntu packages are installed[\s\S]*command -v cmake/);
   assert.match(bootstrap, /\.nexusai-libpqxx/);
   assert.match(run, /controlled_libpqxx_prefix/);
+  assert.match(run, /NEXUSAI_LIBPQXX_SOURCE_SHA256_PIN="24f878a1b4249035e4b6c07d49351506bf99f88df584d36bf198d58ebf293823"/);
+  assert.match(run, /source_sha256=\$NEXUSAI_LIBPQXX_SOURCE_SHA256_PIN/);
   assert.match(run, /-DCMAKE_PREFIX_PATH=\$cmake_prefix_path/);
   assert.match(run, /PKG_CONFIG_PATH=/);
   assert.match(run, /CMAKE_BUILD_RPATH/);
