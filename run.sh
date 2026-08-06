@@ -362,10 +362,8 @@ cmd_stop() {
 
     # 停止 Docker 网关容器
     if command -v docker &>/dev/null && [ -f "$PROJECT_ROOT/docker-compose.yml" ]; then
-        if docker compose -f "$PROJECT_ROOT/docker-compose.yml" ps --format json 2>/dev/null | grep -q '"running"'; then
             info "停止 API 网关容器..."
             docker compose -f "$PROJECT_ROOT/docker-compose.yml" down
-        fi
     fi
 
     if [ "$stopped" -eq 0 ]; then

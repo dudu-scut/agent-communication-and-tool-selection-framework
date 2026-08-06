@@ -88,6 +88,29 @@ test('run.sh gateway and stop pin root Compose without volume teardown', () => {
   }
 });
 
+test('run.sh stop unconditionally tears down root Compose resources', () => {
+  const script = read('run.sh');
+  const stopStart = script.indexOf('cmd_stop() {');
+  const setupStart = script.indexOf('cmd_setup() {', stopStart);
+
+  assert.ok(stopStart >= 0 && setupStart > stopStart);
+  const stop = script.slice(stopStart, setupStart);
+  const dockerCleanupStart = stop.indexOf('if command -v docker');
+  const dockerCleanupEnd = stop.indexOf('\n    fi', dockerCleanupStart);
+
+  assert.ok(dockerCleanupStart >= 0, 'missing Docker/root Compose cleanup guard');
+  assert.ok(dockerCleanupEnd > dockerCleanupStart, 'missing Docker/root Compose cleanup guard end');
+
+  const dockerCleanup = stop.slice(dockerCleanupStart, dockerCleanupEnd);
+  assert.match(
+    dockerCleanup,
+    /if command -v docker\s+&>\/dev\/null && \[ -f "\$PROJECT_ROOT\/docker-compose\.yml" \]; then/,
+  );
+  assert.match(dockerCleanup, /^\s+docker compose -f "\$PROJECT_ROOT\/docker-compose\.yml" down\s*$/m);
+  assert.doesNotMatch(dockerCleanup, /\n\s+if\b/);
+  assert.doesNotMatch(dockerCleanup, /ps\s+--format\s+json|["']running["']/);
+});
+
 test('WSL bootstrap refuses Windows mounts and documents its package checks', () => {
   const bootstrap = read('scripts/bootstrap-wsl.sh');
 
