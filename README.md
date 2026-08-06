@@ -22,6 +22,18 @@ Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Lin
 ./scripts/bootstrap-wsl.sh
 ```
 
+Ubuntu 26.04's stock `libpqxx` 7.10 package is rejected because of its
+process-exit double-free. The bootstrap detects that distribution and only
+then fetches the pinned libpqxx 8.0.1 source archive, verifies SHA-256
+`24f878a1b4249035e4b6c07d49351506bf99f88df584d36bf198d58ebf293823`, and
+installs it under the user-controlled
+`${XDG_DATA_HOME:-$HOME/.local/share}/nexusai/libpqxx-8.0.1` prefix. A marker
+and `pkg-config` version check make the install idempotent; a failed or
+mismatched archive stops bootstrap, and no apt-owned files are overwritten.
+`run.sh build` discovers that prefix automatically and passes it to CMake.
+Ubuntu 24.04 keeps using its system libpqxx package (including 6.x), and
+ordinary CMake configuration never downloads dependencies.
+
 The browser path is JSON only: `Browser/Vite -> Node JSON proxy (:8081) -> gRPC RPC server (:50051)`. Vite forwards only browser RPC paths to the local Node proxy.
 
 For the complete containerized stack, use the root Compose file:
@@ -398,5 +410,8 @@ set in order and records checksums in `schema_migrations`. Compose runs it as th
 `migrate` service before `rpc-server`; the legacy `sql/` files remain reference
 inputs and are never executed by Compose.
 
-On WSL2, keep the checkout on the Linux filesystem (not `/mnt/c`) and install
-`libpqxx-dev` before configuring CMake. The `.env.example` password is local-only.
+On WSL2, keep the checkout on the Linux filesystem (not `/mnt/c`) and run
+`./scripts/bootstrap-wsl.sh` before configuring CMake. Ubuntu 26.04 receives
+the verified user-prefix libpqxx 8.0.1 workaround described above; Ubuntu
+24.04 continues to use its system `libpqxx-dev`. The `.env.example` password
+is local-only.

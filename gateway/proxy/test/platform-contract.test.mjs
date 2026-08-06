@@ -131,6 +131,25 @@ test('WSL bootstrap refuses Windows mounts and documents its package checks', ()
   }
 });
 
+test('WSL bootstrap pins and verifies the Ubuntu 26.04 libpqxx workaround', () => {
+  const bootstrap = read('scripts/bootstrap-wsl.sh');
+  const run = read('run.sh');
+
+  assert.match(bootstrap, /NEXUSAI_LIBPQXX_VERSION=\"8\.0\.1\"/);
+  assert.match(bootstrap, /NEXUSAI_LIBPQXX_SOURCE_URL=.*github\.com\/jtv\/libpqxx/);
+  assert.match(bootstrap, /NEXUSAI_LIBPQXX_SOURCE_SHA256=\"[0-9a-f]{64}\"/);
+  assert.match(bootstrap, /sha256sum --check --strict/);
+  assert.match(bootstrap, /curl --fail --location --proto '=https' --tlsv1\.2/);
+  assert.match(bootstrap, /libpqxx_is_ubuntu_2604/);
+  assert.match(bootstrap, /ensure_libpqxx_for_ubuntu_2604/);
+  assert.match(bootstrap, /Refusing to overwrite an existing uncontrolled libpqxx prefix/);
+  assert.match(bootstrap, /\.nexusai-libpqxx/);
+  assert.match(run, /controlled_libpqxx_prefix/);
+  assert.match(run, /-DCMAKE_PREFIX_PATH=\$cmake_prefix_path/);
+  assert.match(run, /PKG_CONFIG_PATH=/);
+  assert.match(run, /CMAKE_BUILD_RPATH/);
+});
+
 test('WSL bootstrap provides Ubuntu packages and a Go fallback for PR1 setup dependencies', () => {
   const bootstrap = read('scripts/bootstrap-wsl.sh');
   const requiredPackages = bootstrap.match(/REQUIRED_PACKAGES=\(([\s\S]*?)\r?\n\)\r?\n\r?\nmissing=/);

@@ -43,6 +43,38 @@ fi
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
+readonly NEXUSAI_LIBPQXX_VERSION_PIN="8.0.1"
+if [ -n "${XDG_DATA_HOME:-}" ]; then
+    NEXUSAI_LIBPQXX_DEFAULT_PREFIX="$XDG_DATA_HOME/nexusai/libpqxx-${NEXUSAI_LIBPQXX_VERSION_PIN}"
+else
+    NEXUSAI_LIBPQXX_DEFAULT_PREFIX="${HOME:-$PROJECT_ROOT}/.local/share/nexusai/libpqxx-${NEXUSAI_LIBPQXX_VERSION_PIN}"
+fi
+
+controlled_libpqxx_prefix() {
+    local os_release_file="${NEXUSAI_OS_RELEASE_FILE:-/etc/os-release}"
+    local os_id os_version_id prefix marker
+    [ -r "$os_release_file" ] || return 1
+    os_id="$(sed -n 's/^ID=//p' "$os_release_file" | head -n 1 | tr -d '"')"
+    os_version_id="$(sed -n 's/^VERSION_ID=//p' "$os_release_file" | head -n 1 | tr -d '"')"
+    [ "$os_id" = "ubuntu" ] && [ "$os_version_id" = "26.04" ] || return 1
+
+    prefix="${NEXUSAI_LIBPQXX_PREFIX:-$NEXUSAI_LIBPQXX_DEFAULT_PREFIX}"
+    marker="$prefix/.nexusai-libpqxx"
+    [ -f "$marker" ] || return 1
+    grep -Fqx "version=$NEXUSAI_LIBPQXX_VERSION_PIN" "$marker" || return 1
+    grep -Eq '^source_sha256=[0-9a-f]{64}$' "$marker" || return 1
+    printf '%s\n' "$prefix"
+}
+
+controlled_libpqxx_pkgconfig_path() {
+    local prefix="$1" pkg_dir separator=""
+    for pkg_dir in "$prefix/lib/pkgconfig" "$prefix/lib64/pkgconfig" "$prefix"/lib/*/pkgconfig; do
+        [ -d "$pkg_dir" ] || continue
+        printf '%s%s' "$separator" "$pkg_dir"
+        separator=":"
+    done
+}
+
 # ============================================================================
 # 工具函数
 # ============================================================================
@@ -117,7 +149,23 @@ cmd_build() {
     info "并行任务: $BUILD_JOBS"
 
     info "CMake 配置..."
-    cmake .. -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    local controlled_prefix cmake_prefix_path controlled_pkgconfig_path
+    local -a cmake_libpqxx_args=()
+    if controlled_prefix="$(controlled_libpqxx_prefix 2>/dev/null)"; then
+        cmake_prefix_path="$controlled_prefix"
+        if [ -n "${CMAKE_PREFIX_PATH:-}" ]; then
+            cmake_prefix_path="$controlled_prefix;$CMAKE_PREFIX_PATH"
+        fi
+        cmake_libpqxx_args+=("-DCMAKE_PREFIX_PATH=$cmake_prefix_path")
+        cmake_libpqxx_args+=("-DCMAKE_BUILD_RPATH=$controlled_prefix/lib")
+        cmake_libpqxx_args+=("-DCMAKE_INSTALL_RPATH=$controlled_prefix/lib")
+        if controlled_pkgconfig_path="$(controlled_libpqxx_pkgconfig_path "$controlled_prefix")"; then
+            export PKG_CONFIG_PATH="$controlled_pkgconfig_path${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+        fi
+        export LD_LIBRARY_PATH="$controlled_prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        info "Using controlled libpqxx prefix: $controlled_prefix"
+    fi
+    cmake .. -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "${cmake_libpqxx_args[@]}"
     if [ $? -ne 0 ]; then
         error "CMake 配置失败"
         exit 1
