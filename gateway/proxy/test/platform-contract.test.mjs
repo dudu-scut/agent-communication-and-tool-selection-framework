@@ -58,6 +58,36 @@ test('run script manages a proxy PID without set -e unsafe postincrements', () =
   assert.doesNotMatch(script, /\/mnt\/c\/Users\//);
 });
 
+test('run.sh start-all delegates to the root Compose gateway without legacy runtime paths', () => {
+  const script = read('run.sh');
+  const startAllStart = script.indexOf('cmd_start_all() {');
+  const usageStart = script.indexOf('usage() {', startAllStart);
+
+  assert.ok(startAllStart >= 0, 'missing cmd_start_all');
+  assert.ok(usageStart > startAllStart, 'missing usage section after cmd_start_all');
+  const startAll = script.slice(startAllStart, usageStart);
+
+  assert.match(startAll, /cmd_gateway(?:\s+"\$@")?/);
+  assert.doesNotMatch(startAll, /cmd_(?:redis|start_mock_agent|start_orchestrator|start_proxy|start)\b/);
+  assert.doesNotMatch(startAll, /GRPC_TARGET|localhost:50051|Envoy|gRPC-Web|WSL|Windows/i);
+});
+
+test('run.sh gateway and stop pin root Compose without volume teardown', () => {
+  const script = read('run.sh');
+  const gatewayStart = script.indexOf('cmd_gateway() {');
+  const stopStart = script.indexOf('cmd_stop() {', gatewayStart);
+  const setupStart = script.indexOf('cmd_setup() {', stopStart);
+
+  assert.ok(gatewayStart >= 0 && stopStart > gatewayStart && setupStart > stopStart);
+  const gateway = script.slice(gatewayStart, stopStart);
+  const stop = script.slice(stopStart, setupStart);
+
+  for (const section of [gateway, stop]) {
+    assert.match(section, /docker compose -f "\$PROJECT_ROOT\/docker-compose\.yml"/);
+    assert.doesNotMatch(section, /GATEWAY_COMPOSE|docker compose[^\n]*(?:--volumes|\s-v(?:\s|$))/);
+  }
+});
+
 test('WSL bootstrap refuses Windows mounts and documents its package checks', () => {
   const bootstrap = read('scripts/bootstrap-wsl.sh');
 

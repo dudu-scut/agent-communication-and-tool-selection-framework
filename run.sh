@@ -178,7 +178,6 @@ cmd_clean() {
 # ============================================================================
 SERVER_PORT="${RPC_SERVER_PORT:-50051}"
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:5000}"
-GATEWAY_COMPOSE="$PROJECT_ROOT/docker-compose.yml"
 
 cmd_start() {
     banner "启动 gRPC 服务端"
@@ -307,29 +306,29 @@ cmd_gateway() {
         exit 1
     fi
 
-    if [ ! -f "$GATEWAY_COMPOSE" ]; then
-        error "未找到 docker-compose 配置: $GATEWAY_COMPOSE"
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        error "未找到 docker-compose 配置: $PROJECT_ROOT/docker-compose.yml"
         exit 1
     fi
 
     info "启动 containerized JSON gateway stack..."
-    docker compose -f "$GATEWAY_COMPOSE" up --build -d
+    docker compose -f "$PROJECT_ROOT/docker-compose.yml" up --build -d
 
     sleep 2
 
     # 检查容器状态
-    if docker compose -f "$GATEWAY_COMPOSE" ps --format json 2>/dev/null | grep -q '"running"'; then
+    if docker compose -f "$PROJECT_ROOT/docker-compose.yml" ps --format json 2>/dev/null | grep -q '"running"'; then
         echo ""
         info "API 网关启动成功"
         echo ""
         echo "  浏览器入口:   https://localhost:8443  (HTTPS JSON)"
         echo "  Node JSON proxy: internal :8081"
         echo ""
-        echo "  查看日志:     docker compose -f $GATEWAY_COMPOSE logs -f"
+        echo "  查看日志:     docker compose -f $PROJECT_ROOT/docker-compose.yml logs -f"
         echo "  停止网关:     ./run.sh stop"
     else
         warn "部分容器可能未正常启动，请检查:"
-        docker compose -f "$GATEWAY_COMPOSE" ps
+        docker compose -f "$PROJECT_ROOT/docker-compose.yml" ps
     fi
 }
 
@@ -362,10 +361,10 @@ cmd_stop() {
     fi
 
     # 停止 Docker 网关容器
-    if command -v docker &>/dev/null && [ -f "$GATEWAY_COMPOSE" ]; then
-        if docker compose -f "$GATEWAY_COMPOSE" ps --format json 2>/dev/null | grep -q '"running"'; then
+    if command -v docker &>/dev/null && [ -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        if docker compose -f "$PROJECT_ROOT/docker-compose.yml" ps --format json 2>/dev/null | grep -q '"running"'; then
             info "停止 API 网关容器..."
-            docker compose -f "$GATEWAY_COMPOSE" down
+            docker compose -f "$PROJECT_ROOT/docker-compose.yml" down
         fi
     fi
 
@@ -769,53 +768,10 @@ cmd_start_proxy() {
 }
 
 # ============================================================================
-# start-all - 一键启动全部后端服务（在 WSL 终端中执行）
+# start-all - start containerized JSON gateway stack (Docker)
 # ============================================================================
 cmd_start_all() {
-    banner "启动全部服务"
-
-    # 1. Redis
-    cmd_redis
-
-    # 2. Mock Agent (验证用)
-    if [ -f "$VERIFY_DIR/mock-agent/mock_agent_server.py" ]; then
-        cmd_start_mock_agent
-    fi
-
-    # 3. Node JSON Proxy (:8081 -> gRPC :50051)
-    local proxy_dir="$PROJECT_ROOT/gateway/proxy"
-    if [ -f "$proxy_dir/server.mjs" ]; then
-        export PATH="$HOME/.local/bin:$PATH"
-        if command -v node &>/dev/null; then
-            info "启动 Node gRPC 代理 (端口 8081)..."
-            cmd_start_proxy
-            sleep 2
-            echo "  Node 代理: http://localhost:8081 → localhost:50051"
-        else
-            warn "Node.js 未安装，跳过代理启动"
-        fi
-    fi
-
-    # 4. Orchestrator
-    if [ -f "$PROJECT_ROOT/examples/orchestrator_agent.py" ]; then
-        cmd_start_orchestrator
-    fi
-
-    # 5. gRPC Server
-    cmd_start "$@"
-
-    echo ""
-    info "全部后端服务启动完成，请保持此 WSL 终端开启"
-    echo ""
-    echo "  Redis:           localhost:6379"
-    echo "  Mock Agent:      localhost:5100"
-    echo "  Node 代理:       localhost:8081 → gRPC :50051"
-    echo "  Orchestrator:    localhost:5000"
-    echo "  gRPC Server:     localhost:50051"
-    echo ""
-    echo "  接下来在 Windows 终端启动前端:"
-    echo "    cd frontend && npm run dev           # 前端 :5173"
-    echo "  运行验证:     ./run.sh verify"
+    cmd_gateway "$@"
 }
 
 # 主入口
@@ -837,14 +793,13 @@ usage() {
     echo "  verify         运行 E2E 验证测试 (全部 8 批)"
     echo "  verify-batch1  单独运行第 1 批验证"
     echo "  verify-batch2  ...以此类推至 verify-batch8"
-    echo "  start-all      一键启动全部后端服务 (在 WSL 终端中执行)"
+    echo "  start-all      start containerized JSON gateway stack (Docker; same as gateway)"
     echo "  start-mock-agent 启动 Mock Agent (验证用)"
     echo "  start-orchestrator 启动 A2A Orchestrator (端口 5000)"
     echo ""
     echo "开发流程:"
-    echo "  WSL终端:  ./run.sh start-all    # 启动全部后端 (保持终端开启)"
-    echo "  Win终端:  cd gateway/proxy && node server.mjs  # gRPC代理"
-    echo "  Win终端:  cd frontend && npm run dev         # 前端"
+    echo "  ./run.sh start-all    # start containerized JSON gateway (same as gateway)"
+    echo "  ./run.sh frontend-dev # start local Vite HMR"
     echo ""
     echo "环境变量:"
     echo "  BUILD_TYPE           构建类型 (默认: Release)"
@@ -858,7 +813,7 @@ usage() {
     echo "  LLM_API_URL          LLM API 地址"
     echo ""
     echo "快速启动:"
-    echo "  ./run.sh build && ./run.sh start-all   # 编译 + 一键启动全部后端"
+    echo "  ./run.sh start-all    # start containerized JSON gateway (same as gateway)"
     echo "  ./run.sh gateway                       # 如需浏览器访问（Docker 网关）"
     echo ""
 }
