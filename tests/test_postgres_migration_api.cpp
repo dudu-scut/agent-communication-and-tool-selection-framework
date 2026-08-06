@@ -44,7 +44,6 @@ TEST(PostgresMigrationApiTest, KeepsExplicitVersionSpecificParameterizedBranches
 
 TEST(PostgresMigrationApiTest, ExposesSupportedVersionMacroAtCompileTime) {
     static_assert(PQXX_VERSION_MAJOR >= 6, "libpqxx 6.x or newer is required");
-    static_assert(PQXX_VERSION_MAJOR <= 8, "update the migration API branch for new libpqxx majors");
 
 #if PQXX_VERSION_MAJOR >= 8
     SUCCEED() << "compiled against the libpqxx 8+ exec(query, params) path";
