@@ -287,3 +287,31 @@ test('Frontend Docker healthcheck pins its HTTPS self-probe to IPv4 loopback', (
   assert.match(frontend, /https:\/\/127\.0\.0\.1:8443\/health/);
   assert.doesNotMatch(frontend, /https:\/\/localhost:8443\/health/);
 });
+
+test('migration service uses the compiled migrator and canonical Compose DNS', () => {
+  const compose = read('docker-compose.yml');
+  const migrate = serviceBlock(compose, 'migrate');
+  assert.match(migrate, /dockerfile:\s*docker\/Dockerfile\.rpc-server/);
+  assert.match(migrate, /entrypoint:\s*\["db_migrate"\]/);
+  assert.match(migrate, /--migrations/, 'migrate service must pass an explicit migration directory');
+  assert.match(migrate, /NEXUSAI_POSTGRES_HOST:\s*postgres/);
+  assert.match(migrate, /NEXUSAI_POSTGRES_PORT:\s*"5432"/);
+  assert.match(migrate, /NEXUSAI_POSTGRES_DATABASE:/);
+  assert.match(migrate, /NEXUSAI_POSTGRES_USER:/);
+  assert.match(migrate, /NEXUSAI_POSTGRES_PASSWORD:/);
+  assert.doesNotMatch(migrate, /postgres:16-alpine/);
+  assert.doesNotMatch(migrate, /\bpsql\b|\.\/sql|\/sql/);
+});
+
+test('migration packaging carries libpqxx, db_migrate, and exactly baseline migrations', () => {
+  const dockerfile = read('docker/Dockerfile.rpc-server');
+  const compose = read('docker-compose.yml');
+  assert.match(dockerfile, /libpqxx-dev/);
+  assert.match(dockerfile, /libpqxx-\d+\.\d+/);
+  assert.match(dockerfile, /COPY --from=build \/build\/db\/db_migrate \/usr\/local\/bin\/db_migrate/);
+  assert.match(dockerfile, /COPY db\/migrations \/usr\/local\/share\/nexusai\/migrations/);
+  assert.match(compose, /dockerfile:\s*docker\/Dockerfile\.rpc-server/);
+  const migrations = fs.readdirSync(path.join(root, 'db/migrations')).filter((name) => /^V\d+__.*\.sql$/.test(name));
+  assert.equal(migrations.length, 9);
+  assert.equal(migrations.some((name) => /^V010__/.test(name)), false);
+});

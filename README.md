@@ -390,3 +390,13 @@ cd frontend && npm run dev
 ## 许可证
 
 MIT License
+
+### PostgreSQL migrations (PR2.1)
+
+The compiled `db_migrate` binary applies the canonical `db/migrations/VNNN__name.sql`
+set in order and records checksums in `schema_migrations`. Compose runs it as the
+`migrate` service before `rpc-server`; the legacy `sql/` files remain reference
+inputs and are never executed by Compose.
+
+On WSL2, keep the checkout on the Linux filesystem (not `/mnt/c`) and install
+`libpqxx-dev` before configuring CMake. The `.env.example` password is local-only.

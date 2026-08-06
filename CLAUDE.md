@@ -95,3 +95,11 @@ Load via `.env` file at project root (auto-loaded by `run.sh` and `env_loader`).
 - Redis must be running on `localhost:6379` for auth/memory/agent-communication tests.
 - LLM-dependent features (routing tier 2, planning, RAG embedding) degrade gracefully without `LLM_API_KEY`.
 - `ai_interface/` module is commented out of root CMakeLists.txt — may be re-enabled in the future.
+
+## PR2.1 PostgreSQL migration foundation
+
+- `db_migrate --migrations db/migrations` is the only Compose migration path;
+  `sql/` remains legacy reference material.
+- PostgresStore reads only `NEXUSAI_POSTGRES_HOST`, `PORT`, `DATABASE`, `USER`,
+  and `PASSWORD`. Run the CMake build on WSL2 Linux filesystems with `libpqxx-dev`.
+- The Compose `PG_URL` on `rpc-server` is a temporary compatibility bridge for

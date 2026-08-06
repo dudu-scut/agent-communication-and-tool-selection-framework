@@ -438,3 +438,40 @@ target_include_directories(test_error_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
 )
 add_test(NAME ErrorMapperTest COMMAND test_error_mapper)
+
+# PostgreSQL persistence foundation. Configuration is hermetic; the migration
+# integration test is registered only when a usable Docker daemon is present.
+add_executable(test_postgres_config test_postgres_config.cpp)
+target_link_libraries(test_postgres_config
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_postgres_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME PostgresConfigTest COMMAND test_postgres_config)
+
+find_package(Python3 COMPONENTS Interpreter)
+find_program(DOCKER_EXECUTABLE docker)
+set(NEXUSAI_DOCKER_AVAILABLE OFF)
+if(DOCKER_EXECUTABLE)
+    execute_process(
+        COMMAND ${DOCKER_EXECUTABLE} info
+        RESULT_VARIABLE NEXUSAI_DOCKER_INFO_RESULT
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if(NEXUSAI_DOCKER_INFO_RESULT EQUAL 0)
+        set(NEXUSAI_DOCKER_AVAILABLE ON)
+    endif()
+endif()
+if(Python3_Interpreter_FOUND AND NEXUSAI_DOCKER_AVAILABLE)
+    add_test(NAME PostgresMigrationIntegrationTest
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/postgres_migrations_integration.py
+            --migrator $<TARGET_FILE:db_migrate>
+            --migrations ${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations
+            --docker ${DOCKER_EXECUTABLE})
+    set_tests_properties(PostgresMigrationIntegrationTest PROPERTIES TIMEOUT 180)
+endif()

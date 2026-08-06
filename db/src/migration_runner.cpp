@@ -1,0 +1,140 @@
+#include "agent_rpc/db/migration_runner.h"
+
+#include <algorithm>
+#include <array>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <regex>
+#include <sstream>
+#include <stdexcept>
+
+#include <openssl/sha.h>
+
+namespace agent_rpc::db {
+namespace {
+
+constexpr char kMigrationPattern[] = R"(^V([0-9]{3,})__[A-Za-z0-9_]+\.sql$)";
+
+class AdvisoryLockRelease final {
+public:
+    explicit AdvisoryLockRelease(common::PostgresStore& store) : store_(store) {}
+
+    ~AdvisoryLockRelease() noexcept {
+        try {
+            store_.executeTransaction([](pqxx::work& transaction) {
+                transaction.exec("SELECT pg_advisory_unlock(739214640)");
+            });
+        } catch (const std::exception&) {
+            // PostgreSQL releases session locks when a broken connection ends.
+        }
+    }
+
+private:
+    common::PostgresStore& store_;
+};
+
+}  // namespace
+
+MigrationRunner::MigrationRunner(common::PostgresStore& store) : store_(store) {}
+
+void MigrationRunner::migrate(const std::filesystem::path& directory) {
+    const auto migrations = discover(directory);
+
+    // pg_advisory_lock is session-scoped. PostgresStore serializes access to
+    // that same libpqxx connection while the complete migration set runs.
+    store_.executeTransaction([](pqxx::work& transaction) {
+        transaction.exec("SELECT pg_advisory_lock(739214640)");
+    });
+    AdvisoryLockRelease release_lock{store_};
+
+    store_.executeTransaction([](pqxx::work& transaction) {
+        transaction.exec(
+            "CREATE TABLE IF NOT EXISTS schema_migrations ("
+            "version VARCHAR(64) PRIMARY KEY, "
+            "filename TEXT NOT NULL, "
+            "checksum CHAR(64) NOT NULL, "
+            "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+    });
+
+    bool applied_any = false;
+    for (const auto& migration : migrations) {
+        const std::string sql = readFile(migration.path);
+        bool applied = false;
+        store_.executeTransaction([&](pqxx::work& transaction) {
+            const pqxx::result result = transaction.exec_params(
+                "SELECT checksum FROM schema_migrations WHERE version = $1", migration.version);
+            if (!result.empty()) {
+                if (result.front()["checksum"].as<std::string>() != migration.checksum) {
+                    throw std::runtime_error("migration checksum mismatch for " + migration.version);
+                }
+                return;
+            }
+
+            transaction.exec(sql);
+            transaction.exec_params(
+                "INSERT INTO schema_migrations(version, filename, checksum) VALUES ($1, $2, $3)",
+                migration.version, migration.path.filename().string(), migration.checksum);
+            applied = true;
+        });
+        applied_any = applied_any || applied;
+    }
+
+    std::cout << (applied_any ? "migrations applied" : "migrations already current") << std::endl;
+}
+
+std::vector<MigrationRunner::Migration> MigrationRunner::discover(
+    const std::filesystem::path& directory) {
+    if (!std::filesystem::is_directory(directory)) {
+        throw std::invalid_argument("migration directory does not exist: " + directory.string());
+    }
+
+    const std::regex pattern{kMigrationPattern};
+    std::vector<Migration> migrations;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+
+        std::smatch match;
+        const std::string filename = entry.path().filename().string();
+        if (!std::regex_match(filename, match, pattern)) {
+            continue;
+        }
+        migrations.push_back(Migration{
+            .version = match[1].str(),
+            .path = entry.path(),
+            .checksum = checksum(readFile(entry.path())),
+        });
+    }
+
+    std::sort(migrations.begin(), migrations.end(), [](const Migration& left, const Migration& right) {
+        return left.version < right.version;
+    });
+    for (std::size_t index = 1; index < migrations.size(); ++index) {
+        if (migrations[index - 1].version == migrations[index].version) {
+            throw std::invalid_argument("duplicate migration version: " + migrations[index].version);
+        }
+    }
+    return migrations;
+}
+
+std::string MigrationRunner::readFile(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("cannot read migration: " + path.string());
+    }
+    return {std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+}
+
+std::string MigrationRunner::checksum(const std::string& contents) {
+    std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
+    SHA256(reinterpret_cast<const unsigned char*>(contents.data()), contents.size(), digest.data());
+    std::ostringstream encoded;
+    for (const unsigned char byte : digest) {
+        encoded << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(byte);
+    }
+    return encoded.str();
+}
+
+}  // namespace agent_rpc::db
