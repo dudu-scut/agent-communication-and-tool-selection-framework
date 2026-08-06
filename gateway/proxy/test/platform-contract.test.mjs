@@ -120,19 +120,36 @@ test('WSL bootstrap refuses Windows mounts and documents its package checks', ()
   }
 });
 
-test('WSL bootstrap installs Ubuntu packages for every PR1 setup dependency', () => {
+test('WSL bootstrap provides Ubuntu packages and a Go fallback for PR1 setup dependencies', () => {
   const bootstrap = read('scripts/bootstrap-wsl.sh');
   const requiredPackages = bootstrap.match(/REQUIRED_PACKAGES=\(([\s\S]*?)\r?\n\)\r?\n\r?\nmissing=/);
 
   assert.ok(requiredPackages, 'missing REQUIRED_PACKAGES block');
+  assert.doesNotMatch(requiredPackages[1], /(?:^|\s)grpcurl(?:\s|$)/, 'grpcurl is not an Ubuntu package');
   for (const [requirement, packageName] of [
     ['pg_config', 'libpq-dev'],
-    ['grpcurl', 'grpcurl'],
     ['pkg-config package libsodium', 'libsodium-dev'],
     ['libpqxx', 'libpqxx-dev'],
+    ['grpcurl Go SDK', 'golang-go'],
   ]) {
     assert.match(requiredPackages[1], new RegExp(`(?:^|\\s)${packageName}(?:\\s|$)`), `missing Ubuntu package for ${requirement}: ${packageName}`);
   }
+
+  const fallbackStart = bootstrap.indexOf('if ! command -v grpcurl');
+  const dockerStart = bootstrap.indexOf('if ! command -v docker', fallbackStart);
+  assert.ok(fallbackStart >= 0 && dockerStart > fallbackStart, 'missing grpcurl Go fallback before Docker checks');
+  const fallback = bootstrap.slice(fallbackStart, dockerStart);
+
+  for (const [requirement, check] of [
+    ['sudo guard', /if ! command -v sudo[\s\S]*sudo is required/],
+    ['temporary build directory', /mktemp -d/],
+    ['Go install source', /GOBIN=.*go install github\.com\/fullstorydev\/grpcurl\/cmd\/grpcurl@latest/],
+    ['controlled PATH install', /sudo install[^\n]*\/usr\/local\/bin\/grpcurl/],
+    ['temporary cleanup', /rm\s+-rf[\s\S]*grpcurl_build_dir/],
+  ]) {
+    assert.match(fallback, check, `missing grpcurl fallback ${requirement}`);
+  }
+  assert.ok((fallback.match(/command -v grpcurl/g) ?? []).length >= 2, 'fallback must verify grpcurl is on PATH after installation');
 });
 
 test('Compose gates the JSON gateway and publishes only HTTPS web traffic', () => {

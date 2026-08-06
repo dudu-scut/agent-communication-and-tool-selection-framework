@@ -33,7 +33,7 @@ REQUIRED_PACKAGES=(
   libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc libjsoncpp-dev
   libhiredis-dev libcurl4-openssl-dev libssl-dev uuid-dev
   libgtest-dev librapidcheck-dev nlohmann-json3-dev
-  libpq-dev grpcurl libsodium-dev libpqxx-dev
+  libpq-dev golang-go libsodium-dev libpqxx-dev
   postgresql-client redis-server nodejs npm openssl
 )
 
@@ -52,6 +52,38 @@ if [ "${#missing[@]}" -gt 0 ]; then
   sudo apt-get install -y "${missing[@]}"
 else
   echo "All documented Ubuntu packages are installed."
+fi
+
+if ! command -v grpcurl >/dev/null 2>&1; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "sudo is required to install grpcurl via the Go SDK." >&2
+    exit 1
+  fi
+  if ! command -v go >/dev/null 2>&1; then
+    echo "Go SDK is missing after installing golang-go; cannot install grpcurl." >&2
+    exit 1
+  fi
+
+  grpcurl_build_dir="$(mktemp -d)"
+  trap 'rm -rf -- "$grpcurl_build_dir"' EXIT
+  if ! GOBIN="$grpcurl_build_dir" go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest; then
+    echo "Failed to install grpcurl with the Go SDK." >&2
+    exit 1
+  fi
+  if [ ! -x "$grpcurl_build_dir/grpcurl" ]; then
+    echo "Go install did not produce the grpcurl executable." >&2
+    exit 1
+  fi
+  if ! sudo install -m 0755 "$grpcurl_build_dir/grpcurl" /usr/local/bin/grpcurl; then
+    echo "Failed to install grpcurl into /usr/local/bin." >&2
+    exit 1
+  fi
+  rm -rf -- "$grpcurl_build_dir"
+  trap - EXIT
+  if ! command -v grpcurl >/dev/null 2>&1; then
+    echo "grpcurl was installed but is not available on PATH." >&2
+    exit 1
+  fi
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
