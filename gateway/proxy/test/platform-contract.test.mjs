@@ -315,3 +315,11 @@ test('migration packaging carries libpqxx, db_migrate, and exactly baseline migr
   assert.equal(migrations.length, 9);
   assert.equal(migrations.some((name) => /^V010__/.test(name)), false);
 });
+
+test('CMake resolves libpqxx through config targets or pkg-config fallback', () => {
+  const rootCmake = read('CMakeLists.txt');
+  const resolver = read('cmake/resolve_libpqxx_target.cmake');
+  assert.match(rootCmake, /find_package\(libpqxx CONFIG QUIET\)/);
+  assert.match(resolver, /pkg_check_modules\(AGENT_RPC_LIBPQXX REQUIRED IMPORTED_TARGET libpqxx\)/);
+  assert.match(resolver, /PkgConfig::AGENT_RPC_LIBPQXX/);
+});
