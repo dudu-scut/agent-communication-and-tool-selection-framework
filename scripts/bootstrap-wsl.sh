@@ -33,6 +33,7 @@ REQUIRED_PACKAGES=(
   libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc libjsoncpp-dev
   libhiredis-dev libcurl4-openssl-dev libssl-dev uuid-dev
   libgtest-dev librapidcheck-dev nlohmann-json3-dev
+  libpq-dev grpcurl libsodium-dev libpqxx-dev
   postgresql-client redis-server nodejs npm openssl
 )
 

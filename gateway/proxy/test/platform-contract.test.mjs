@@ -120,6 +120,21 @@ test('WSL bootstrap refuses Windows mounts and documents its package checks', ()
   }
 });
 
+test('WSL bootstrap installs Ubuntu packages for every PR1 setup dependency', () => {
+  const bootstrap = read('scripts/bootstrap-wsl.sh');
+  const requiredPackages = bootstrap.match(/REQUIRED_PACKAGES=\(([\s\S]*?)\r?\n\)\r?\n\r?\nmissing=/);
+
+  assert.ok(requiredPackages, 'missing REQUIRED_PACKAGES block');
+  for (const [requirement, packageName] of [
+    ['pg_config', 'libpq-dev'],
+    ['grpcurl', 'grpcurl'],
+    ['pkg-config package libsodium', 'libsodium-dev'],
+    ['libpqxx', 'libpqxx-dev'],
+  ]) {
+    assert.match(requiredPackages[1], new RegExp(`(?:^|\\s)${packageName}(?:\\s|$)`), `missing Ubuntu package for ${requirement}: ${packageName}`);
+  }
+});
+
 test('Compose gates the JSON gateway and publishes only HTTPS web traffic', () => {
   const compose = read('docker-compose.yml');
   const rpcServer = serviceBlock(compose, 'rpc-server');
