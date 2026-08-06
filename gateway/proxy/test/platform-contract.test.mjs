@@ -183,3 +183,11 @@ test('Frontend declares Vite environment types used by the JSON client', () => {
   assert.match(source, /vite\/client/);
   assert.match(source, /VITE_API_BASE/);
 });
+
+test('Frontend Docker healthcheck pins its HTTPS self-probe to IPv4 loopback', () => {
+  const compose = read('docker-compose.yml');
+  const frontend = serviceBlock(compose, 'frontend');
+
+  assert.match(frontend, /https:\/\/127\.0\.0\.1:8443\/health/);
+  assert.doesNotMatch(frontend, /https:\/\/localhost:8443\/health/);
+});
