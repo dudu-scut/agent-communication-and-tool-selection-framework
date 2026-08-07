@@ -38,8 +38,6 @@ target_link_libraries(rpc_server
     pthread
     ${UUID_LIB}
     CURL::libcurl
-    OpenSSL::SSL
-    OpenSSL::Crypto
     ${HIREDIS_LIBRARIES}
 )
 

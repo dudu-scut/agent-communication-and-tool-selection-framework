@@ -16,7 +16,6 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
-#include <fstream>
 #include <sstream>
 
 namespace agent_rpc {
@@ -99,7 +98,6 @@ RpcServer::~RpcServer() {
     user_experience_service_impl_.reset();
     observability_service_impl_.reset();
     server_.reset();
-    server_credentials_.reset();
     builders_.clear();
 }
 
@@ -286,20 +284,11 @@ void RpcServer::unregisterService() {
 }
 
 void RpcServer::setupServer() {
-    // Initialize SSL credentials if configured
-    setupSslCredentials();
-
     grpc::ServerBuilder builder;
-
-    // Use SSL credentials if available, otherwise fallback to insecure
-    if (server_credentials_) {
-        builder.AddListeningPort(address_, server_credentials_);
-        LOG_INFO("RPC server listening on " + address_ + " with SSL/TLS");
-    } else {
-        builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
-        LOG_WARN("RPC server listening on " + address_ + " WITHOUT SSL/TLS (insecure)");
-    }
-    
+    // The local WSL/Compose deployment intentionally uses plaintext gRPC.
+    // Authentication is handled by the RPC interceptor, not transport TLS.
+    builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
+    LOG_INFO("RPC server listening on " + address_ + " (local transport)");
     // 设置最大消息大小
     builder.SetMaxReceiveMessageSize(config_.max_receive_message_size);
     builder.SetMaxSendMessageSize(config_.max_message_size);
@@ -389,36 +378,6 @@ void RpcServer::setupServer() {
     
     if (!server_) {
         throw std::runtime_error("Failed to build gRPC server");
-    }
-}
-
-void RpcServer::setupSslCredentials() {
-    if (config_.enable_ssl && !config_.ssl_cert_path.empty() && !config_.ssl_key_path.empty()) {
-        grpc::SslServerCredentialsOptions ssl_opts;
-        grpc::SslServerCredentialsOptions::PemKeyCertPair pkcp;
-        
-        // 读取证书文件
-        std::ifstream key_file(config_.ssl_key_path);
-        std::ifstream cert_file(config_.ssl_cert_path);
-        
-        if (key_file.is_open() && cert_file.is_open()) {
-            std::string key_content((std::istreambuf_iterator<char>(key_file)),
-                                  std::istreambuf_iterator<char>());
-            std::string cert_content((std::istreambuf_iterator<char>(cert_file)),
-                                  std::istreambuf_iterator<char>());
-            
-            pkcp.private_key = key_content;
-            pkcp.cert_chain = cert_content;
-            ssl_opts.pem_key_cert_pairs.push_back(pkcp);
-            
-            server_credentials_ = grpc::SslServerCredentials(ssl_opts);
-            LOG_INFO("SSL credentials configured");
-        } else {
-            LOG_ERROR("Failed to read SSL certificate files");
-            server_credentials_ = grpc::InsecureServerCredentials();
-        }
-    } else {
-        server_credentials_ = grpc::InsecureServerCredentials();
     }
 }
 

@@ -427,3 +427,18 @@ target_include_directories(test_error_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
 )
 add_test(NAME ErrorMapperTest COMMAND test_error_mapper)
+
+# The local WSL/Compose transport intentionally uses plaintext gRPC.  Keep a
+# source-level contract here so certificate plumbing cannot silently return.
+add_executable(test_rpc_server_local_transport test_rpc_server_local_transport.cpp)
+target_link_libraries(test_rpc_server_local_transport
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_rpc_server_local_transport PRIVATE
+    RPC_SERVER_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/rpc_server.cpp"
+    RPC_SERVER_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/rpc_server.h"
+    RPC_TYPES_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/types.h"
+)
+add_test(NAME RpcServerLocalTransportTest COMMAND test_rpc_server_local_transport)

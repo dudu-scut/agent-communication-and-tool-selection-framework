@@ -79,7 +79,6 @@ public:
 
 private:
     void setupServer();
-    void setupSslCredentials();
     void initializeMCPClient();
     void initializeServiceRegistry();
     void unregisterService();
@@ -109,8 +108,6 @@ private:
 
     std::shared_ptr<registry::ServiceRegistry> service_registry_;
     std::string registered_service_id_;
-    
-    std::shared_ptr<grpc::ServerCredentials> server_credentials_;
     std::vector<std::unique_ptr<grpc::ServerBuilder>> builders_;
 };
 
