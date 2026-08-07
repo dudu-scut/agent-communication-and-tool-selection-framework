@@ -465,6 +465,21 @@ target_compile_definitions(test_postgres_migration_api PRIVATE
 )
 add_test(NAME PostgresMigrationApiTest COMMAND test_postgres_migration_api)
 
+# RPC startup migration contract: source/Compose wiring keeps migrations
+# before RpcServer::initialize and fails closed when startup migration fails.
+add_executable(test_rpc_server_migrations test_rpc_server_migrations.cpp)
+target_link_libraries(test_rpc_server_migrations
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_rpc_server_migrations PRIVATE
+    RPC_SERVER_MAIN_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/main.cpp"
+    RPC_SERVER_CMAKE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/CMakeLists.txt"
+    RPC_COMPOSE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../docker-compose.yml"
+)
+add_test(NAME RpcServerMigrationsTest COMMAND test_rpc_server_migrations)
+
 find_package(Python3 COMPONENTS Interpreter)
 find_program(DOCKER_EXECUTABLE docker)
 set(NEXUSAI_DOCKER_AVAILABLE OFF)

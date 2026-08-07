@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 RUN cmake -S . -B /build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_MCP=OFF \
+    -DNEXUSAI_MIGRATIONS_DEFAULT_DIR=/usr/local/share/nexusai/migrations \
     && cmake --build /build --parallel
 
 FROM debian:bookworm-slim

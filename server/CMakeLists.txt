@@ -26,6 +26,13 @@ add_library(agent_rpc_server STATIC ${SERVER_SOURCES})
 # RPC Server 可执行文件
 # ============================================================================
 add_executable(rpc_server src/main.cpp)
+set(NEXUSAI_MIGRATIONS_DEFAULT_DIR
+    "${CMAKE_SOURCE_DIR}/db/migrations"
+    CACHE PATH "Default migration directory for local rpc_server runs")
+file(TO_CMAKE_PATH "${NEXUSAI_MIGRATIONS_DEFAULT_DIR}" NEXUSAI_MIGRATIONS_DEFAULT_DIR_FOR_COMPILE)
+target_compile_definitions(rpc_server PRIVATE
+    NEXUSAI_MIGRATIONS_DEFAULT_DIR="${NEXUSAI_MIGRATIONS_DEFAULT_DIR_FOR_COMPILE}"
+)
 if(ENABLE_MCP)
     target_include_directories(rpc_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../mcp/include)
     target_compile_definitions(rpc_server PRIVATE AGENT_RPC_ENABLE_MCP=1)
@@ -34,6 +41,7 @@ endif()
 
 target_link_libraries(rpc_server
     agent_rpc_server
+    agent_rpc_db
     agent_rpc_common
     agent_rpc_registry
     orchestrator

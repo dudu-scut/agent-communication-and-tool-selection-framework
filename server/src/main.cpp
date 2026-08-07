@@ -25,8 +25,11 @@
 #include "agent_rpc/common/profile_summarizer.h"
 #include "agent_rpc/common/trace_context.h"
 #include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/postgres_store.h"
+#include "agent_rpc/db/migration_runner.h"
 #include "agent_rpc/registry/service_registry.h"
 #include <curl/curl.h>
+#include <filesystem>
 #include <iostream>
 #include <signal.h>
 #include <thread>
@@ -34,6 +37,10 @@
 #include <cstdlib>
 #include <queue>
 #include <mutex>
+
+#ifndef NEXUSAI_MIGRATIONS_DEFAULT_DIR
+#error "NEXUSAI_MIGRATIONS_DEFAULT_DIR must be provided by server/CMakeLists.txt"
+#endif
 
 using namespace agent_rpc::server;
 using namespace agent_rpc::common;
@@ -78,6 +85,14 @@ void pushSpanToQueue(const Span& span, const std::string& trace_id,
     qs.metadata_json = span.metadata_json;
     std::lock_guard<std::mutex> lock(g_span_queue_mutex);
     g_span_queue.push(std::move(qs));
+}
+
+std::filesystem::path resolveMigrationDirectory() {
+    if (const char* environment_directory = std::getenv("NEXUSAI_MIGRATIONS_DIR");
+        environment_directory != nullptr && *environment_directory != '\0') {
+        return environment_directory;
+    }
+    return NEXUSAI_MIGRATIONS_DEFAULT_DIR;
 }
 
 }  // anonymous namespace
@@ -210,6 +225,19 @@ int main(int argc, char* argv[]) {
     log_config.async_logging = true;
     log_config.color_output = true;
     initializeAdvancedLogger(log_config);
+
+    // PostgreSQL is the durable source of truth. Apply migrations before
+    // constructing or initializing the RPC server so failures fail closed.
+    try {
+        const auto postgres_config = PostgresConfig::fromEnvironment();
+        PostgresStore postgres_store{postgres_config};
+        agent_rpc::db::MigrationRunner migration_runner{postgres_store};
+        migration_runner.migrate(resolveMigrationDirectory());
+    } catch (const std::exception& error) {
+        LOG_ERROR("RPC startup migration failed: " + std::string(error.what()));
+        std::cerr << "Error: RPC startup migration failed: " << error.what() << std::endl;
+        return 1;
+    }
     
     // 配置 RPC Server
     RpcConfig config;
