@@ -530,3 +530,15 @@ target_compile_definitions(test_rpc_server_local_transport PRIVATE
     RPC_CLIENT_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../client/include/agent_rpc/client/rpc_client.h"
 )
 add_test(NAME RpcServerLocalTransportTest COMMAND test_rpc_server_local_transport)
+
+add_executable(test_auth_repository_contract test_auth_repository_contract.cpp)
+target_link_libraries(test_auth_repository_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_auth_repository_contract PRIVATE
+    NEXUSAI_AUTH_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V010__local_auth.sql"
+    NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
+)
+add_test(NAME AuthRepositoryContractTest COMMAND test_auth_repository_contract)

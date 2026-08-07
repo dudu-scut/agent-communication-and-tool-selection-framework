@@ -14,6 +14,7 @@ set(COMMON_SOURCES
     src/rpc_framework.cpp
     src/cost_tracker.cpp        # Batch 1
     src/postgres_store.cpp
+    src/auth_repository.cpp
     src/profile_summarizer.cpp  # Batch 4 U2
 )
 
