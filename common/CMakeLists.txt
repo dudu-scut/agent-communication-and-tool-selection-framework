@@ -30,6 +30,7 @@ target_link_libraries(agent_rpc_common
     jsoncpp
     ${HIREDIS_LIBRARIES}
     ${AGENT_RPC_PQXX_TARGET}
+    proto_lib
 )
 
 # 包含目录
