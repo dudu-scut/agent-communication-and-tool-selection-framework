@@ -567,3 +567,18 @@ target_compile_definitions(test_durable_domain_schema_contract PRIVATE
     NEXUSAI_DURABLE_DOMAIN_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V011__durable_domain.sql"
 )
 add_test(NAME DurableDomainSchemaContractTest COMMAND test_durable_domain_schema_contract)
+add_executable(test_query_domain_repository_contract test_query_domain_repository_contract.cpp)
+target_link_libraries(test_query_domain_repository_contract
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_query_domain_repository_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+target_compile_definitions(test_query_domain_repository_contract PRIVATE
+    NEXUSAI_QUERY_DOMAIN_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/query_domain_repository.h"
+    NEXUSAI_QUERY_DOMAIN_REPOSITORY_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../common/src/query_domain_repository.cpp"
+)
+add_test(NAME QueryDomainRepositoryContractTest COMMAND test_query_domain_repository_contract)
