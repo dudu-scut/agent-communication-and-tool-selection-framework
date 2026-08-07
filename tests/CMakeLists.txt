@@ -556,3 +556,14 @@ target_compile_definitions(test_local_auth_contract PRIVATE
     NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
 )
 add_test(NAME LocalAuthContractTest COMMAND test_local_auth_contract)
+
+add_executable(test_durable_domain_schema_contract test_durable_domain_schema_contract.cpp)
+target_link_libraries(test_durable_domain_schema_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_durable_domain_schema_contract PRIVATE
+    NEXUSAI_DURABLE_DOMAIN_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V011__durable_domain.sql"
+)
+add_test(NAME DurableDomainSchemaContractTest COMMAND test_durable_domain_schema_contract)
