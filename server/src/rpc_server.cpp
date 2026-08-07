@@ -105,6 +105,30 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     config_ = config;
     address_ = config.server_address;
 
+    auth_service_impl_.reset();
+    auth_repository_.reset();
+    postgres_store_.reset();
+
+    // Authentication is durable and fails closed when PostgreSQL is unavailable.
+    try {
+        postgres_store_ = std::make_unique<common::PostgresStore>(
+            common::PostgresConfig::fromEnvironment());
+        if (!postgres_store_->healthCheck()) {
+            throw common::PostgresUnavailable("PostgreSQL health check failed");
+        }
+        auth_repository_ = std::make_unique<common::AuthRepository>(*postgres_store_);
+    } catch (const common::PostgresUnavailable& error) {
+        LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
+        auth_repository_.reset();
+        postgres_store_.reset();
+        return false;
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
+        auth_repository_.reset();
+        postgres_store_.reset();
+        return false;
+    }
+
     // Redis: connect to Redis server
     redis_client_ = std::make_unique<common::RedisClient>();
     std::string redis_host = std::getenv("REDIS_HOST") ? std::getenv("REDIS_HOST") : "127.0.0.1";
@@ -130,7 +154,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
     health_service_impl_ = std::make_shared<HealthServiceImpl>();
     ai_query_service_impl_ = std::make_shared<AIQueryServiceImpl>();
-    auth_service_impl_ = std::make_shared<AuthServiceImpl>(redis_client_.get());
+    auth_service_impl_ = std::make_shared<AuthServiceImpl>(auth_repository_.get());
     
     // 初始化序列化器
     common::MessageSerializer::getInstance().initialize(common::SerializerFactory::PROTOBUF_BINARY);

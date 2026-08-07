@@ -1,198 +1,299 @@
 #include "agent_rpc/server/auth_service.h"
+
 #include "agent_rpc/common/logger.h"
 
-#include <openssl/sha.h>
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/sha.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cctype>
+#include <cstdint>
+#include <ctime>
+#include <cstdlib>
 #include <iomanip>
-#include <random>
+#include <limits>
+#include <optional>
 #include <sstream>
-
-#ifdef _WIN32
-#include <rpc.h>
-#pragma comment(lib, "rpcrt4.lib")
-#else
-#include <uuid/uuid.h>
-#endif
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace agent_rpc {
 namespace server {
-
 namespace {
 
-std::string generateUuid() {
-#ifdef _WIN32
-    UUID uuid;
-    UuidCreate(&uuid);
-    RPC_CSTR szUuid = nullptr;
-    UuidToStringA(&uuid, &szUuid);
-    std::string result(reinterpret_cast<const char*>(szUuid));
-    RpcStringFreeA(&szUuid);
-    return result;
-#else
-    uuid_t uuid;
-    uuid_generate(uuid);
-    char buf[37];
-    uuid_unparse_lower(uuid, buf);
-    return std::string(buf);
-#endif
+constexpr std::size_t kTokenBytes = 32;  // 256 bits of entropy.
+constexpr std::size_t kTokenHexLength = kTokenBytes * 2;
+constexpr std::size_t kSessionIdBytes = 16;
+constexpr std::size_t kSaltBytes = 16;
+constexpr std::size_t kPasswordHashBytes = 32;
+constexpr std::uint64_t kScryptN = 16384;
+constexpr std::uint64_t kScryptR = 8;
+constexpr std::uint64_t kScryptP = 1;
+constexpr std::uint64_t kScryptMaxMemory = 64ULL * 1024ULL * 1024ULL;
+constexpr std::size_t kMinUsernameLength = 3;
+constexpr std::size_t kMaxUsernameLength = 64;
+constexpr std::size_t kMinPasswordLength = 6;
+constexpr std::size_t kMaxPasswordLength = 128;
+
+// The administrator identity is configured out-of-band. An empty or unset
+// NEXUSAI_ADMIN_USERNAME deliberately means that no registration receives
+// ADMIN role.
+static const std::string NEXUSAI_ADMIN_USERNAME = [] {
+    const char* configured = std::getenv("NEXUSAI_ADMIN_USERNAME");
+    return configured == nullptr ? std::string{} : std::string{configured};
+}();
+
+std::string hexEncode(const unsigned char* bytes, std::size_t length) {
+    constexpr char kHex[] = "0123456789abcdef";
+    std::string encoded(length * 2, '0');
+    for (std::size_t index = 0; index < length; ++index) {
+        encoded[index * 2] = kHex[(bytes[index] >> 4) & 0x0f];
+        encoded[index * 2 + 1] = kHex[bytes[index] & 0x0f];
+    }
+    return encoded;
+}
+
+int hexValue(const char character) {
+    if (character >= '0' && character <= '9') return character - '0';
+    if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+    if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+    return -1;
+}
+
+bool hexDecode(const std::string& encoded, std::vector<unsigned char>& bytes) {
+    if (encoded.empty() || encoded.size() % 2 != 0) return false;
+    bytes.resize(encoded.size() / 2);
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        const int high = hexValue(encoded[index * 2]);
+        const int low = hexValue(encoded[index * 2 + 1]);
+        if (high < 0 || low < 0) return false;
+        bytes[index] = static_cast<unsigned char>((high << 4) | low);
+    }
+    return true;
+}
+
+bool validUsername(const std::string& username) {
+    if (username.size() < kMinUsernameLength || username.size() > kMaxUsernameLength) {
+        return false;
+    }
+    return std::all_of(username.begin(), username.end(), [](const unsigned char character) {
+        return std::isalnum(character) != 0 || character == '.' || character == '_' || character == '-';
+    });
+}
+
+bool validPassword(const std::string& password) {
+    return password.size() >= kMinPasswordLength && password.size() <= kMaxPasswordLength &&
+           password.find('\0') == std::string::npos;
+}
+
+template <typename Response>
+grpc::Status unavailable(Response* response, const std::string& message) {
+    if (response != nullptr) {
+        response->mutable_status()->set_code(503);
+        response->mutable_status()->set_message(message);
+    }
+    return grpc::Status(grpc::StatusCode::UNAVAILABLE, message);
+}
+
+template <typename Response>
+grpc::Status invalidArgument(Response* response, const std::string& message) {
+    if (response != nullptr) {
+        response->mutable_status()->set_code(400);
+        response->mutable_status()->set_message(message);
+    }
+    return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, message);
+}
+
+template <typename Response>
+grpc::Status unauthenticated(Response* response, const std::string& message) {
+    if (response != nullptr) {
+        response->mutable_status()->set_code(401);
+        response->mutable_status()->set_message(message);
+    }
+    return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, message);
+}
+
+std::vector<std::string> splitHash(const std::string& encoded) {
+    std::vector<std::string> parts;
+    std::size_t start = 0;
+    while (start <= encoded.size()) {
+        const std::size_t separator = encoded.find('$', start);
+        if (separator == std::string::npos) {
+            parts.push_back(encoded.substr(start));
+            break;
+        }
+        parts.push_back(encoded.substr(start, separator - start));
+        start = separator + 1;
+    }
+    return parts;
 }
 
 }  // namespace
 
-AuthServiceImpl::AuthServiceImpl(common::RedisClient* redis)
-    : redis_(redis) {}
+AuthServiceImpl::AuthServiceImpl(common::AuthRepository* repository)
+    : repository_(repository) {}
 
-// ============================================================================
-// Register
-// ============================================================================
+AuthServiceImpl::AuthServiceImpl(common::PostgresStore& store)
+    : owned_repository_(std::make_unique<common::AuthRepository>(store)),
+      repository_(owned_repository_.get()) {}
 
 grpc::Status AuthServiceImpl::Register(
     grpc::ServerContext* context,
     const agent_communication::auth::RegisterRequest* request,
     agent_communication::auth::RegisterResponse* response) {
     (void)context;
-
-    if (request->username().empty() || request->password().empty()) {
-        response->mutable_status()->set_code(400);
-        response->mutable_status()->set_message("Username and password required");
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Username and password required");
+    if (request == nullptr || response == nullptr) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Request and response are required");
+    }
+    if (!validUsername(request->username()) || !validPassword(request->password())) {
+        return invalidArgument(response, "Username must be 3-64 safe characters and password must be 6-128 characters");
+    }
+    if (request->display_name().size() > 256) {
+        return invalidArgument(response, "Display name too long");
+    }
+    if (repository_ == nullptr) {
+        return unavailable(response, "PostgreSQL is unavailable");
     }
 
-    if (request->username().size() < 3 || request->password().size() < 6) {
-        response->mutable_status()->set_code(400);
-        response->mutable_status()->set_message("Username min 3 chars, password min 6 chars");
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Username min 3 chars, password min 6 chars");
-    }
-
-    if (request->username().size() > 64 || request->password().size() > 128) {
-        response->mutable_status()->set_code(400);
-        response->mutable_status()->set_message("Username or password too long");
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Input too long");
-    }
-
-    // Check if username already exists (Redis: check key existence)
-    auto key = userKey(request->username());
-
-    auto user_id = generateUuid();
-    auto salt = generateSalt();
-    auto password_hash = hashPassword(request->password(), salt);
-    auto display_name = request->display_name().empty()
-                            ? request->username()
-                            : request->display_name();
-    auto now = std::chrono::system_clock::now();
-    auto created_ts = std::chrono::duration_cast<std::chrono::seconds>(
-                          now.time_since_epoch())
-                          .count();
-
-    // Atomic registration: HSETNX on user_id field — only succeeds if key doesn't exist
-    if (!redis_->hsetnx(key, "user_id", user_id)) {
-        response->mutable_status()->set_code(409);
-        response->mutable_status()->set_message("Username already exists");
-        return grpc::Status(grpc::StatusCode::ALREADY_EXISTS,
-                            "Username already exists");
-    }
-
-    // Store remaining user fields (check critical writes)
-    if (!redis_->hset(key, "display_name", display_name) ||
-        !redis_->hset(key, "password_hash", password_hash) ||
-        !redis_->hset(key, "created_at", std::to_string(created_ts))) {
-        LOG_ERROR("Failed to store user fields for: " + request->username());
-        redis_->del(key);  // Roll back partial registration
+    std::string password_hash;
+    if (!hashPassword(request->password(), password_hash)) {
         response->mutable_status()->set_code(500);
-        response->mutable_status()->set_message("Internal server error");
-        return grpc::Status(grpc::StatusCode::INTERNAL,
-                            "Failed to store user data");
+        response->mutable_status()->set_message("Password hashing unavailable");
+        return grpc::Status(grpc::StatusCode::INTERNAL, "Password hashing unavailable");
     }
 
-    // Reverse index: nexusai:uid:{user_id} → username (for token validation)
-    if (!redis_->set(usernameIdxKey(user_id), request->username())) {
-        LOG_ERROR("Failed to create reverse index for user: " + user_id);
+    const std::string user_id = generateId(kSessionIdBytes);
+    if (user_id.empty()) {
+        response->mutable_status()->set_code(500);
+        response->mutable_status()->set_message("User id generation unavailable");
+        return grpc::Status(grpc::StatusCode::INTERNAL, "User id generation unavailable");
+    }
+
+    const common::UserRecord user{
+        .id = user_id,
+        .owner_id = user_id,
+        .username = request->username(),
+        .display_name = request->display_name().empty() ? request->username() : request->display_name(),
+        .password_scrypt = password_hash,
+        .role = !NEXUSAI_ADMIN_USERNAME.empty() && request->username() == NEXUSAI_ADMIN_USERNAME
+                     ? "ADMIN"
+                     : "USER",
+        .created_at = {},
+        .updated_at = {},
+    };
+
+    try {
+        if (!repository_->createUser(user)) {
+            response->mutable_status()->set_code(409);
+            response->mutable_status()->set_message("Username already exists");
+            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS, "Username already exists");
+        }
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to persist user: " + std::string(error.what()));
+        return unavailable(response, "PostgreSQL is unavailable");
     }
 
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("Registration successful");
     response->set_user_id(user_id);
     response->set_username(request->username());
-
-    LOG_INFO("User registered: " + request->username() + " (" + user_id + ")");
     return grpc::Status::OK;
 }
-
-// ============================================================================
-// Login
-// ============================================================================
 
 grpc::Status AuthServiceImpl::Login(
     grpc::ServerContext* context,
     const agent_communication::auth::LoginRequest* request,
     agent_communication::auth::LoginResponse* response) {
     (void)context;
-
-    if (request->username().empty() || request->password().empty()) {
-        response->mutable_status()->set_code(400);
-        response->mutable_status()->set_message("Username and password required");
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Username and password required");
+    if (request == nullptr || response == nullptr) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Request and response are required");
+    }
+    if (!validUsername(request->username()) || !validPassword(request->password())) {
+        return invalidArgument(response, "Invalid username or password format");
+    }
+    if (repository_ == nullptr) {
+        return unavailable(response, "PostgreSQL is unavailable");
     }
 
-    // Look up user from Redis
-    auto key = userKey(request->username());
-    std::string password_hash, user_id;
-    if (!redis_->hget(key, "password_hash", password_hash) ||
-        !redis_->hget(key, "user_id", user_id)) {
-        response->mutable_status()->set_code(401);
-        response->mutable_status()->set_message("Invalid credentials");
-        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
-                            "Invalid credentials");
+    std::optional<common::UserRecord> user;
+    try {
+        user = repository_->findUserByUsername(request->username());
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to read user: " + std::string(error.what()));
+        return unavailable(response, "PostgreSQL is unavailable");
+    }
+    if (!user.has_value() || !verifyPassword(request->password(), user->password_scrypt)) {
+        return unauthenticated(response, "Invalid credentials");
     }
 
-    if (!verifyPassword(request->password(), password_hash)) {
-        response->mutable_status()->set_code(401);
-        response->mutable_status()->set_message("Invalid credentials");
-        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
-                            "Invalid credentials");
+    const std::string token = generateToken();
+    const std::string token_hash = hashToken(token);
+    const std::string session_id = generateId(kSessionIdBytes);
+    if (token.empty() || token_hash.empty() || session_id.empty()) {
+        response->mutable_status()->set_code(500);
+        response->mutable_status()->set_message("Authentication secret generation failed");
+        return grpc::Status(grpc::StatusCode::INTERNAL, "Authentication secret generation failed");
     }
 
-    // Generate token and store in Redis with TTL
-    auto token = generateToken();
-    auto now = std::chrono::system_clock::now();
-    auto expires_at = now + std::chrono::hours(kTokenTtlHours);
-    auto expires_ts = std::chrono::duration_cast<std::chrono::seconds>(
-                          expires_at.time_since_epoch())
-                          .count();
+    const auto expires_at = std::chrono::system_clock::now() + std::chrono::hours(kTokenTtlHours);
+    const auto expires_timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+        expires_at.time_since_epoch()).count();
+    const common::AuthSessionRecord session{
+        .id = session_id,
+        .owner_id = user->id,
+        .token_hash = token_hash,
+        .expires_at = formatTimestamp(expires_at),
+        .revoked_at = std::nullopt,
+        .created_at = {},
+        .updated_at = {},
+    };
 
-    auto tkey = tokenKey(token);
-    redis_->hset(tkey, "user_id", user_id);
-    redis_->expire(tkey, kTokenTtlSeconds);
+    try {
+        if (!repository_->createSession(session)) {
+            response->mutable_status()->set_code(500);
+            response->mutable_status()->set_message("Failed to persist authentication session");
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist authentication session");
+        }
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to persist session: " + std::string(error.what()));
+        return unavailable(response, "PostgreSQL is unavailable");
+    }
 
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("Login successful");
-    response->set_user_id(user_id);
-    response->set_username(request->username());
+    response->set_user_id(user->id);
+    response->set_username(user->username);
     response->set_token(token);
-    response->set_expires_at(expires_ts);
-
-    LOG_INFO("User logged in: " + request->username());
+    response->set_expires_at(expires_timestamp);
     return grpc::Status::OK;
 }
-
-// ============================================================================
-// ValidateToken (gRPC handler)
-// ============================================================================
 
 grpc::Status AuthServiceImpl::ValidateToken(
     grpc::ServerContext* context,
     const agent_communication::auth::ValidateTokenRequest* request,
     agent_communication::auth::ValidateTokenResponse* response) {
     (void)context;
+    if (request == nullptr || response == nullptr) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Request and response are required");
+    }
+    if (repository_ == nullptr) {
+        return unavailable(response, "PostgreSQL is unavailable");
+    }
 
-    std::string user_id, username;
-    bool valid = validateToken(request->token(), user_id, username);
+    std::string user_id;
+    std::string username;
+    bool valid = false;
+    try {
+        valid = validateTokenInternal(request->token(), user_id, username);
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to validate token: " + std::string(error.what()));
+        return unavailable(response, "PostgreSQL is unavailable");
+    }
 
     response->set_valid(valid);
     if (valid) {
@@ -207,132 +308,130 @@ grpc::Status AuthServiceImpl::ValidateToken(
     return grpc::Status::OK;
 }
 
-// ============================================================================
-// Internal token validation (for interceptor)
-// ============================================================================
-
 bool AuthServiceImpl::validateToken(const std::string& token,
-                                     std::string& user_id,
-                                     std::string& username) {
-    if (token.empty()) return false;
+                                    std::string& user_id,
+                                    std::string& username) {
+    try {
+        return validateTokenInternal(token, user_id, username);
+    } catch (const std::exception& error) {
+        LOG_WARN("Token validation unavailable: " + std::string(error.what()));
+        user_id.clear();
+        username.clear();
+        return false;
+    }
+}
 
-    // Redis TTL handles expiry automatically — if key expired, hget returns false
-    auto tkey = tokenKey(token);
-    if (!redis_->hget(tkey, "user_id", user_id)) {
+bool AuthServiceImpl::validateTokenInternal(const std::string& token,
+                                            std::string& user_id,
+                                            std::string& username) {
+    user_id.clear();
+    username.clear();
+    if (repository_ == nullptr || token.size() != kTokenHexLength ||
+        !std::all_of(token.begin(), token.end(), [](const unsigned char character) {
+            return std::isxdigit(character) != 0;
+        })) {
         return false;
     }
 
-    // Reverse lookup: user_id → username via index key
-    redis_->get(usernameIdxKey(user_id), username);
+    const auto session = repository_->findActiveSessionByTokenHash(hashToken(token));
+    if (!session.has_value()) {
+        return false;
+    }
+    const auto user = repository_->findUserById(session->owner_id);
+    if (!user.has_value()) {
+        return false;
+    }
+    user_id = user->id;
+    username = user->username;
     return true;
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
+std::string AuthServiceImpl::generateId(const std::size_t byte_count) {
+    if (byte_count == 0) return {};
+    std::vector<unsigned char> bytes(byte_count);
+    if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) {
+        return {};
+    }
+    return hexEncode(bytes.data(), bytes.size());
+}
 
 std::string AuthServiceImpl::generateToken() {
-    return generateUuid();
+    std::array<unsigned char, 32> random_bytes{};
+    if (RAND_bytes(random_bytes.data(), static_cast<int>(random_bytes.size())) != 1) {
+        return {};
+    }
+    return hexEncode(random_bytes.data(), random_bytes.size());
 }
 
-std::string AuthServiceImpl::generateSalt() {
-    // Fix #2: Use OpenSSL CSPRNG instead of mt19937 for cryptographically secure salt
-    constexpr size_t kSaltLen = 32;
-    unsigned char random_bytes[kSaltLen];
-    if (RAND_bytes(random_bytes, kSaltLen) != 1) {
-        // Fallback to mt19937 only if CSPRNG fails (extremely unlikely)
-        static thread_local std::mt19937 rng(std::random_device{}());
-        static constexpr const char kHexChars[] = "0123456789abcdef";
-        std::string salt(kSaltLen, '0');
-        for (auto& c : salt) {
-            c = kHexChars[rng() % 16];
-        }
-        return salt;
+std::string AuthServiceImpl::hashToken(const std::string& token) {
+    if (token.empty()) return {};
+    std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
+    if (SHA256(reinterpret_cast<const unsigned char*>(token.data()), token.size(), digest.data()) == nullptr) {
+        return {};
     }
-    static constexpr const char kHexChars[] = "0123456789abcdef";
-    std::string salt(kSaltLen * 2, '0');
-    for (size_t i = 0; i < kSaltLen; ++i) {
-        salt[i * 2] = kHexChars[random_bytes[i] >> 4];
-        salt[i * 2 + 1] = kHexChars[random_bytes[i] & 0x0F];
-    }
-    return salt;
+    return hexEncode(digest.data(), digest.size());
 }
 
-std::string AuthServiceImpl::hashPassword(const std::string& password,
-                                            const std::string& salt) {
-    // Fix #2: Upgrade from single SHA-256 to iterated SHA-256 (PBKDF2-style).
-    // 10,000 iterations provides meaningful protection against brute-force
-    // while remaining compatible with existing OpenSSL SHA-256.
-    constexpr int kIterations = 10000;
-    std::string input = salt + password;
-
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char*>(input.c_str()),
-           input.size(), digest);
-
-    // Iteratively re-hash the digest to increase computational cost
-    for (int i = 1; i < kIterations; ++i) {
-        // Combine previous digest with original input for each iteration
-        unsigned char temp[SHA256_DIGEST_LENGTH + 64];  // digest + part of original
-        memcpy(temp, digest, SHA256_DIGEST_LENGTH);
-        size_t copy_len = std::min(sizeof(temp) - SHA256_DIGEST_LENGTH, input.size());
-        memcpy(temp + SHA256_DIGEST_LENGTH, input.c_str(), copy_len);
-
-        SHA256(temp, SHA256_DIGEST_LENGTH + copy_len, digest);
+bool AuthServiceImpl::hashPassword(const std::string& password, std::string& encoded_hash) {
+    std::array<unsigned char, kSaltBytes> salt{};
+    std::array<unsigned char, kPasswordHashBytes> derived{};
+    if (RAND_bytes(salt.data(), static_cast<int>(salt.size())) != 1 ||
+        EVP_PBE_scrypt(password.data(), password.size(), salt.data(), salt.size(),
+                       kScryptN, kScryptR, kScryptP, kScryptMaxMemory,
+                       derived.data(), derived.size()) != 1) {
+        encoded_hash.clear();
+        return false;
     }
 
-    std::ostringstream oss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-        oss << std::hex << std::setfill('0') << std::setw(2)
-            << static_cast<int>(digest[i]);
-    }
-
-    // Store iteration count in the hash format for future compatibility
-    return salt + ":" + std::to_string(kIterations) + ":" + oss.str();
+    encoded_hash = "scrypt$" + std::to_string(kScryptN) + "$" + std::to_string(kScryptR) + "$" +
+                   std::to_string(kScryptP) + "$" + hexEncode(salt.data(), salt.size()) + "$" +
+                   hexEncode(derived.data(), derived.size());
+    return true;
 }
 
 bool AuthServiceImpl::verifyPassword(const std::string& password,
-                                       const std::string& stored_hash) {
-    // Parse stored hash: "salt:hexdigest" (old format) or "salt:iterations:hexdigest" (new format)
-    auto sep1 = stored_hash.find(':');
-    if (sep1 == std::string::npos) return false;
+                                     const std::string& encoded_hash) {
+    const auto parts = splitHash(encoded_hash);
+    if (parts.size() != 6 || parts[0] != "scrypt") return false;
 
-    std::string salt = stored_hash.substr(0, sep1);
-    auto sep2 = stored_hash.find(':', sep1 + 1);
+    std::uint64_t n = 0;
+    std::uint64_t r = 0;
+    std::uint64_t p = 0;
+    try {
+        n = std::stoull(parts[1]);
+        r = std::stoull(parts[2]);
+        p = std::stoull(parts[3]);
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (n != kScryptN || r != kScryptR || p != kScryptP) return false;
 
-    int iterations = 1;  // Default: single SHA-256 (old format)
-    std::string expected;
-
-    if (sep2 != std::string::npos) {
-        // New format: salt:iterations:hexdigest
-        iterations = std::stoi(stored_hash.substr(sep1 + 1, sep2 - sep1 - 1));
-        expected = stored_hash.substr(sep2 + 1);
-    } else {
-        // Old format: salt:hexdigest
-        expected = stored_hash.substr(sep1 + 1);
+    std::vector<unsigned char> salt;
+    std::vector<unsigned char> expected;
+    if (!hexDecode(parts[4], salt) || !hexDecode(parts[5], expected) ||
+        salt.size() != kSaltBytes || expected.size() != kPasswordHashBytes) {
+        return false;
     }
 
-    std::string input = salt + password;
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char*>(input.c_str()),
-           input.size(), digest);
-
-    // Apply the same iteration count as when the hash was stored
-    for (int i = 1; i < iterations; ++i) {
-        unsigned char temp[SHA256_DIGEST_LENGTH + 64];
-        memcpy(temp, digest, SHA256_DIGEST_LENGTH);
-        size_t copy_len = std::min(sizeof(temp) - SHA256_DIGEST_LENGTH, input.size());
-        memcpy(temp + SHA256_DIGEST_LENGTH, input.c_str(), copy_len);
-        SHA256(temp, SHA256_DIGEST_LENGTH + copy_len, digest);
+    std::array<unsigned char, kPasswordHashBytes> derived{};
+    if (EVP_PBE_scrypt(password.data(), password.size(), salt.data(), salt.size(),
+                       n, r, p, kScryptMaxMemory, derived.data(), derived.size()) != 1) {
+        return false;
     }
+    return CRYPTO_memcmp(derived.data(), expected.data(), expected.size()) == 0;
+}
 
-    std::ostringstream oss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-        oss << std::hex << std::setfill('0') << std::setw(2)
-            << static_cast<int>(digest[i]);
-    }
-
-    return oss.str() == expected;
+std::string AuthServiceImpl::formatTimestamp(const std::chrono::system_clock::time_point time) {
+    const std::time_t timestamp = std::chrono::system_clock::to_time_t(time);
+    std::tm utc{};
+#ifdef _WIN32
+    if (gmtime_s(&utc, &timestamp) != 0) return {};
+#else
+    if (gmtime_r(&timestamp, &utc) == nullptr) return {};
+#endif
+    std::ostringstream output;
+    output << std::put_time(&utc, "%Y-%m-%d %H:%M:%S+00");
+    return output.str();
 }
 
 }  // namespace server

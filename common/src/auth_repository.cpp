@@ -17,31 +17,33 @@ pqxx::result execParams(pqxx::work& transaction, const std::string& query, Argum
 #endif
 }
 
-UserRecord userFromRow(const pqxx::row& row) {
+template <typename Row>
+UserRecord userFromRow(const Row& row) {
     return UserRecord{
-        .id = row["id"].as<std::string>(),
-        .owner_id = row["owner_id"].as<std::string>(),
-        .username = row["username"].as<std::string>(),
-        .display_name = row["display_name"].as<std::string>(),
-        .password_scrypt = row["password_scrypt"].as<std::string>(),
-        .role = row["role"].as<std::string>(),
-        .created_at = row["created_at"].as<std::string>(),
-        .updated_at = row["updated_at"].as<std::string>(),
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .username = row["username"].template as<std::string>(),
+        .display_name = row["display_name"].template as<std::string>(),
+        .password_scrypt = row["password_scrypt"].template as<std::string>(),
+        .role = row["role"].template as<std::string>(),
+        .created_at = row["created_at"].template as<std::string>(),
+        .updated_at = row["updated_at"].template as<std::string>(),
     };
 }
 
-AuthSessionRecord sessionFromRow(const pqxx::row& row) {
+template <typename Row>
+AuthSessionRecord sessionFromRow(const Row& row) {
     AuthSessionRecord session{
-        .id = row["id"].as<std::string>(),
-        .owner_id = row["owner_id"].as<std::string>(),
-        .token_hash = row["token_hash"].as<std::string>(),
-        .expires_at = row["expires_at"].as<std::string>(),
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .token_hash = row["token_hash"].template as<std::string>(),
+        .expires_at = row["expires_at"].template as<std::string>(),
         .revoked_at = std::nullopt,
-        .created_at = row["created_at"].as<std::string>(),
-        .updated_at = row["updated_at"].as<std::string>(),
+        .created_at = row["created_at"].template as<std::string>(),
+        .updated_at = row["updated_at"].template as<std::string>(),
     };
     if (!row["revoked_at"].is_null()) {
-        session.revoked_at = row["revoked_at"].as<std::string>();
+        session.revoked_at = row["revoked_at"].template as<std::string>();
     }
     return session;
 }
@@ -83,6 +85,21 @@ std::optional<UserRecord> AuthRepository::findUserByUsername(const std::string& 
     return user;
 }
 
+std::optional<UserRecord> AuthRepository::findUserById(const std::string& user_id) {
+    std::optional<UserRecord> user;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, username, display_name, password_scrypt, role, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM users WHERE id = $1",
+            user_id);
+        if (!result.empty()) {
+            user = userFromRow(result.front());
+        }
+    });
+    return user;
+}
 bool AuthRepository::createSession(const AuthSessionRecord& session) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {

@@ -4,6 +4,8 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/postgres_store.h"
+#include "agent_rpc/common/auth_repository.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/registry/service_registry.h"
 #include "agent_rpc/server/agent_lifecycle_service.h"
@@ -98,6 +100,8 @@ private:
     std::unique_ptr<UserExperienceServiceImpl> user_experience_service_impl_;
     std::unique_ptr<ObservabilityServiceImpl> observability_service_impl_;
     std::unique_ptr<common::RedisClient> redis_client_;
+    std::unique_ptr<common::PostgresStore> postgres_store_;
+    std::unique_ptr<common::AuthRepository> auth_repository_;
     
     // A2A配置
     a2a_adapter::A2AConfig a2a_config_;

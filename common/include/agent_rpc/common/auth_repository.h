@@ -34,6 +34,7 @@ public:
 
     bool createUser(const UserRecord& user);
     std::optional<UserRecord> findUserByUsername(const std::string& username);
+    std::optional<UserRecord> findUserById(const std::string& user_id);
     bool createSession(const AuthSessionRecord& session);
     std::optional<AuthSessionRecord> findActiveSessionByTokenHash(const std::string& token_hash);
     bool revokeSession(const std::string& session_id);

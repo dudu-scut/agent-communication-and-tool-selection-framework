@@ -331,7 +331,7 @@ target_include_directories(test_cost_tracker PRIVATE
 )
 add_test(NAME CostTrackerTest COMMAND test_cost_tracker)
 
-# Redis 集成测试 (AuthService + MemoryService + RedisClient)
+# Redis 集成测试 (MemoryService + RedisClient)
 # 需要运行中的 Redis 实例，不可用时自动跳过
 add_executable(test_redis_services test_redis_services.cpp)
 target_link_libraries(test_redis_services
@@ -542,3 +542,17 @@ target_compile_definitions(test_auth_repository_contract PRIVATE
     NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
 )
 add_test(NAME AuthRepositoryContractTest COMMAND test_auth_repository_contract)
+add_executable(test_local_auth_contract test_local_auth_contract.cpp)
+target_link_libraries(test_local_auth_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_local_auth_contract PRIVATE
+    NEXUSAI_AUTH_SERVICE_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/auth_service.h"
+    NEXUSAI_AUTH_SERVICE_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/auth_service.cpp"
+    NEXUSAI_RPC_SERVER_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/rpc_server.h"
+    NEXUSAI_RPC_SERVER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/rpc_server.cpp"
+    NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
+)
+add_test(NAME LocalAuthContractTest COMMAND test_local_auth_contract)
