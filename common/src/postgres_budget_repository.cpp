@@ -191,11 +191,12 @@ BudgetReservationResult PostgresBudgetRepository::reserve(const std::string& own
             "ON CONFLICT (request_id) DO NOTHING RETURNING request_id",
             request_id, owner_id, context_id, estimated_tokens);
         if (inserted.empty()) {
-            const conflict = execParams(
+            const existing_reservation = execParams(
                 transaction,
                 "SELECT owner_id FROM budget_reservations WHERE request_id = $1 FOR UPDATE",
                 request_id);
-            if (!conflict.empty() && conflict.front()["owner_id"].template as<std::string>() == owner_id) {
+            if (!existing_reservation.empty() &&
+                existing_reservation.front()["owner_id"].template as<std::string>() == owner_id) {
                 result.accepted = true;
                 result.idempotent = true;
                 result.reason = "idempotent";
