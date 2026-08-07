@@ -68,12 +68,14 @@ TEST(PostgresBudgetRepositoryContractTest, MigrationDefinesDurableBudgetTablesAn
     EXPECT_NE(migration.find("CREATE TABLE IF NOT EXISTS BUDGET_RESERVATIONS"), std::string::npos);
     EXPECT_NE(migration.find("CREATE TABLE IF NOT EXISTS BUDGET_COUNTERS"), std::string::npos);
     EXPECT_NE(migration.find("CREATE TABLE IF NOT EXISTS BUDGET_POLICIES"), std::string::npos);
-    EXPECT_NE(migration.find("CREATE UNIQUE INDEX IF NOT EXISTS UQ_BUDGET_RESERVATIONS_OWNER_REQUEST"),
-              std::string::npos);
-    EXPECT_NE(migration.find("CREATE UNIQUE INDEX IF NOT EXISTS UQ_BUDGET_COUNTERS_BUCKET"),
-              std::string::npos);
-    EXPECT_NE(migration.find("CREATE UNIQUE INDEX IF NOT EXISTS UQ_BUDGET_POLICIES_OWNER"),
-              std::string::npos);
+    const std::string reservations = tableDefinition(migration, "BUDGET_RESERVATIONS");
+    ASSERT_FALSE(reservations.empty());
+    EXPECT_NE(reservations.find("REQUEST_ID TEXT PRIMARY KEY"), std::string::npos);
+    EXPECT_NE(reservations.find("STATUS TEXT NOT NULL DEFAULT 'RESERVED'"), std::string::npos);
+    EXPECT_NE(reservations.find("CHECK (LENGTH(STATUS) > 0)"), std::string::npos);
+    EXPECT_EQ(migration.find("UQ_BUDGET_RESERVATIONS_OWNER_REQUEST"), std::string::npos);
+    EXPECT_EQ(migration.find("UQ_BUDGET_COUNTERS_BUCKET"), std::string::npos);
+    EXPECT_EQ(migration.find("UQ_BUDGET_POLICIES_OWNER"), std::string::npos);
     EXPECT_NE(migration.find("IDX_BUDGET_COUNTERS_OWNER_SESSION"), std::string::npos);
     EXPECT_NE(migration.find("CHECK (ESTIMATED_TOKENS >= 0)"), std::string::npos);
     EXPECT_NE(migration.find("CHECK (GLOBAL_LIMIT >= 0)"), std::string::npos);
@@ -165,6 +167,31 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, ReserveSucceedsAndIsIdempotent) 
     EXPECT_EQ(usage.user_daily, 25);
     EXPECT_EQ(usage.user_monthly, 25);
     EXPECT_EQ(usage.session, 25);
+}
+
+TEST_F(PostgresBudgetRepositoryIntegrationTest, SameRequestIdAcrossOwnersIsRejectedWithoutIdempotency) {
+    auto context = makeContext();
+    if (!context) {
+        GTEST_SKIP() << "PostgreSQL test DSN is unavailable";
+    }
+
+    const std::string first_owner = owner();
+    const std::string second_owner = owner();
+    const auto limits = generousLimits();
+    ASSERT_TRUE(context->repository->reserve(first_owner, "session-cross-owner", "request-shared", 25,
+                                              limits)
+                    .accepted);
+
+    const auto rejected = context->repository->reserve(second_owner, "session-cross-owner", "request-shared",
+                                                       25, limits);
+    EXPECT_FALSE(rejected.accepted);
+    EXPECT_FALSE(rejected.idempotent);
+    EXPECT_EQ(rejected.reason, "request unavailable");
+
+    const auto second_usage = context->repository->usage(second_owner, "session-cross-owner");
+    EXPECT_EQ(second_usage.user_daily, 0);
+    EXPECT_EQ(second_usage.user_monthly, 0);
+    EXPECT_EQ(second_usage.session, 0);
 }
 
 TEST_F(PostgresBudgetRepositoryIntegrationTest, RejectionDoesNotPartiallyConsumeAnyBucket) {

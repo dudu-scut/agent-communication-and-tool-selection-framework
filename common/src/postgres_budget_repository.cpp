@@ -134,12 +134,18 @@ BudgetReservationResult PostgresBudgetRepository::reserve(const std::string& own
 
         const auto existing = execParams(
             transaction,
-            "SELECT request_id FROM budget_reservations WHERE owner_id = $1 AND request_id = $2 FOR UPDATE",
-            owner_id, request_id);
+            "SELECT owner_id, status FROM budget_reservations WHERE request_id = $1 FOR UPDATE",
+            request_id);
         if (!existing.empty()) {
-            result.accepted = true;
-            result.idempotent = true;
-            result.reason = "idempotent";
+            if (existing.front()["owner_id"].template as<std::string>() == owner_id) {
+                result.accepted = true;
+                result.idempotent = true;
+                result.reason = "idempotent";
+            } else {
+                result.accepted = false;
+                result.idempotent = false;
+                result.reason = "request unavailable";
+            }
             return;
         }
 
@@ -180,14 +186,24 @@ BudgetReservationResult PostgresBudgetRepository::reserve(const std::string& own
         const auto inserted = execParams(
             transaction,
             "INSERT INTO budget_reservations "
-            "(request_id, owner_id, context_id, estimated_tokens, created_at, updated_at) "
-            "VALUES ($1, $2, $3, $4, NOW(), NOW()) "
-            "ON CONFLICT (owner_id, request_id) DO NOTHING RETURNING request_id",
+            "(request_id, owner_id, context_id, estimated_tokens, status, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, 'reserved', NOW(), NOW()) "
+            "ON CONFLICT (request_id) DO NOTHING RETURNING request_id",
             request_id, owner_id, context_id, estimated_tokens);
         if (inserted.empty()) {
-            result.accepted = true;
-            result.idempotent = true;
-            result.reason = "idempotent";
+            const conflict = execParams(
+                transaction,
+                "SELECT owner_id FROM budget_reservations WHERE request_id = $1 FOR UPDATE",
+                request_id);
+            if (!conflict.empty() && conflict.front()["owner_id"].template as<std::string>() == owner_id) {
+                result.accepted = true;
+                result.idempotent = true;
+                result.reason = "idempotent";
+            } else {
+                result.accepted = false;
+                result.idempotent = false;
+                result.reason = "request unavailable";
+            }
             return;
         }
 
