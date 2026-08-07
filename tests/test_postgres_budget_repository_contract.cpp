@@ -7,6 +7,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "agent_rpc/common/postgres_budget_repository.h"
@@ -130,22 +131,29 @@ protected:
         }
     }
 
-    static std::string owner() {
-        static std::size_t sequence = 0;
-        return "budget-contract-owner-" + std::to_string(++sequence);
-    }
-
-    static std::string requestId(const std::string& label) {
-        static const std::string run_suffix = [] {
+    static const std::string& runSuffix() {
+        static const std::string suffix = [] {
             const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
             return std::to_string(ticks);
         }();
-        return "budget-contract-request-" + label + "-" + run_suffix;
+        return suffix;
+    }
+
+    static_assert(std::is_same_v<decltype(runSuffix()), const std::string&>,
+                  "owner() and requestId() must use the shared run suffix");
+
+    static std::string owner() {
+        static std::size_t sequence = 0;
+        return "budget-contract-owner-" + std::to_string(++sequence) + "-" + runSuffix();
+    }
+
+    static std::string requestId(const std::string& label) {
+        return "budget-contract-request-" + label + "-" + runSuffix();
     }
 
     static agent_rpc::common::BudgetLimits generousLimits() {
         return agent_rpc::common::BudgetLimits{
-            .global = 1000,
+            .global = 0,
             .user_daily = 1000,
             .user_monthly = 1000,
             .session = 1000,
@@ -161,6 +169,7 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, ReserveSucceedsAndIsIdempotent) 
 
     const std::string owner_id = owner();
     const std::string request_id = requestId("success");
+    const auto before = context->repository->usage(owner_id, "session-a");
     const auto first = context->repository->reserve(owner_id, "session-a", request_id, 25,
                                                      generousLimits());
     ASSERT_TRUE(first.accepted);
@@ -171,11 +180,23 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, ReserveSucceedsAndIsIdempotent) 
     EXPECT_TRUE(second.accepted);
     EXPECT_TRUE(second.idempotent);
 
-    const auto usage = context->repository->usage(owner_id, "session-a");
-    EXPECT_EQ(usage.global, 25);
-    EXPECT_EQ(usage.user_daily, 25);
-    EXPECT_EQ(usage.user_monthly, 25);
-    EXPECT_EQ(usage.session, 25);
+    const auto after = context->repository->usage(owner_id, "session-a");
+    EXPECT_EQ(after.global - before.global, 25);
+    EXPECT_EQ(after.user_daily - before.user_daily, 25);
+    EXPECT_EQ(after.user_monthly - before.user_monthly, 25);
+    EXPECT_EQ(after.session - before.session, 25);
+}
+
+TEST_F(PostgresBudgetRepositoryIntegrationTest, GeneratedOwnerAndRequestIdsShareRunSuffix) {
+    const std::string generated_owner = owner();
+    const std::string generated_request = requestId("suffix");
+    const std::size_t request_suffix_start = generated_request.rfind('-');
+    ASSERT_NE(request_suffix_start, std::string::npos);
+    const std::string request_suffix = generated_request.substr(request_suffix_start + 1);
+    ASSERT_FALSE(request_suffix.empty());
+
+    ASSERT_GE(generated_owner.size(), request_suffix.size() + 1);
+    EXPECT_EQ(generated_owner.substr(generated_owner.size() - request_suffix.size()), request_suffix);
 }
 
 TEST_F(PostgresBudgetRepositoryIntegrationTest, SameRequestIdAcrossOwnersIsRejectedWithoutIdempotency) {
