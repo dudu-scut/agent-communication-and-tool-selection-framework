@@ -187,8 +187,9 @@ test('WSL bootstrap provides Ubuntu packages and a Go fallback for PR1 setup dep
   assert.ok((fallback.match(/command -v grpcurl/g) ?? []).length >= 2, 'fallback must verify grpcurl is on PATH after installation');
 });
 
-test('Compose gates the JSON gateway and publishes only HTTPS web traffic', () => {
+test('Compose gates the JSON gateway and publishes local HTTP web traffic', () => {
   const compose = read('docker-compose.yml');
+  const postgres = serviceBlock(compose, 'postgres');
   const rpcServer = serviceBlock(compose, 'rpc-server');
   const proxy = serviceBlock(compose, 'proxy');
   const frontend = serviceBlock(compose, 'frontend');
@@ -204,24 +205,27 @@ test('Compose gates the JSON gateway and publishes only HTTPS web traffic', () =
   assert.match(proxy, /healthcheck:/);
   assert.match(frontend, /depends_on:\s*\n\s+proxy:\s*\n\s+condition:\s+service_healthy/);
   assert.match(frontend, /healthcheck:/);
-  assert.match(frontend, /ports:\s*\n\s+-\s*["']?8443:8443/);
-  assert.doesNotMatch(compose, /-\s*["']?\d+:8080/);
-  assert.doesNotMatch(compose, /-\s*["']?\d+:8081/);
+  assert.match(postgres, /\.\/\.nexusai-data\/postgres:\/var\/lib\/postgresql\/data/);
+  assert.doesNotMatch(compose, /postgres-data:/);
+  assert.match(frontend, /ports:\s*\n\s+-\s*["']?8080:8080/);
+  assert.match(frontend, /http:\/\/127\.0\.0\.1:8080\/health/);
+  assert.doesNotMatch(frontend, /ports:[\s\S]*8081:8081/);
   assert.match(compose, /GRPC_TARGET:\s*rpc-server:50051/);
+  assert.doesNotMatch(compose, /secrets:|frontend_tls|certs\/dev|8443/);
   assert.doesNotMatch(compose, /envoy:/i);
 });
 
-test('Production Nginx terminates TLS and forwards unary and streaming JSON RPCs', () => {
+test('Local Nginx serves HTTP and forwards unary and streaming JSON RPCs', () => {
   const nginx = read('frontend/nginx.conf');
 
-  assert.match(nginx, /listen\s+8443\s+ssl/);
-  assert.match(nginx, /ssl_certificate\s+\/run\/secrets\/frontend_tls_cert/);
-  assert.match(nginx, /ssl_certificate_key\s+\/run\/secrets\/frontend_tls_key/);
+  assert.match(nginx, /listen\s+8080/);
+  assert.doesNotMatch(nginx, /listen\s+8443|\bssl\b|ssl_certificate|frontend_tls|\/run\/secrets/);
   assert.match(nginx, /location\s+\/agent_communication\./);
   assert.match(nginx, /proxy_pass\s+http:\/\/proxy:8081/);
+  assert.match(nginx, /proxy_http_version\s+1\.1/);
   assert.match(nginx, /proxy_buffering\s+off/);
   assert.match(nginx, /proxy_read_timeout\s+300s/);
-  assert.doesNotMatch(nginx, /listen\s+8080/);
+  assert.match(nginx, /proxy_set_header X-Forwarded-Proto http/);
   assert.doesNotMatch(nginx, /envoy|grpc-web/i);
 });
 
@@ -236,15 +240,13 @@ test('Node workspaces expose the required scripts and keep lockfile roots aligne
   }
 });
 
-test('WSL bootstrap validates Docker Desktop integration and development TLS material', () => {
+test('WSL bootstrap validates Docker Desktop integration without frontend TLS setup', () => {
   const bootstrap = read('scripts/bootstrap-wsl.sh');
 
   assert.match(bootstrap, /docker\s+info/);
   assert.match(bootstrap, /docker\s+compose\s+version/);
-  assert.match(bootstrap, /subjectAltName/);
-  assert.match(bootstrap, /openssl\s+verify/);
-  assert.match(bootstrap, /checkend/);
-  assert.match(bootstrap, /certs\/dev/);
+  assert.match(bootstrap, /127\.0\.0\.1:8080/);
+  assert.doesNotMatch(bootstrap, /certs\/dev|FRONTEND_TLS|subjectAltName|openssl\s+(?:verify|x509|req)/);
 });
 
 test('Default CMake keeps MCP opt-in without global compiler flags', () => {
@@ -304,12 +306,21 @@ test('Frontend declares Vite environment types used by the JSON client', () => {
   assert.match(source, /VITE_API_BASE/);
 });
 
-test('Frontend Docker healthcheck pins its HTTPS self-probe to IPv4 loopback', () => {
+test('Frontend Docker healthcheck probes its local HTTP endpoint on IPv4 loopback', () => {
   const compose = read('docker-compose.yml');
   const frontend = serviceBlock(compose, 'frontend');
 
-  assert.match(frontend, /https:\/\/127\.0\.0\.1:8443\/health/);
-  assert.doesNotMatch(frontend, /https:\/\/localhost:8443\/health/);
+  assert.match(frontend, /http:\/\/127\.0\.0\.1:8080\/health/);
+  assert.doesNotMatch(frontend, /https?:\/\/localhost:8443\/health/);
+});
+
+test('Local Compose state and browser endpoint are documented', () => {
+  const env = read('.env.example');
+  const gitignore = read('.gitignore');
+
+  assert.match(env, /FRONTEND_URL=http:\/\/127\.0\.0\.1:8080/);
+  assert.doesNotMatch(env, /FRONTEND_TLS|certs\/dev/);
+  assert.match(gitignore, /^\.nexusai-data\/$/m);
 });
 
 test('migration service uses the compiled migrator and canonical Compose DNS', () => {

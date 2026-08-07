@@ -16,7 +16,7 @@
 
 ## Supported platform path (PR1)
 
-Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Linux filesystem (for example `~/src/nexusai`), not under `/mnt/c`. Bootstrap the documented toolchain and a development certificate with:
+Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Linux filesystem (for example `~/src/nexusai`), not under `/mnt/c`. Bootstrap the documented WSL2 toolchain with:
 
 ```bash
 ./scripts/bootstrap-wsl.sh
@@ -42,7 +42,7 @@ For the complete containerized stack, use the root Compose file:
 docker compose up --build
 ```
 
-It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <https://localhost:8443>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The bootstrap-generated `certs/dev/dev-ca-cert.pem` is for local trust only; production must provide managed certificates through the `FRONTEND_TLS_*_FILE` variables.
+It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <http://127.0.0.1:8080>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The browser entrypoint is local-only HTTP, so Compose does not require TLS certificates or frontend secrets. PostgreSQL data persists in the ignored `./.nexusai-data/postgres` bind mount.
 
 MCP/RAG is optional and disabled by default. Enable it deliberately when configuring CMake with `-DENABLE_MCP=ON`.
 
@@ -381,6 +381,7 @@ cd frontend && npm run dev
 | 50051 | gRPC Server | gRPC/HTTP2 |
 | 5000 | Orchestrator | HTTP/A2A |
 | 5100 | Agent Endpoint | HTTP/A2A |
+| 8080 | Nginx browser entrypoint | HTTP |
 | 8081 | Node.js gRPC Proxy | HTTP |
 | 6379 | Redis | TCP |
 | 5173 | Vite Dev Server | HTTP |

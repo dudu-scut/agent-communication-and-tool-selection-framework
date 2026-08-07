@@ -8,8 +8,8 @@ This file provides guidance to Claude Code when working with this repository.
 - Work in WSL2 Ubuntu on the Linux filesystem; run `./scripts/bootstrap-wsl.sh` before the first build.
 - On Ubuntu 26.04, bootstrap replaces only the stock libpqxx major<8 with the pinned, SHA-256-verified 8.0.1 user-prefix build; Ubuntu 24.04 keeps its system package. `run.sh build` discovers the controlled prefix without a manual export, and ordinary CMake configuration does not download dependencies.
 - The supported browser protocol is JSON: `Browser/Vite -> Node JSON proxy :8081 -> RPC server :50051`. Vite proxies only the Node proxy.
-- `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `https://localhost:8443`.
-- Compose services use DNS names. The proxy must use `GRPC_TARGET=rpc-server:50051` in containers.
+- `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `http://127.0.0.1:8080`.
+- Compose services use DNS names. The proxy must use `GRPC_TARGET=rpc-server:50051` in containers. Nginx forwards browser JSON and SSE to `proxy:8081`; no TLS certificates or frontend secrets are required.
 - The Node JSON-to-gRPC proxy is the only supported browser gateway.
 - MCP/RAG is optional and off by default (`-DENABLE_MCP=ON` is required to build it).
 
@@ -83,7 +83,7 @@ Load via `.env` file at project root (auto-loaded by `run.sh` and `env_loader`).
 | 50051 | RPC Server | gRPC/2 |
 | 5000 | Orchestrator | HTTP/A2A |
 | 5100 | Mock Agent | HTTP/A2A |
-| 8443 | Nginx (browser) | HTTPS |
+| 8080 | Nginx (browser) | HTTP |
 | 8081 | Node JSON Proxy | HTTP JSON ↔ gRPC |
 | 6379 | Redis | TCP |
 

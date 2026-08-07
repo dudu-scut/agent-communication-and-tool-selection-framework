@@ -306,52 +306,6 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-CERT_DIR="$PROJECT_ROOT/certs/dev"
-CA_KEY="$CERT_DIR/dev-ca-key.pem"
-CA_CERT="$CERT_DIR/dev-ca-cert.pem"
-TLS_KEY="$CERT_DIR/frontend-key.pem"
-TLS_CERT="$CERT_DIR/frontend-cert.pem"
-TLS_CSR="$CERT_DIR/frontend.csr"
-umask 077
-mkdir -p "$CERT_DIR"
-
-if [ ! -s "$CA_CERT" ] || [ ! -s "$CA_KEY" ] || ! openssl x509 -checkend 86400 -noout -in "$CA_CERT" >/dev/null 2>&1; then
-  rm -f "$CA_CERT" "$CA_KEY"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
-    -keyout "$CA_KEY" -out "$CA_CERT" \
-    -subj '/CN=NexusAI Development CA' \
-    -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
-    -addext 'keyUsage=critical,keyCertSign,cRLSign'
-fi
-
-certificate_is_valid() {
-  local certificate="$1" private_key="$2" required_san="$3"
-  [ -s "$certificate" ] && [ -s "$private_key" ] || return 1
-  openssl x509 -checkend 86400 -noout -in "$certificate" >/dev/null 2>&1 || return 1
-  openssl verify -CAfile "$CA_CERT" "$certificate" >/dev/null 2>&1 || return 1
-  local certificate_modulus private_key_modulus
-  certificate_modulus="$(openssl x509 -noout -modulus -in "$certificate" 2>/dev/null)" || return 1
-  private_key_modulus="$(openssl rsa -noout -modulus -in "$private_key" 2>/dev/null)" || return 1
-  [ "$certificate_modulus" = "$private_key_modulus" ] || return 1
-  openssl x509 -in "$certificate" -noout -ext subjectAltName 2>/dev/null | grep -Fq "$required_san"
-}
-
-if ! certificate_is_valid "$TLS_CERT" "$TLS_KEY" "DNS:localhost"; then
-  rm -f "$TLS_CERT" "$TLS_KEY" "$TLS_CSR" "$CA_CERT.srl"
-  openssl req -newkey rsa:2048 -nodes -keyout "$TLS_KEY" -out "$TLS_CSR" -subj '/CN=localhost'
-  openssl x509 -req -in "$TLS_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial -days 30 -out "$TLS_CERT" \
-    -extfile <(printf '%s\n' 'basicConstraints=critical,CA:FALSE' 'keyUsage=critical,digitalSignature,keyEncipherment' 'extendedKeyUsage=serverAuth' 'subjectAltName=DNS:localhost,DNS:frontend,IP:127.0.0.1')
-  rm -f "$TLS_CSR" "$CA_CERT.srl"
-fi
-
-if ! certificate_is_valid "$TLS_CERT" "$TLS_KEY" "DNS:localhost"; then
-  echo "Development TLS certificate validation failed; remove certs/dev and retry." >&2
-  exit 1
-fi
-
-chmod 600 "$CA_KEY" "$TLS_KEY"
-chmod 644 "$CA_CERT" "$TLS_CERT"
-echo "WSL2 bootstrap complete; Docker Desktop integration and development TLS are ready."
-echo "Development CA: $CA_CERT"
-echo "Frontend certificate: $TLS_CERT"
+echo "WSL2 bootstrap complete; Docker Desktop integration is ready."
 echo "Run: docker compose up --build"
+echo "Open http://127.0.0.1:8080 after the frontend is healthy."
