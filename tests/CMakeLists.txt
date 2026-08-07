@@ -556,6 +556,17 @@ target_compile_definitions(test_local_auth_contract PRIVATE
     NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
 )
 add_test(NAME LocalAuthContractTest COMMAND test_local_auth_contract)
+add_executable(test_auth_owner_context_contract test_auth_owner_context_contract.cpp)
+target_link_libraries(test_auth_owner_context_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_auth_owner_context_contract PRIVATE
+    NEXUSAI_AUTH_INTERCEPTOR_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/auth_interceptor.h"
+    NEXUSAI_AUTH_INTERCEPTOR_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/auth_interceptor.cpp"
+)
+add_test(NAME AuthOwnerContextContractTest COMMAND test_auth_owner_context_contract)
 
 add_executable(test_durable_domain_schema_contract test_durable_domain_schema_contract.cpp)
 target_link_libraries(test_durable_domain_schema_contract

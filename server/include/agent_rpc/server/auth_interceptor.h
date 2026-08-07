@@ -14,10 +14,11 @@ class AuthServiceImpl;
  *
  * Extracts and validates the "authorization" metadata from incoming RPCs.
  * Stores user identity in thread-local storage for downstream handlers.
- * Whitelisted methods (UserService.Register/Login, health checks,
- * agent registration/heartbeat) bypass authentication.
+ * Whitelisted methods (UserService.Register/Login/ValidateToken and gRPC health
+ * checks) bypass authentication.
  *
- * Handlers call currentUserId() / isAuthenticated() to check auth state.
+ * Handlers call currentUserId(), currentUsername(), currentTraceId(), and
+ * isAuthenticated() to inspect the request owner context.
  */
 class AuthInterceptor : public grpc::experimental::Interceptor {
 public:
@@ -42,6 +43,8 @@ public:
     static const AuthContext& currentAuth();
     static bool isAuthenticated();
     static std::string currentUserId();
+    static std::string currentUsername();
+    static std::string currentTraceId();
 
     // Auth enable flag: when false, isAuthenticated() returns true (no enforcement)
     static void setAuthEnabled(bool enabled);
