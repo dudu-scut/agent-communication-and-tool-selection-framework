@@ -1,0 +1,123 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexusai}
+      POSTGRES_USER: ${POSTGRES_USER:-nexusai}
+      # This fallback is local-only; production must override POSTGRES_PASSWORD.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexusai-dev-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rpc-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NEXUSAI_POSTGRES_HOST: postgres
+      NEXUSAI_POSTGRES_PORT: "5432"
+      NEXUSAI_POSTGRES_DATABASE: ${POSTGRES_DB:-nexusai}
+      NEXUSAI_POSTGRES_USER: ${POSTGRES_USER:-nexusai}
+      NEXUSAI_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexusai-dev-password}
+    entrypoint: ["db_migrate"]
+    command: ["--migrations", "/usr/local/share/nexusai/migrations"]
+    networks: [nexusai]
+
+  rpc-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rpc-server
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      NEXUSAI_POSTGRES_HOST: postgres
+      NEXUSAI_POSTGRES_PORT: "5432"
+      NEXUSAI_POSTGRES_DATABASE: ${POSTGRES_DB:-nexusai}
+      NEXUSAI_POSTGRES_USER: ${POSTGRES_USER:-nexusai}
+      NEXUSAI_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexusai-dev-password}
+      # Compatibility bridge for the current FeedbackAggregator; new code must use NEXUSAI_POSTGRES_*.
+      PG_URL: postgresql://${POSTGRES_USER:-nexusai}:${POSTGRES_PASSWORD:-nexusai-dev-password}@postgres:5432/${POSTGRES_DB:-nexusai}
+      RPC_SERVER_PORT: "50051"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose: ["50051"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z -w 1 127.0.0.1 50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  proxy:
+    build:
+      context: .
+      dockerfile: gateway/proxy/Dockerfile
+    environment:
+      GRPC_TARGET: rpc-server:50051
+      PROXY_PORT: "8081"
+    depends_on:
+      rpc-server:
+        condition: service_healthy
+    expose: ["8081"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "const net=require('node:net'); const socket=net.createConnection({host:'127.0.0.1',port:8081}); socket.once('connect',()=>{socket.destroy(); process.exit(0)}); socket.once('error',()=>process.exit(1)); setTimeout(()=>process.exit(1),1000)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      proxy:
+        condition: service_healthy
+    secrets:
+      - frontend_tls_cert
+      - frontend_tls_key
+    ports:
+      - "8443:8443"
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://127.0.0.1:8443/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [nexusai]
+
+networks:
+  nexusai:
+
+volumes:
+  postgres-data:
+  redis-data:
+
+secrets:
+  frontend_tls_cert:
+    file: ${FRONTEND_TLS_CERT_FILE:-./certs/dev/frontend-cert.pem}
+  frontend_tls_key:
+    file: ${FRONTEND_TLS_KEY_FILE:-./certs/dev/frontend-key.pem}

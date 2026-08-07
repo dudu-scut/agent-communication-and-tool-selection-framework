@@ -29,13 +29,13 @@ venv/
 
 # Node.js
 node_modules/
-package-lock.json
 
 # Runtime artifacts
 logs/
 pids/
 *.log
 *.pid
+pid.txt
 
 # Secrets
 .env

@@ -1,0 +1,29 @@
+# Secrets and local certificates
+.env
+.env.*
+!.env.example
+certs/
+
+# Source-control and local agent state
+.git/
+.superpowers/
+.agents/
+
+# Generated dependencies and build outputs
+node_modules/
+**/node_modules/
+build/
+cmake-build-*/
+frontend/dist/
+logs/
+pids/
+coverage/
+
+# Editor, cache, and scratch artifacts
+.idea/
+.vscode/
+.cache/
+tmp/
+*.log
+*.pid
+pid.txt

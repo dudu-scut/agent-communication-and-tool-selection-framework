@@ -1,18 +1,25 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.20)
 project(AgentCommunicationRPC VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)  # Fix #53: unified C++20 standard across all modules
 
 # 启用测试
-enable_testing()
+include(CTest)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(ENABLE_MCP "Build the optional MCP/RAG integration" OFF)
+include(CTest)
 
 # 查找依赖
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GRPC REQUIRED grpc++)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
-find_package(GTest REQUIRED)
+find_package(libpqxx CONFIG QUIET)
+include(cmake/resolve_libpqxx_target.cmake)
+agent_rpc_resolve_libpqxx_target(AGENT_RPC_PQXX_TARGET)
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+endif()
 
 # 包含目录
 include_directories(${GRPC_INCLUDE_DIRS})
@@ -25,10 +32,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/server/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/client/include)
 
 # 设置编译选项
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O2")
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -DDEBUG")
-endif()
 
 set(UUID_LIB "uuid")
 
@@ -55,7 +58,12 @@ add_subdirectory(a2a)
 add_subdirectory(a2a_adapter)
 add_subdirectory(orchestrator)
 # MCP模块 - 用于 AI Agent 工具集成
-add_subdirectory(mcp)
+if(ENABLE_MCP)
+    add_subdirectory(mcp)
+endif()
 add_subdirectory(server)
 add_subdirectory(client)
-add_subdirectory(tests)
+add_subdirectory(db)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

@@ -3,6 +3,16 @@
 This file provides guidance to Claude Code when working with this repository.
 
 > 详尽的项目介绍、架构设计、技术亮点和求职竞争力分析见 [docs/NexusAI-project-introduction.md](docs/NexusAI-project-introduction.md)。
+## PR1 platform baseline
+
+- Work in WSL2 Ubuntu on the Linux filesystem; run `./scripts/bootstrap-wsl.sh` before the first build.
+- On Ubuntu 26.04, bootstrap replaces only the stock libpqxx major<8 with the pinned, SHA-256-verified 8.0.1 user-prefix build; Ubuntu 24.04 keeps its system package. `run.sh build` discovers the controlled prefix without a manual export, and ordinary CMake configuration does not download dependencies.
+- The supported browser protocol is JSON: `Browser/Vite -> Node JSON proxy :8081 -> RPC server :50051`. Vite proxies only the Node proxy.
+- `docker compose up --build` from the repository root starts PostgreSQL, Redis, migrations, RPC server, Node proxy, and the Nginx frontend at `https://localhost:8443`.
+- Compose services use DNS names. The proxy must use `GRPC_TARGET=rpc-server:50051` in containers.
+- The Node JSON-to-gRPC proxy is the only supported browser gateway.
+- MCP/RAG is optional and off by default (`-DENABLE_MCP=ON` is required to build it).
+
 
 ## Quick Commands
 
@@ -16,7 +26,7 @@ This file provides guidance to Claude Code when working with this repository.
 ./run.sh setup          # 环境检测
 
 # 前端 (Windows 原生)
-cd frontend && npm install && npm run dev   # Vite :5173 → Envoy :8081 → gRPC :50051
+cd frontend && npm ci && npm run dev   # Vite :5173 → Node proxy :8081 → gRPC :50051
 
 # 单测
 cd build && ctest --output-on-failure
@@ -36,15 +46,15 @@ registry/       → ServiceRegistry (agent discovery, health)
 a2a/            → Pure A2A protocol library (C++ A2AClient, JSON-RPC, AgentCard)
 a2a_adapter/    → Protobuf ↔ A2A JSON-RPC bridge (sync/async/streaming/direct)
 orchestrator/   → AgentRouter (Embedding→LLM→Keyword→Fallback) + TaskPlanner + TaskExecutor + ResultAggregator
-mcp/            → MCPClient (STDIO+SSE) + RAG-MCP (EmbeddingService + VectorIndex + SemanticCache)
+mcp/            → Optional MCPClient (disabled unless ENABLE_MCP=ON)
 server/         → gRPC Server :50051 (9 services, AuthInterceptor, CostInterceptor)
 client/         → Interactive gRPC CLI
 frontend/       → Vue 3 + TS + Vite SPA (10 views: Chat, Topology, Dashboard, Monitor, Admin, Sandbox, Compare, Share, Templates, Login)
-gateway/        → Nginx + Envoy (Docker) + Node.js gRPC Proxy (:8081)
+gateway/        → Node JSON-to-gRPC Proxy (:8081); frontend Nginx is the container entrypoint
 tests/          → 17 suites (GTest + RapidCheck property-based)
 ```
 
-**Data flow:** `Browser → Nginx :8080 → Envoy :8081 → gRPC Server :50051 → A2AAdapter → Orchestrator :5000 → Agents`
+**Data flow:** `Browser → Nginx :8080 → Node JSON Proxy :8081 → gRPC Server :50051 → A2AAdapter → Orchestrator :5000 → Agents`
 
 ## Key Abstractions
 
@@ -73,8 +83,8 @@ Load via `.env` file at project root (auto-loaded by `run.sh` and `env_loader`).
 | 50051 | RPC Server | gRPC/2 |
 | 5000 | Orchestrator | HTTP/A2A |
 | 5100 | Mock Agent | HTTP/A2A |
-| 8080 | Nginx (browser) | HTTP/1.1 |
-| 8081 | Envoy / Node Proxy | gRPC-Web ↔ gRPC |
+| 8443 | Nginx (browser) | HTTPS |
+| 8081 | Node JSON Proxy | HTTP JSON ↔ gRPC |
 | 6379 | Redis | TCP |
 
 ## Conventions
@@ -86,3 +96,11 @@ Load via `.env` file at project root (auto-loaded by `run.sh` and `env_loader`).
 - Redis must be running on `localhost:6379` for auth/memory/agent-communication tests.
 - LLM-dependent features (routing tier 2, planning, RAG embedding) degrade gracefully without `LLM_API_KEY`.
 - `ai_interface/` module is commented out of root CMakeLists.txt — may be re-enabled in the future.
+
+## PR2.1 PostgreSQL migration foundation
+
+- `db_migrate --migrations db/migrations` is the only Compose migration path;
+  `sql/` remains legacy reference material.
+- PostgresStore reads only `NEXUSAI_POSTGRES_HOST`, `PORT`, `DATABASE`, `USER`,
+  and `PASSWORD`. Run the CMake build on WSL2 Linux filesystems with `libpqxx-dev`.
+- The Compose `PG_URL` on `rpc-server` is a temporary compatibility bridge for

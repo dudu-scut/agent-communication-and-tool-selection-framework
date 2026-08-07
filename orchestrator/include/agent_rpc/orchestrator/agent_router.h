@@ -22,11 +22,13 @@
 #include <vector>
 
 // Forward declarations for MCP RAG types (P3 embedding routing)
+#ifdef AGENT_RPC_ENABLE_MCP
 namespace agent_rpc { namespace mcp { namespace rag {
     class EmbeddingService;
     class VectorIndex;
     class EmbeddingCache;
 }}}
+#endif
 
 // Forward declaration for P1-1 LLM-based intent classification
 class LLMClient;
@@ -425,9 +427,11 @@ private:
 
     // Embedding-based routing (P3)
     EmbeddingRouterConfig embedding_config_;
+#ifdef AGENT_RPC_ENABLE_MCP
     std::unique_ptr<agent_rpc::mcp::rag::EmbeddingService> embedding_service_;
     std::unique_ptr<agent_rpc::mcp::rag::VectorIndex> skill_index_;
     std::unique_ptr<agent_rpc::mcp::rag::EmbeddingCache> embedding_cache_;
+#endif
     mutable std::mutex embedding_mutex_;
     std::atomic<uint64_t> embedding_query_count_{0};
     std::atomic<uint64_t> embedding_hit_count_{0};

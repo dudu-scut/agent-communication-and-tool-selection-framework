@@ -1,7 +1,7 @@
 /**
  * NexusAI gRPC ↔ JSON Transcoding Proxy
  *
- * Replaces Envoy + grpcwebproxy for local development.
+ * Serves the supported JSON browser gateway for local development and containers.
  * Accepts JSON POST from the Vue frontend, converts to gRPC/protobuf,
  * forwards to the rpc_server, and returns JSON.
  *

@@ -14,6 +14,38 @@
 
 </div>
 
+## Supported platform path (PR1)
+
+Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Linux filesystem (for example `~/src/nexusai`), not under `/mnt/c`. Bootstrap the documented toolchain and a development certificate with:
+
+```bash
+./scripts/bootstrap-wsl.sh
+```
+
+Ubuntu 26.04's stock `libpqxx` 7.10 package is rejected because of its
+process-exit double-free. The bootstrap detects that distribution and only
+then fetches the pinned libpqxx 8.0.1 source archive, verifies SHA-256
+`24f878a1b4249035e4b6c07d49351506bf99f88df584d36bf198d58ebf293823`, and
+installs it under the user-controlled
+`${XDG_DATA_HOME:-$HOME/.local/share}/nexusai/libpqxx-8.0.1` prefix. A marker
+and `pkg-config` version check make the install idempotent; a failed or
+mismatched archive stops bootstrap, and no apt-owned files are overwritten.
+`run.sh build` discovers that prefix automatically and passes it to CMake.
+Ubuntu 24.04 keeps using its system libpqxx package (including 6.x), and
+ordinary CMake configuration never downloads dependencies.
+
+The browser path is JSON only: `Browser/Vite -> Node JSON proxy (:8081) -> gRPC RPC server (:50051)`. Vite forwards only browser RPC paths to the local Node proxy.
+
+For the complete containerized stack, use the root Compose file:
+
+```bash
+docker compose up --build
+```
+
+It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <https://localhost:8443>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The bootstrap-generated `certs/dev/dev-ca-cert.pem` is for local trust only; production must provide managed certificates through the `FRONTEND_TLS_*_FILE` variables.
+
+MCP/RAG is optional and disabled by default. Enable it deliberately when configuring CMake with `-DENABLE_MCP=ON`.
+
 ---
 
 ## 这是什么？
@@ -50,7 +82,7 @@
                                      │  HTTP / SSE
                         ┌────────────▼────────────┐
                         │   Node.js Proxy (:8081)  │
-                        │   gRPC-Web ↔ gRPC        │
+                        │   HTTP JSON ↔ gRPC        │
                         └────────────┬────────────┘
                                      │  gRPC / Protobuf
                         ┌────────────▼────────────┐
@@ -177,11 +209,11 @@ agent-communication-and-tool-selection-framework/
 │
 ├── gateway/                         # API 网关
 │   ├── proxy/server.mjs             #   Node.js gRPC Proxy（主力）
-│   ├── envoy.yaml                   #   Envoy 配置（Docker 备选）
+│   ├── proxy/Dockerfile              #   Node JSON proxy image
 │   └── nginx.conf                   #   Nginx 配置
 │
 ├── deploy/                          # 部署编排
-│   └── docker-compose.gateway.yaml  #   Docker 网关（Nginx + Envoy）
+│   └── ../docker-compose.yml         #   Root container stack
 │
 ├── tests/                           # 测试（17 套，GTest + RapidCheck）
 │   ├── e2e/                         #   E2E 测试脚本
@@ -263,7 +295,7 @@ agent-communication-and-tool-selection-framework/
 ### 启动前端
 
 ```bash
-cd frontend && npm install   # 首次
+cd frontend && npm ci   # 首次
 cd frontend && npm run dev    # Vite :5173
 ```
 
@@ -276,7 +308,7 @@ cd frontend && npm run dev    # Vite :5173
 | 要求 | 版本 | 说明 |
 | ------ | ------ | ------ |
 | 操作系统 | Linux (Ubuntu 20.04+) | C++ 编译运行 |
-| CMake | 3.15+ | 构建系统 |
+| CMake | 3.20+ | 构建系统 |
 | GCC | 10+（C++20） | 编译器 |
 | gRPC | 1.51.1+ | RPC 框架 |
 | Redis | 6.0+ | 缓存/存储 |
@@ -321,7 +353,7 @@ cd build && ctest --output-on-failure   # 或单独运行
 
 ```bash
 # 一键启动全部后端（Redis + Agent + Proxy + Orchestrator + gRPC Server）
-./scripts/start_backend.sh
+./run.sh start-all
 
 # 启动 Node.js gRPC Proxy（Windows PowerShell，新窗口）
 $env:GRPC_TARGET="localhost:50051"
@@ -370,3 +402,16 @@ cd frontend && npm run dev
 ## 许可证
 
 MIT License
+
+### PostgreSQL migrations (PR2.1)
+
+The compiled `db_migrate` binary applies the canonical `db/migrations/VNNN__name.sql`
+set in order and records checksums in `schema_migrations`. Compose runs it as the
+`migrate` service before `rpc-server`; the legacy `sql/` files remain reference
+inputs and are never executed by Compose.
+
+On WSL2, keep the checkout on the Linux filesystem (not `/mnt/c`) and run
+`./scripts/bootstrap-wsl.sh` before configuring CMake. Ubuntu 26.04 receives
+the verified user-prefix libpqxx 8.0.1 workaround described above; Ubuntu
+24.04 continues to use its system `libpqxx-dev`. The `.env.example` password
+is local-only.

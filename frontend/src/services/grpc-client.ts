@@ -1,5 +1,5 @@
 /**
- * gRPC-Web client wrapper
+ * JSON proxy client wrapper
  *
  * Communicates with grpcwebproxy via HTTP/1.1, which converts to gRPC/2 and forwards to NexusAI.
  * Currently uses hand-written TypeScript types + fetch; can switch to protoc-generated stubs later.
@@ -96,7 +96,7 @@ export async function query(
  * Streaming query
  *
  * Uses fetch + ReadableStream to consume server-streaming responses.
- * grpcwebproxy returns gRPC-Web text format (base64-encoded frames),
+ * The JSON proxy returns server-streaming RPCs as SSE frames,
  * simplified here to line-by-line JSON event parsing.
  */
 export function queryStream(
