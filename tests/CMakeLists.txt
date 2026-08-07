@@ -440,5 +440,7 @@ target_compile_definitions(test_rpc_server_local_transport PRIVATE
     RPC_SERVER_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/rpc_server.cpp"
     RPC_SERVER_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/rpc_server.h"
     RPC_TYPES_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/types.h"
+    RPC_CLIENT_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../client/src/rpc_client.cpp"
+    RPC_CLIENT_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../client/include/agent_rpc/client/rpc_client.h"
 )
 add_test(NAME RpcServerLocalTransportTest COMMAND test_rpc_server_local_transport)

@@ -131,7 +131,6 @@ public:
 private:
     // 内部方法
     void setupChannel();
-    void setupSslCredentials();
     bool reconnect();
     bool connectToEndpoint(const common::ServiceEndpoint& endpoint);
     bool handleTransportFailure(const grpc::Status& status);

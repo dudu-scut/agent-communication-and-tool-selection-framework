@@ -28,9 +28,6 @@ struct RpcConfig {
     int timeout_seconds = 30;
     int max_retry_attempts = 3;
     int heartbeat_interval = 30;
-    // Retained for client source compatibility.  RpcServer always uses local
-    // plaintext transport and ignores this legacy client-side switch.
-    bool enable_ssl = false;
     std::string log_level = "INFO";
     bool enable_service_registry = false;
     std::string registry_address = "localhost:8500";
