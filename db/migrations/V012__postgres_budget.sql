@@ -1,5 +1,5 @@
 -- PostgreSQL-backed token budgets.  IDs remain application-owned so this
--- migration deliberately has no cross-table foreign keys.
+-- migration deliberately keeps records independent across tables.
 
 CREATE TABLE IF NOT EXISTS budget_reservations (
     request_id TEXT PRIMARY KEY CHECK (length(request_id) > 0),

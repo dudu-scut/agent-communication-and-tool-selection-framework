@@ -226,7 +226,7 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, OwnerPolicyOverridesRequestLimit
 
     const std::string owner_id = owner();
     auto policy = generousLimits();
-    policy.global = 3;
+    policy.user_daily = 3;
     ASSERT_TRUE(context->repository->setOwnerPolicy(owner_id, policy));
 
     const auto accepted = context->repository->reserve(owner_id, "session-c", "request-c1", 3,
@@ -235,7 +235,7 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, OwnerPolicyOverridesRequestLimit
     const auto rejected = context->repository->reserve(owner_id, "session-c", "request-c2", 1,
                                                         generousLimits());
     EXPECT_FALSE(rejected.accepted);
-    EXPECT_NE(rejected.reason.find("global"), std::string::npos);
+    EXPECT_NE(rejected.reason.find("daily"), std::string::npos);
 }
 
 TEST_F(PostgresBudgetRepositoryIntegrationTest, RejectsEmptyNulAndNegativeInputs) {
@@ -248,7 +248,7 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, RejectsEmptyNulAndNegativeInputs
     EXPECT_THROW(context->repository->reserve("", "session", "request", 1, limits), std::invalid_argument);
     EXPECT_THROW(context->repository->reserve("owner", "", "request", 1, limits), std::invalid_argument);
     EXPECT_THROW(context->repository->reserve("owner", "session", "", 1, limits), std::invalid_argument);
-    EXPECT_THROW(context->repository->reserve("owner\0bad", "session", "request", 1, limits),
+    EXPECT_THROW(context->repository->reserve(std::string{"owner\0bad", 9}, "session", "request", 1, limits),
                  std::invalid_argument);
     EXPECT_THROW(context->repository->reserve("owner", "session", "request", -1, limits),
                  std::invalid_argument);
