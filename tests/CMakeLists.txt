@@ -578,6 +578,23 @@ target_compile_definitions(test_durable_domain_schema_contract PRIVATE
     NEXUSAI_DURABLE_DOMAIN_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V011__durable_domain.sql"
 )
 add_test(NAME DurableDomainSchemaContractTest COMMAND test_durable_domain_schema_contract)
+
+add_executable(test_postgres_budget_repository_contract test_postgres_budget_repository_contract.cpp)
+target_link_libraries(test_postgres_budget_repository_contract
+    agent_rpc_common
+    ${AGENT_RPC_PQXX_TARGET}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_postgres_budget_repository_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+target_compile_definitions(test_postgres_budget_repository_contract PRIVATE
+    NEXUSAI_BUDGET_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V012__postgres_budget.sql"
+    NEXUSAI_BUDGET_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/postgres_budget_repository.h"
+)
+add_test(NAME PostgresBudgetRepositoryContractTest COMMAND test_postgres_budget_repository_contract)
 add_executable(test_query_domain_repository_contract test_query_domain_repository_contract.cpp)
 target_link_libraries(test_query_domain_repository_contract
     agent_rpc_common
