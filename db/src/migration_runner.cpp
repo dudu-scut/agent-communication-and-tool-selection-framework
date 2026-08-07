@@ -22,24 +22,6 @@ namespace {
 
 constexpr char kMigrationPattern[] = R"(^V([0-9]{3,})__[A-Za-z0-9_]+\.sql$)";
 
-class AdvisoryLockRelease final {
-public:
-    explicit AdvisoryLockRelease(common::PostgresStore& store) : store_(store) {}
-
-    ~AdvisoryLockRelease() noexcept {
-        try {
-            store_.executeTransaction([](pqxx::work& transaction) {
-                transaction.exec("SELECT pg_advisory_unlock(739214640)");
-            });
-        } catch (const std::exception&) {
-            // PostgreSQL releases session locks when a broken connection ends.
-        }
-    }
-
-private:
-    common::PostgresStore& store_;
-};
-
 }  // namespace
 
 MigrationRunner::MigrationRunner(common::PostgresStore& store) : store_(store) {}
@@ -47,14 +29,8 @@ MigrationRunner::MigrationRunner(common::PostgresStore& store) : store_(store) {
 void MigrationRunner::migrate(const std::filesystem::path& directory) {
     const auto migrations = discover(directory);
 
-    // pg_advisory_lock is session-scoped. PostgresStore serializes access to
-    // that same libpqxx connection while the complete migration set runs.
     store_.executeTransaction([](pqxx::work& transaction) {
-        transaction.exec("SELECT pg_advisory_lock(739214640)");
-    });
-    AdvisoryLockRelease release_lock{store_};
-
-    store_.executeTransaction([](pqxx::work& transaction) {
+        transaction.exec("SELECT pg_advisory_xact_lock(739214640)");
         transaction.exec(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
             "version VARCHAR(64) PRIMARY KEY, "
@@ -68,6 +44,7 @@ void MigrationRunner::migrate(const std::filesystem::path& directory) {
         const std::string sql = readFile(migration.path);
         bool applied = false;
         store_.executeTransaction([&](pqxx::work& transaction) {
+            transaction.exec("SELECT pg_advisory_xact_lock(739214640)");
 #if PQXX_VERSION_MAJOR >= 8
             const pqxx::result result = transaction.exec(
                 "SELECT checksum FROM schema_migrations WHERE version = $1",
