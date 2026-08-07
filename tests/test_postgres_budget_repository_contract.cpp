@@ -135,6 +135,14 @@ protected:
         return "budget-contract-owner-" + std::to_string(++sequence);
     }
 
+    static std::string requestId(const std::string& label) {
+        static const std::string run_suffix = [] {
+            const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+            return std::to_string(ticks);
+        }();
+        return "budget-contract-request-" + label + "-" + run_suffix;
+    }
+
     static agent_rpc::common::BudgetLimits generousLimits() {
         return agent_rpc::common::BudgetLimits{
             .global = 1000,
@@ -152,12 +160,13 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, ReserveSucceedsAndIsIdempotent) 
     }
 
     const std::string owner_id = owner();
-    const auto first = context->repository->reserve(owner_id, "session-a", "request-a", 25,
+    const std::string request_id = requestId("success");
+    const auto first = context->repository->reserve(owner_id, "session-a", request_id, 25,
                                                      generousLimits());
     ASSERT_TRUE(first.accepted);
     EXPECT_FALSE(first.idempotent);
 
-    const auto second = context->repository->reserve(owner_id, "session-a", "request-a", 25,
+    const auto second = context->repository->reserve(owner_id, "session-a", request_id, 25,
                                                       generousLimits());
     EXPECT_TRUE(second.accepted);
     EXPECT_TRUE(second.idempotent);
@@ -178,11 +187,12 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, SameRequestIdAcrossOwnersIsRejec
     const std::string first_owner = owner();
     const std::string second_owner = owner();
     const auto limits = generousLimits();
-    ASSERT_TRUE(context->repository->reserve(first_owner, "session-cross-owner", "request-shared", 25,
+    const std::string request_id = requestId("shared");
+    ASSERT_TRUE(context->repository->reserve(first_owner, "session-cross-owner", request_id, 25,
                                               limits)
                     .accepted);
 
-    const auto rejected = context->repository->reserve(second_owner, "session-cross-owner", "request-shared",
+    const auto rejected = context->repository->reserve(second_owner, "session-cross-owner", request_id,
                                                        25, limits);
     EXPECT_FALSE(rejected.accepted);
     EXPECT_FALSE(rejected.idempotent);
@@ -203,10 +213,12 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, RejectionDoesNotPartiallyConsume
     const std::string owner_id = owner();
     auto limits = generousLimits();
     limits.user_daily = 5;
-    ASSERT_TRUE(context->repository->reserve(owner_id, "session-b", "request-b1", 4, limits).accepted);
+    const std::string first_request_id = requestId("rejection-first");
+    const std::string second_request_id = requestId("rejection-second");
+    ASSERT_TRUE(context->repository->reserve(owner_id, "session-b", first_request_id, 4, limits).accepted);
     const auto before = context->repository->usage(owner_id, "session-b");
 
-    const auto rejected = context->repository->reserve(owner_id, "session-b", "request-b2", 2, limits);
+    const auto rejected = context->repository->reserve(owner_id, "session-b", second_request_id, 2, limits);
     EXPECT_FALSE(rejected.accepted);
     EXPECT_FALSE(rejected.idempotent);
     EXPECT_NE(rejected.reason.find("daily"), std::string::npos);
@@ -229,10 +241,12 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, OwnerPolicyOverridesRequestLimit
     policy.user_daily = 3;
     ASSERT_TRUE(context->repository->setOwnerPolicy(owner_id, policy));
 
-    const auto accepted = context->repository->reserve(owner_id, "session-c", "request-c1", 3,
+    const std::string first_request_id = requestId("policy-first");
+    const std::string second_request_id = requestId("policy-second");
+    const auto accepted = context->repository->reserve(owner_id, "session-c", first_request_id, 3,
                                                         generousLimits());
     EXPECT_TRUE(accepted.accepted);
-    const auto rejected = context->repository->reserve(owner_id, "session-c", "request-c2", 1,
+    const auto rejected = context->repository->reserve(owner_id, "session-c", second_request_id, 1,
                                                         generousLimits());
     EXPECT_FALSE(rejected.accepted);
     EXPECT_NE(rejected.reason.find("daily"), std::string::npos);
@@ -245,13 +259,16 @@ TEST_F(PostgresBudgetRepositoryIntegrationTest, RejectsEmptyNulAndNegativeInputs
     }
 
     const auto limits = generousLimits();
-    EXPECT_THROW(context->repository->reserve("", "session", "request", 1, limits), std::invalid_argument);
-    EXPECT_THROW(context->repository->reserve("owner", "", "request", 1, limits), std::invalid_argument);
+    EXPECT_THROW(context->repository->reserve("", "session", requestId("invalid-owner"), 1, limits),
+                 std::invalid_argument);
+    EXPECT_THROW(context->repository->reserve("owner", "", requestId("invalid-context"), 1, limits),
+                 std::invalid_argument);
     EXPECT_THROW(context->repository->reserve("owner", "session", "", 1, limits), std::invalid_argument);
-    EXPECT_THROW(context->repository->reserve(std::string{"owner\0bad", 9}, "session", "request", 1, limits),
+    EXPECT_THROW(context->repository->reserve(std::string{"owner\0bad", 9}, "session",
+                                              requestId("invalid-nul"), 1, limits),
                  std::invalid_argument);
-    EXPECT_THROW(context->repository->reserve("owner", "session", "request", -1, limits),
-                 std::invalid_argument);
+    EXPECT_THROW(context->repository->reserve("owner", "session", requestId("invalid-negative"), -1,
+                 limits), std::invalid_argument);
 }
 
 }  // namespace
