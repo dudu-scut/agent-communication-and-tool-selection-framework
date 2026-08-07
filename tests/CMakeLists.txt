@@ -452,6 +452,17 @@ target_include_directories(test_postgres_config PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
 )
 add_test(NAME PostgresConfigTest COMMAND test_postgres_config)
+add_executable(test_postgres_pool_contract test_postgres_pool_contract.cpp)
+target_link_libraries(test_postgres_pool_contract
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_postgres_pool_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME PostgresPoolContractTest COMMAND test_postgres_pool_contract)
 
 add_executable(test_postgres_migration_api test_postgres_migration_api.cpp)
 target_link_libraries(test_postgres_migration_api

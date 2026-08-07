@@ -34,6 +34,25 @@ int ParsePort(const std::string& value) {
     return port;
 }
 
+int ParsePoolSize(const std::string& value) {
+    if (value.empty()) {
+        throw std::invalid_argument("NEXUSAI_POSTGRES_POOL_SIZE must be between 1 and 10");
+    }
+    for (const unsigned char character : value) {
+        if (character < '0' || character > '9') {
+            throw std::invalid_argument("NEXUSAI_POSTGRES_POOL_SIZE must be a decimal number");
+        }
+    }
+
+    int pool_size = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), pool_size);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || pool_size < 1 ||
+        pool_size > PostgresConfig::kMaxPoolSize) {
+        throw std::invalid_argument("NEXUSAI_POSTGRES_POOL_SIZE must be between 1 and 10");
+    }
+    return pool_size;
+}
+
 void RejectNul(const std::string& value, const std::string& name) {
     if (value.find('\0') != std::string::npos) {
         throw std::invalid_argument(name + " must not contain NUL");
@@ -76,10 +95,73 @@ PostgresConfig PostgresConfig::fromEnvironment(const EnvironmentLookup& lookup) 
 
     const std::string port = lookup("NEXUSAI_POSTGRES_PORT");
     config.port = port.empty() ? 5432 : ParsePort(port);
+
+    const std::string pool_size = lookup("NEXUSAI_POSTGRES_POOL_SIZE");
+    config.pool_size = pool_size.empty() ? PostgresConfig::kDefaultPoolSize : ParsePoolSize(pool_size);
     return config;
 }
 
-PostgresStore::PostgresStore(PostgresConfig config) : config_(std::move(config)) {}
+namespace detail {
+
+PostgresPoolLeaseCoordinator::PostgresPoolLeaseCoordinator(const int pool_size) {
+    if (pool_size < 1 || pool_size > PostgresConfig::kMaxPoolSize) {
+        throw std::invalid_argument("NEXUSAI_POSTGRES_POOL_SIZE must be between 1 and 10");
+    }
+    leased_.assign(static_cast<std::size_t>(pool_size), false);
+}
+
+std::size_t PostgresPoolLeaseCoordinator::acquire() {
+    std::unique_lock lock(mutex_);
+    condition_.wait(lock, [this] {
+        for (const bool leased : leased_) {
+            if (!leased) {
+                return true;
+            }
+        }
+        return false;
+    });
+
+    for (std::size_t index = 0; index < leased_.size(); ++index) {
+        if (!leased_[index]) {
+            leased_[index] = true;
+            return index;
+        }
+    }
+
+    throw std::logic_error("PostgresPoolLeaseCoordinator lost an available lease");
+}
+
+void PostgresPoolLeaseCoordinator::release(const std::size_t index) noexcept {
+    {
+        std::lock_guard lock(mutex_);
+        if (index < leased_.size()) {
+            leased_[index] = false;
+        }
+    }
+    condition_.notify_one();
+}
+
+std::size_t PostgresPoolLeaseCoordinator::size() const noexcept {
+    return leased_.size();
+}
+
+}  // namespace detail
+
+PostgresStore::PostgresStore(PostgresConfig config)
+    : config_(std::move(config)), lease_coordinator_(config_.pool_size) {
+    try {
+        connections_.reserve(lease_coordinator_.size());
+        for (std::size_t index = 0; index < lease_coordinator_.size(); ++index) {
+            connections_.push_back(createConnection());
+        }
+    } catch (const PostgresUnavailable&) {
+        connections_.clear();
+        throw;
+    } catch (const std::exception& error) {
+        connections_.clear();
+        throw PostgresUnavailable(std::string{"PostgreSQL is unavailable: "} + error.what());
+    }
+}
 
 PostgresStore::~PostgresStore() = default;
 
@@ -88,15 +170,22 @@ void PostgresStore::executeTransaction(const std::function<void(pqxx::work&)>& o
         throw std::invalid_argument("PostgresStore transaction callback must not be empty");
     }
 
-    std::scoped_lock lock(mutex_);
+    const std::size_t index = lease_coordinator_.acquire();
     try {
-        ensureOpen();
-        pqxx::work transaction{*connection_};
-        operation(transaction);
-        transaction.commit();
+        pqxx::connection& connection = ensureConnection(index);
+        {
+            pqxx::work transaction{connection};
+            operation(transaction);
+            transaction.commit();
+        }
+        lease_coordinator_.release(index);
     } catch (const pqxx::broken_connection& error) {
-        connection_.reset();
+        connections_[index].reset();
+        lease_coordinator_.release(index);
         throw PostgresUnavailable(std::string{"PostgreSQL is unavailable: "} + error.what());
+    } catch (...) {
+        lease_coordinator_.release(index);
+        throw;
     }
 }
 
@@ -109,23 +198,30 @@ bool PostgresStore::healthCheck() noexcept {
     }
 }
 
-void PostgresStore::ensureOpen() {
-    if (connection_ && connection_->is_open()) {
-        return;
-    }
-
+std::unique_ptr<pqxx::connection> PostgresStore::createConnection() const {
     try {
-        connection_ = std::make_unique<pqxx::connection>(connectionString());
-        if (!connection_->is_open()) {
-            connection_.reset();
+        auto connection = std::make_unique<pqxx::connection>(connectionString());
+        if (!connection->is_open()) {
             throw PostgresUnavailable("PostgreSQL is unavailable: connection did not open");
         }
+        return connection;
     } catch (const PostgresUnavailable&) {
         throw;
     } catch (const std::exception& error) {
-        connection_.reset();
         throw PostgresUnavailable(std::string{"PostgreSQL is unavailable: "} + error.what());
     }
+}
+
+pqxx::connection& PostgresStore::ensureConnection(const std::size_t index) {
+    if (index >= connections_.size()) {
+        throw std::logic_error("PostgresStore connection lease is out of range");
+    }
+
+    auto& connection = connections_[index];
+    if (!connection || !connection->is_open()) {
+        connection = createConnection();
+    }
+    return *connection;
 }
 
 std::string PostgresStore::connectionString() const {

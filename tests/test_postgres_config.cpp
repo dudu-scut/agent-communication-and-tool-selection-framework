@@ -58,6 +58,26 @@ TEST(PostgresConfigTest, DefaultsPortOnlyWhenItIsAbsent) {
     EXPECT_EQ(LoadConfig(values).port, 5432);
 }
 
+TEST(PostgresConfigTest, DefaultsPoolSizeToTen) {
+    auto values = CompleteConfig();
+    EXPECT_EQ(LoadConfig(values).pool_size, 10);
+}
+
+TEST(PostgresConfigTest, AcceptsPoolSizeOverrideWithinRange) {
+    for (const std::string pool_size : {"1", "10"}) {
+        auto values = CompleteConfig();
+        values["NEXUSAI_POSTGRES_POOL_SIZE"] = pool_size;
+        EXPECT_EQ(LoadConfig(values).pool_size, std::stoi(pool_size));
+    }
+}
+
+TEST(PostgresConfigTest, RejectsInvalidPoolSizes) {
+    for (const std::string pool_size : {"0", "11", "-1", "+1", " 2", "2 ", "2x"}) {
+        auto values = CompleteConfig();
+        values["NEXUSAI_POSTGRES_POOL_SIZE"] = pool_size;
+        EXPECT_THROW((void)LoadConfig(values), std::invalid_argument) << pool_size;
+    }
+}
 TEST(PostgresConfigTest, RejectsNonDecimalOrOutOfRangePorts) {
     for (const std::string port : {"0", "65536", "-1", "+5432", " 5432", "5432 ", "54x2"}) {
         auto values = CompleteConfig();
