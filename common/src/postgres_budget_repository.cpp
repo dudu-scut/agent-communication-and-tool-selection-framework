@@ -191,7 +191,7 @@ BudgetReservationResult PostgresBudgetRepository::reserve(const std::string& own
             "ON CONFLICT (request_id) DO NOTHING RETURNING request_id",
             request_id, owner_id, context_id, estimated_tokens);
         if (inserted.empty()) {
-            const existing_reservation = execParams(
+            const auto existing_reservation = execParams(
                 transaction,
                 "SELECT owner_id FROM budget_reservations WHERE request_id = $1 FOR UPDATE",
                 request_id);
