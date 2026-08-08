@@ -8,25 +8,95 @@
             NexusAI Shared Session
           </h1>
           <div class="share-meta">
-            <span>会话分享功能</span>
+            <span v-if="state === 'result'">{{ title }}</span>
+            <span v-if="state === 'result' && sharedAt">Shared at {{ sharedAt }}</span>
           </div>
         </div>
       </div>
 
-      <GlassCard variant="highlight" padding="lg">
+      <!-- Loading -->
+      <GlassCard v-if="state === 'loading'" variant="highlight" padding="lg">
+        <div class="state-block">
+          <div class="spinner" />
+          <p>Loading shared conversation…</p>
+        </div>
+      </GlassCard>
+
+      <!-- Error: real backend error semantics -->
+      <GlassCard v-else-if="state === 'error'" variant="highlight" padding="lg">
+        <div class="state-block error">
+          <h3>Unable to load shared conversation</h3>
+          <p class="error-message">{{ errorMessage }}</p>
+          <button class="retry-btn" @click="load">Try again</button>
+        </div>
+      </GlassCard>
+
+      <!-- Empty -->
+      <GlassCard v-else-if="state === 'empty'" variant="highlight" padding="lg">
         <EmptyState
-          icon="mdi:flask-outline"
-          title="会话分享功能开发中"
-          description="会话分享功能正在开发中，敬请期待"
+          icon="mdi:message-outline"
+          title="No messages"
+          description="This shared conversation contains no messages."
         />
       </GlassCard>
+
+      <!-- Result -->
+      <div v-else class="messages">
+        <GlassCard
+          v-for="msg in messages"
+          :key="msg.sequence_no.toString()"
+          :variant="msg.role === 'user' ? 'default' : 'highlight'"
+          padding="md"
+          class="message-card"
+        >
+          <div class="message-role">{{ msg.role === 'user' ? 'User' : 'Agent' }}</div>
+          <div class="message-content">{{ msg.content }}</div>
+        </GlassCard>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import GlassCard from '../components/layout/GlassCard.vue'
 import EmptyState from '../components/feedback/EmptyState.vue'
+import { readSharedConversation } from '../services/grpc-client'
+import type { SharedMessage } from '../types/proto'
+
+const route = useRoute()
+
+const state = ref<'loading' | 'error' | 'empty' | 'result'>('loading')
+const errorMessage = ref('')
+const title = ref('')
+const sharedAt = ref('')
+const messages = ref<SharedMessage[]>([])
+
+async function load() {
+  state.value = 'loading'
+  errorMessage.value = ''
+  // The :shareId route parameter IS the raw bearer token.
+  const token = String(route.params.shareId ?? '')
+  if (!token) {
+    state.value = 'error'
+    errorMessage.value = 'Share link not found'
+    return
+  }
+  try {
+    const resp = await readSharedConversation(token)
+    const list = resp.messages ?? []
+    title.value = resp.title || 'Shared conversation'
+    sharedAt.value = resp.shared_at || ''
+    messages.value = list
+    state.value = list.length > 0 ? 'result' : 'empty'
+  } catch (e) {
+    state.value = 'error'
+    errorMessage.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+onMounted(load)
 </script>
 
 <style scoped>
@@ -66,6 +136,58 @@ import EmptyState from '../components/feedback/EmptyState.vue'
   font-size: 13px;
   color: var(--text-tertiary);
   display: flex;
-  gap: 8px;
+  gap: 12px;
+}
+
+.state-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+  color: var(--text-secondary);
+}
+
+.state-block.error h3 { color: var(--color-error); margin: 0; }
+.error-message { color: var(--text-secondary); margin: 0; word-break: break-word; }
+
+.retry-btn {
+  padding: 8px 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.retry-btn:hover { background: var(--glass-bg-hover); }
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border-default);
+  border-top-color: var(--color-accent, #6c8cff);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.message-card .message-role {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.message-card .message-content {
+  font-size: 14px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

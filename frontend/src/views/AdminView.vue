@@ -159,9 +159,13 @@
                 <option value="ROUTE">Re-route</option>
               </select>
             </div>
-            <button class="btn-primary" @click="replayQuery" :disabled="!replayTraceId.trim()">
-              Run Replay
+            <button class="btn-primary" @click="replayQuery" :disabled="!replayTraceId.trim() || replayLoading">
+              {{ replayLoading ? 'Running…' : 'Run Replay' }}
             </button>
+          </div>
+          <div v-if="replayError" class="replay-result error">
+            <div class="replay-header">Replay Error</div>
+            <pre class="replay-json">{{ replayError }}</pre>
           </div>
           <div v-if="replayResult" class="replay-result">
             <div class="replay-header">Replay Result</div>
@@ -266,6 +270,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAgentsStore } from '../stores/agents'
+import { replayQuery as replayQueryRpc } from '../services/grpc-client'
 import type { AgentDisplayInfo, ScheduledTask, CanaryConfig } from '../types/proto'
 
 const agentsStore = useAgentsStore()
@@ -350,12 +355,24 @@ function formatTokens(n: number): string {
 const replayTraceId = ref('')
 const replayMode = ref<'EXACT' | 'ROUTE'>('EXACT')
 const replayResult = ref('')
+const replayLoading = ref(false)
+const replayError = ref('')
 
 async function replayQuery() {
-  replayResult.value = JSON.stringify({
-    status: 'unavailable',
-    message: 'Replay功能开发中，需要后端ReplayQuery RPC实现',
-  }, null, 2)
+  replayLoading.value = true
+  replayError.value = ''
+  replayResult.value = ''
+  try {
+    const resp = await replayQueryRpc(
+      replayTraceId.value.trim(),
+      replayMode.value === 'EXACT' ? 'exact' : 'route',
+    )
+    replayResult.value = JSON.stringify(resp, null, 2)
+  } catch (e) {
+    replayError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    replayLoading.value = false
+  }
 }
 
 // Cron

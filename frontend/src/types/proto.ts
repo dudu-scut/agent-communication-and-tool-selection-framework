@@ -220,26 +220,118 @@ export interface LoginResponse {
   expires_at: number
 }
 
-// === Sharing & Templates ===
+// === Sharing & Templates (sharing.proto, PR-D) ===
 
-export interface ShareInfo {
-  share_id: string
+export interface ShareSessionRequest {
   context_id: string
-  owner_user_id: string
-  mode: 'READONLY' | 'COMMENT'
-  created_at: number
-  expires_at?: number
+  mode: string            // only "view" is supported
+  expiry_days: number     // 0 = never expires
 }
 
-export interface TemplateInfo {
-  id: string
+export interface ShareSessionResponse {
+  status: Status
+  share_id: string
+  share_url: string       // relative path "/share/<token>"
+  token: string           // raw bearer token, returned exactly once
+  expires_at: string      // ISO-8601, empty = never expires
+}
+
+export interface SharedMessage {
+  role: string
+  content: string
+  sequence_no: number | string
+  created_at: string
+}
+
+export interface ReadSharedConversationRequest {
+  token: string
+}
+
+export interface ReadSharedConversationResponse {
+  status: Status
+  title: string
+  messages: SharedMessage[]
+  shared_at: string
+}
+
+export interface ShareEntry {
+  share_id: string
+  conversation_id: string
+  permission: string
+  created_at: string
+  expires_at: string      // empty = never expires
+  revoked: boolean
+  revoked_at: string
+}
+
+export interface ListSharesResponse {
+  status: Status
+  shares: ShareEntry[]
+}
+
+export interface RevokeShareResponse {
+  status: Status
+}
+
+export interface SaveTemplateRequest {
   name: string
   description: string
-  category: string
-  usage_count: number
-  rating: number
-  author: string
-  dag_structure: ExecutionPlan
+  dag_json: string        // validated JSON definition
+}
+
+export interface SaveTemplateResponse {
+  status: Status
+  template_id: string
+}
+
+export interface TemplateEntry {
+  template_id: string
+  name: string
+  description: string
+  definition: string      // JSON definition (stored as JSONB)
+  created_at: string
+  version: number
+}
+
+export interface ListTemplatesResponse {
+  status: Status
+  templates: TemplateEntry[]
+}
+
+export interface GetTemplateResponse {
+  status: Status
+  template: TemplateEntry
+}
+
+export interface UseTemplateResponse {
+  status: Status
+  context_id: string
+}
+
+// === Replay & Export (orchestration.proto, PR-D) ===
+
+export interface ReplayQueryRequest {
+  trace_id: string
+  mode: 'exact' | 'route'
+}
+
+export interface ReplayQueryResponse {
+  status: Status
+  original: string
+  replayed: string
+  new_trace_id: string    // empty in route mode
+  new_request_id: string  // empty in route mode
+}
+
+export interface ExportConversationRequest {
+  context_id: string
+  format: 'markdown' | 'html'
+}
+
+export interface ExportConversationResponse {
+  status: Status
+  file_data: string       // base64-encoded bytes
+  mime_type: string
 }
 
 // === Cron / Scheduled Tasks ===
