@@ -184,15 +184,14 @@ void ExportService::configure(common::QueryDomainRepository* domain_repository) 
     domain_repository_ = domain_repository;
 }
 
-grpc::Status ExportService::handleExportRequest(
+namespace {
+
+grpc::Status handleExportRequestImpl(
+    common::QueryDomainRepository* repository,
     const std::string& owner_id,
     const agent_communication::ExportConversationRequest* request,
     agent_communication::ExportConversationResponse* response) {
 
-    if (!request || !response) {
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Invalid request or response");
-    }
     if (owner_id.empty()) {
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                             "Valid authentication token required");
@@ -209,12 +208,6 @@ grpc::Status ExportService::handleExportRequest(
     if (format != "markdown" && format != "html") {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "format must be 'markdown' or 'html'");
-    }
-
-    common::QueryDomainRepository* repository = instance().domain_repository_;
-    if (!repository) {
-        return grpc::Status(grpc::StatusCode::INTERNAL,
-                            "Export service is not configured");
     }
 
     // Owner-scoped lookup: a missing or foreign conversation is NOT_FOUND.
@@ -247,6 +240,38 @@ grpc::Status ExportService::handleExportRequest(
              " format=" + format + " messages=" + std::to_string(messages.size()) +
              " size=" + std::to_string(file_content.size()));
     return grpc::Status::OK;
+}
+
+} // namespace
+
+grpc::Status ExportService::handleExportRequest(
+    const std::string& owner_id,
+    const agent_communication::ExportConversationRequest* request,
+    agent_communication::ExportConversationResponse* response) {
+
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "Invalid request or response");
+    }
+    common::QueryDomainRepository* repository = instance().domain_repository_;
+    if (!repository) {
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                            "Export service is not configured");
+    }
+    // Top-level guard: PostgreSQL faults must surface as UNAVAILABLE (the
+    // Query pipeline convention), never escape the gRPC handler.
+    try {
+        return handleExportRequestImpl(repository, owner_id, request, response);
+    } catch (const std::exception& error) {
+        const bool persistence_fault = common::isPostgresError(error);
+        LOG_ERROR(std::string("ExportConversation failed: ") + error.what());
+        return grpc::Status(
+            persistence_fault ? grpc::StatusCode::UNAVAILABLE
+                              : grpc::StatusCode::INTERNAL,
+            std::string(persistence_fault ? "PostgreSQL persistence error: "
+                                          : "Unexpected export error: ") +
+                error.what());
+    }
 }
 
 std::string ExportService::toHTML(const std::string& markdown) {

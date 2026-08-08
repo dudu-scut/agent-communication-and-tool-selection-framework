@@ -19,17 +19,22 @@ namespace agent_rpc { namespace server {
 
 namespace {
 
-// High-entropy identifier/token generation. The operating-system entropy
-// source seeds one 64-bit generator per thread; every emitted identifier
-// carries at least 96 random bits (shares/tokens use much more).
+// Cryptographically sensitive random bytes for bearer tokens and
+// identifiers. Every byte is drawn DIRECTLY from the operating-system
+// entropy source (std::random_device — getrandom()/BCryptGenRandom
+// backed); no PRNG state is maintained, so observing outputs can never
+// help predict future ones. Identifier collisions (ids, not tokens) are
+// absorbed by the primary-key constraints.
 std::string randomHex(std::size_t bytes) {
-    static thread_local std::mt19937_64 generator{std::random_device{}()};
-    std::uniform_int_distribution<std::uint64_t> distribution;
+    std::random_device entropy;
     std::ostringstream out;
     out << std::hex << std::setfill('0');
     std::size_t emitted = 0;
     while (emitted < bytes) {
-        const std::uint64_t word = distribution(generator);
+        // Combine two 32-bit device outputs into one 64-bit word.
+        const std::uint64_t low = entropy();
+        const std::uint64_t high = entropy();
+        const std::uint64_t word = (high << 32) | (low & 0xFFFFFFFFull);
         const std::size_t take = std::min<std::size_t>(8, bytes - emitted);
         for (std::size_t i = 0; i < take; ++i) {
             out << std::setw(2)
@@ -94,18 +99,36 @@ grpc::Status SharingServiceImpl::ObserveSession(
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "trace_id is required");
     }
     // Owner-scoped snapshot of the durable trace state from PostgreSQL.
-    const auto trace = domain_repository_->getTraceById(owner_id, request->trace_id());
-    if (!trace.has_value()) {
-        return grpc::Status(grpc::StatusCode::NOT_FOUND,
-                            "Trace not found: " + request->trace_id());
+    // NOTE: this is a one-shot snapshot stream (single event), not a live
+    // feed; a real-time feed would require durable change notifications.
+    try {
+        const auto trace = domain_repository_->getTraceById(owner_id, request->trace_id());
+        if (!trace.has_value()) {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                                "Trace not found: " + request->trace_id());
+        }
+        // The real conversation id comes from the associated query log —
+        // the trace row itself only carries the query_log reference.
+        std::string context_id;
+        const auto query_log =
+            domain_repository_->getQueryLogById(owner_id, trace->query_log_id);
+        if (query_log.has_value()) {
+            context_id = query_log->conversation_id;
+        }
+        agent_communication::AIStreamEvent event;
+        event.set_event_type("snapshot");
+        event.set_content(trace->status);
+        event.set_task_state(trace->status);
+        event.set_context_id(context_id);
+        writer->Write(event);
+        return grpc::Status::OK;
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string("ObserveSession failed: ") + error.what());
+        return grpc::Status(
+            common::isPostgresError(error) ? grpc::StatusCode::UNAVAILABLE
+                                           : grpc::StatusCode::INTERNAL,
+            "Failed to observe session");
     }
-    agent_communication::AIStreamEvent event;
-    event.set_event_type("snapshot");
-    event.set_content(trace->status);
-    event.set_task_state(trace->status);
-    event.set_context_id(trace->query_log_id);
-    writer->Write(event);
-    return grpc::Status::OK;
 }
 
 grpc::Status SharingServiceImpl::ShareSession(
@@ -138,7 +161,8 @@ grpc::Status SharingServiceImpl::ShareSession(
                             "Conversation not found: " + request->context_id());
     }
 
-    const std::string raw_token = randomHex(48);      // 384 bits of entropy
+    // 48 bytes drawn directly from the OS entropy source (bearer token).
+    const std::string raw_token = randomHex(48);
     const std::string token_hash = sha256Hex(raw_token);
     const std::string share_id = "share-" + randomHex(12);
     const std::string expires_at =
@@ -233,17 +257,25 @@ grpc::Status SharingServiceImpl::ReadSharedConversation(
                             "Share link has expired");
     }
 
-    const auto conversation =
-        domain_repository_->getConversationById(row.owner_id, row.conversation_id);
-    response->set_title(conversation ? conversation->title : "");
-    response->set_shared_at(row.created_at);
-    for (const auto& message :
-         domain_repository_->listMessages(row.owner_id, row.conversation_id)) {
-        auto* shared_message = response->add_messages();
-        shared_message->set_role(message.role);
-        shared_message->set_content(message.content);
-        shared_message->set_sequence_no(message.sequence_no);
-        shared_message->set_created_at(message.created_at);
+    try {
+        const auto conversation =
+            domain_repository_->getConversationById(row.owner_id, row.conversation_id);
+        response->set_title(conversation ? conversation->title : "");
+        response->set_shared_at(row.created_at);
+        for (const auto& message :
+             domain_repository_->listMessages(row.owner_id, row.conversation_id)) {
+            auto* shared_message = response->add_messages();
+            shared_message->set_role(message.role);
+            shared_message->set_content(message.content);
+            shared_message->set_sequence_no(message.sequence_no);
+            shared_message->set_created_at(message.created_at);
+        }
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string("ReadSharedConversation read failed: ") + error.what());
+        return grpc::Status(
+            common::isPostgresError(error) ? grpc::StatusCode::UNAVAILABLE
+                                           : grpc::StatusCode::INTERNAL,
+            "Failed to read shared conversation");
     }
     response->mutable_status()->set_code(0);
     response->mutable_status()->set_message("OK");
@@ -347,6 +379,14 @@ grpc::Status SharingServiceImpl::SaveTemplate(
     if (request->name().empty()) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "Template name is required");
+    }
+    // Size guard BEFORE parsing: nlohmann::json parses recursively, so an
+    // oversized/deeply nested payload could exhaust the stack. Definitions
+    // above 64 KiB are rejected outright.
+    static constexpr std::size_t kMaxDefinitionBytes = 65536;
+    if (request->dag_json().size() > kMaxDefinitionBytes) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "Template definition exceeds 64 KiB");
     }
     // Validate the definition BEFORE persisting: it must be a JSON object
     // carrying a non-empty initial_message string.
@@ -531,15 +571,23 @@ grpc::Status SharingServiceImpl::UseTemplate(
     // Create a REAL conversation for the current owner through the same
     // repository path the durable Query pipeline uses.
     const std::string context_id = "tpl-ctx-" + randomHex(12);
-    if (!domain_repository_->ensureConversation(owner_id, context_id, name)) {
-        return grpc::Status(grpc::StatusCode::INTERNAL,
-                            "Failed to create conversation from template");
-    }
-    if (!domain_repository_
-             ->appendMessageAutoSequence(owner_id, context_id, "user", initial_message)
-             .has_value()) {
-        return grpc::Status(grpc::StatusCode::INTERNAL,
-                            "Failed to write initial template message");
+    try {
+        if (!domain_repository_->ensureConversation(owner_id, context_id, name)) {
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                                "Failed to create conversation from template");
+        }
+        if (!domain_repository_
+                 ->appendMessageAutoSequence(owner_id, context_id, "user", initial_message)
+                 .has_value()) {
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                                "Failed to write initial template message");
+        }
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string("UseTemplate persist failed: ") + error.what());
+        return grpc::Status(
+            common::isPostgresError(error) ? grpc::StatusCode::UNAVAILABLE
+                                           : grpc::StatusCode::INTERNAL,
+            "Failed to create conversation from template");
     }
 
     response->mutable_status()->set_code(0);

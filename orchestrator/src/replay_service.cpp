@@ -19,14 +19,17 @@ namespace {
 
 // Generates a high-entropy identifier for the replayed request. Replay must
 // never reuse the original request id: the durable pipeline treats the
-// request id as the idempotency key of the original run.
+// request id as the idempotency key of the original run. Every word is
+// drawn directly from the OS entropy source (no PRNG state).
 std::string generateReplayRequestId() {
-    static thread_local std::mt19937_64 generator{std::random_device{}()};
-    std::uniform_int_distribution<std::uint64_t> distribution;
+    std::random_device entropy;
     std::ostringstream id;
-    id << "replay-" << std::hex;
-    for (int i = 0; i < 2; ++i) {
-        id << std::setw(16) << std::setfill('0') << distribution(generator);
+    id << "replay-" << std::hex << std::setfill('0');
+    for (int i = 0; i < 4; ++i) {
+        const std::uint64_t low = entropy();
+        const std::uint64_t high = entropy();
+        const std::uint64_t word = (high << 32) | (low & 0xFFFFFFFFull);
+        id << std::setw(16) << word;
     }
     return id.str();
 }
@@ -59,15 +62,16 @@ void ReplayService::configure(common::QueryDomainRepository* domain_repository,
     executor_ = std::move(executor);
 }
 
-grpc::Status ReplayService::handleReplayRequest(
+namespace {
+
+grpc::Status handleReplayRequestImpl(
+    common::QueryDomainRepository* repository,
+    const ReplayService::RouteProvider& route_provider,
+    const ReplayService::PipelineExecutor& executor,
     const std::string& owner_id,
     const agent_communication::ReplayQueryRequest* request,
     agent_communication::ReplayQueryResponse* response) {
 
-    if (!request || !response) {
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Invalid request or response");
-    }
     if (owner_id.empty()) {
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                             "Valid authentication token required");
@@ -81,21 +85,6 @@ grpc::Status ReplayService::handleReplayRequest(
     if (mode != "exact" && mode != "route") {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "mode must be 'exact' or 'route'");
-    }
-
-    auto& service = instance();
-    common::QueryDomainRepository* repository;
-    ReplayService::RouteProvider route_provider;
-    ReplayService::PipelineExecutor executor;
-    {
-        std::lock_guard<std::mutex> lock(service.mutex_);
-        repository = service.domain_repository_;
-        route_provider = service.route_provider_;
-        executor = service.executor_;
-    }
-    if (!repository) {
-        return grpc::Status(grpc::StatusCode::INTERNAL,
-                            "Replay service is not configured");
     }
 
     const std::string& trace_id = request->trace_id();
@@ -181,6 +170,49 @@ grpc::Status ReplayService::handleReplayRequest(
 
     LOG_INFO("ReplayQuery exact completed: " + trace_id + " -> " + new_trace_id);
     return grpc::Status::OK;
+}
+
+} // namespace
+
+grpc::Status ReplayService::handleReplayRequest(
+    const std::string& owner_id,
+    const agent_communication::ReplayQueryRequest* request,
+    agent_communication::ReplayQueryResponse* response) {
+
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "Invalid request or response");
+    }
+    // Snapshot the injected dependencies under the service lock.
+    auto& service = instance();
+    common::QueryDomainRepository* repository;
+    RouteProvider route_provider;
+    PipelineExecutor executor;
+    {
+        std::lock_guard<std::mutex> lock(service.mutex_);
+        repository = service.domain_repository_;
+        route_provider = service.route_provider_;
+        executor = service.executor_;
+    }
+    if (!repository) {
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                            "Replay service is not configured");
+    }
+    // Top-level guard: PostgreSQL faults must surface as UNAVAILABLE (the
+    // Query pipeline convention), never escape the gRPC handler.
+    try {
+        return handleReplayRequestImpl(repository, route_provider, executor,
+                                       owner_id, request, response);
+    } catch (const std::exception& error) {
+        const bool persistence_fault = common::isPostgresError(error);
+        LOG_ERROR(std::string("ReplayQuery failed: ") + error.what());
+        return grpc::Status(
+            persistence_fault ? grpc::StatusCode::UNAVAILABLE
+                              : grpc::StatusCode::INTERNAL,
+            std::string(persistence_fault ? "PostgreSQL persistence error: "
+                                          : "Unexpected replay error: ") +
+                error.what());
+    }
 }
 
 } // namespace orchestrator

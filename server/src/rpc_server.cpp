@@ -219,7 +219,9 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     orchestrator::ReplayService::instance().configure(
         query_domain_repository_.get(),
         [pipeline]() -> std::string {
-            return (pipeline && pipeline->getAgentRouter() != nullptr)
+            // Same source of truth as the Query pipeline's route label —
+            // a non-null router alone does not mean orchestration is on.
+            return (pipeline && pipeline->isOrchestratorEnabled())
                        ? "multi-agent"
                        : "single-agent-a2a";
         },

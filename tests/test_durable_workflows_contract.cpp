@@ -948,6 +948,55 @@ TEST_F(DurableWorkflowsE2ETest, TemplateWithInvalidDefinitionIsRejected) {
     EXPECT_EQ(list_response.templates_size(), 0);
 }
 
+TEST_F(DurableWorkflowsE2ETest, OversizedTemplateDefinitionIsRejectedWithoutCrash) {
+    startWorkflow();
+    const auto user_a = registerUser("template-oversized");
+
+    // 1) Flat payload well above the 64 KiB cap.
+    {
+        agent_communication::SaveTemplateRequest request;
+        request.set_name("oversized-flat");
+        request.set_dag_json(std::string(70000, 'a'));
+        agent_communication::SaveTemplateResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, user_a);
+        const auto status = sharing_stub_->SaveTemplate(&context, request, &response);
+        EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+        EXPECT_NE(status.error_message().find("64 KiB"), std::string::npos);
+    }
+    // 2) Deeply nested payload above the cap: recursive descent parsing must
+    //    never even start — the size guard rejects it first.
+    {
+        std::string nested(70000, '[');
+        agent_communication::SaveTemplateRequest request;
+        request.set_name("oversized-nested");
+        request.set_dag_json(nested);
+        agent_communication::SaveTemplateResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, user_a);
+        const auto status = sharing_stub_->SaveTemplate(&context, request, &response);
+        EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+        EXPECT_NE(status.error_message().find("64 KiB"), std::string::npos);
+    }
+
+    // 3) The process survived both hostile payloads: a normal save still
+    //    succeeds and exactly one template exists for the owner.
+    agent_communication::SaveTemplateRequest ok_request;
+    ok_request.set_name("after-attack-" + uniqueSuffix());
+    ok_request.set_dag_json(R"({"initial_message": "hello"})");
+    agent_communication::SaveTemplateResponse ok_response;
+    grpc::ClientContext ok_context;
+    applyAuth(ok_context, user_a);
+    ASSERT_TRUE(sharing_stub_->SaveTemplate(&ok_context, ok_request, &ok_response).ok());
+
+    agent_communication::ListTemplatesRequest list_request;
+    agent_communication::ListTemplatesResponse list_response;
+    grpc::ClientContext list_context;
+    applyAuth(list_context, user_a);
+    ASSERT_TRUE(sharing_stub_->ListTemplates(&list_context, list_request, &list_response).ok());
+    EXPECT_EQ(list_response.templates_size(), 1);
+}
+
 TEST_F(DurableWorkflowsE2ETest, UseTemplateCreatesRealConversationForCurrentOwnerOnly) {
     startWorkflow();
     const auto user_a = registerUser("template-use-a");

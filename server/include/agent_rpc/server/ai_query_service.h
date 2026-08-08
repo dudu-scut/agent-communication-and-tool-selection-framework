@@ -145,6 +145,11 @@ public:
 
     orchestrator::AgentRouter* getAgentRouter() { return agent_router_.get(); }
 
+    // Same source of truth the Query pipeline uses to pick the route label
+    // ("multi-agent" vs "single-agent-a2a"). Prefer this over probing
+    // getAgentRouter(): the router can exist while orchestration is off.
+    bool isOrchestratorEnabled() const { return orchestrator_enabled_.load(); }
+
     common::MemoryService* getMemoryService() { return memory_service_.get(); }
 
 private:
