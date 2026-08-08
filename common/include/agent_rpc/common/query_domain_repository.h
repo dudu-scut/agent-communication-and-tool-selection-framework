@@ -3,11 +3,17 @@
 #include "agent_rpc/common/postgres_store.h"
 
 #include <cstdint>
+#include <exception>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace agent_rpc::common {
+
+// Classifies runtime errors raised by the persistence layer without exposing
+// libpqxx types to consumers (server targets do not include pqxx headers):
+// true when the exception originated from PostgreSQL I/O.
+bool isPostgresError(const std::exception& error);
 
 struct ConversationRecord {
     std::string id;

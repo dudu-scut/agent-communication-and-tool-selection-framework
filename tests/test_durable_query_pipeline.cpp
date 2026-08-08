@@ -113,6 +113,8 @@ TEST(DurablePipelineContractTest, QueryServicePersistsThroughDurableRepositories
     EXPECT_NE(service.find("compare_exchange_strong(expected, true)"), std::string::npos);
     // Estimate-only token accounting.
     EXPECT_NE(service.find("usage.estimated = true"), std::string::npos);
+    // Crash guard wraps both Query and QueryStream pipelines.
+    EXPECT_GE(countOccurrences(service, "abortDurableRun(run, error.what())"), 2u);
 }
 
 TEST(DurablePipelineContractTest, QueryServiceReadsExplicitTokenBudgetQuotas) {
@@ -293,6 +295,45 @@ TEST_F(DurableRepositoryTest, AppendMessageAutoSequenceSurvivesConcurrency) {
     EXPECT_EQ(unique_sequences.size(), sequences.size()) << "sequence numbers must never collide";
     EXPECT_EQ(*unique_sequences.begin(), 1);
     EXPECT_EQ(*unique_sequences.rbegin(), kThreads * kPerThread);
+}
+
+// Crash regression: concurrent first creation of the same conversation_id
+// must not throw (the aborted-transaction re-check bug); both callers see
+// success and exactly one owner-scoped row exists.
+TEST_F(DurableRepositoryTest, EnsureConversationSurvivesConcurrentFirstCreation) {
+    auto context = makeContext(4);
+    if (!context) {
+        GTEST_SKIP() << "PostgreSQL test DSN is unavailable";
+    }
+
+    const std::string owner_id = "dqp-owner-race-" + uniqueSuffix();
+    const std::string conversation_id = "dqp-conv-race-" + uniqueSuffix();
+
+    std::atomic<bool> gate{false};
+    std::atomic<int> successes{0};
+    std::vector<std::thread> workers;
+    workers.reserve(2);
+    for (int worker = 0; worker < 2; ++worker) {
+        workers.emplace_back([&] {
+            while (!gate.load()) {
+                std::this_thread::yield();
+            }
+            if (context->repository->ensureConversation(owner_id, conversation_id, "race")) {
+                successes.fetch_add(1);
+            }
+        });
+    }
+    gate.store(true);
+    for (auto& thread : workers) {
+        thread.join();
+    }
+
+    EXPECT_EQ(successes.load(), 2);
+    EXPECT_EQ(context->repository->listConversations(owner_id).size(), 1u);
+    const auto conversation =
+        context->repository->getConversationById(owner_id, conversation_id);
+    ASSERT_TRUE(conversation.has_value());
+    EXPECT_EQ(conversation->owner_id, owner_id);
 }
 
 // ============================================================================
@@ -698,6 +739,8 @@ TEST_F(DurableQueryPipelineTest, RetryWithSameRequestIdKeepsSingleReservationAnd
     EXPECT_EQ(countRows("budget_reservations", "request_id", request_id), 1);
     EXPECT_EQ(countRows("token_usage_ledger", "query_log_id", request_id), 1);
     EXPECT_EQ(countRows("query_logs", "id", request_id), 1);
+    // Retries must not duplicate conversation history (1 user + 1 assistant).
+    EXPECT_EQ(countRows("conversation_messages", "conversation_id", context_id), 2);
     // Ledger entries must be clearly estimates.
     const auto ledger = handles_->domain->listTokenUsageLedgerByOwner(user.id);
     bool found_estimated = false;
@@ -860,7 +903,10 @@ TEST_F(DurableQueryPipelineTest, QueryStreamEmitsExactlyOneCompleteEvent) {
     EXPECT_EQ(queryLogStatus(user.id, request_id), "completed");
 }
 
-// Requirement F.5: flushing Redis leaves PostgreSQL data readable.
+// Requirement F.5: losing every cache entry owned by this pipeline leaves
+// PostgreSQL data readable. Keys are wiped by test prefix (all ids carry the
+// "dqp-" marker) instead of FLUSHALL, so the shared Redis instance used by
+// other tests and services is left untouched.
 TEST_F(DurableQueryPipelineTest, RedisFlushLeavesPostgresDataReadable) {
     startPipeline("ok");
     const auto user = registerUser("flush");
@@ -875,7 +921,8 @@ TEST_F(DurableQueryPipelineTest, RedisFlushLeavesPostgresDataReadable) {
     }
     ASSERT_EQ(queryLogStatus(user.id, request_id), "completed");
 
-    // Wipe the entire cache layer.
+    // Seed one pipeline-owned cache entry so the wipe below has a verifiable
+    // target (trace span keys use random UUIDs and are left alone).
     const int redis_port =
         std::getenv("REDIS_PORT") ? std::atoi(std::getenv("REDIS_PORT")) : 6379;
     const std::string redis_host =
@@ -883,9 +930,37 @@ TEST_F(DurableQueryPipelineTest, RedisFlushLeavesPostgresDataReadable) {
     redisContext* redis = redisConnect(redis_host.c_str(), redis_port);
     ASSERT_NE(redis, nullptr) << "redis connection required for this test";
     if (redis->err == 0) {
-        auto* reply = static_cast<redisReply*>(redisCommand(redis, "FLUSHALL"));
-        ASSERT_NE(reply, nullptr);
-        freeReplyObject(reply);
+        auto* seed = static_cast<redisReply*>(
+            redisCommand(redis, "SET cache:%s 1", ("dqp-flush-" + uniqueSuffix()).c_str()));
+        ASSERT_NE(seed, nullptr);
+        freeReplyObject(seed);
+    }
+
+    // Wipe only the cache entries created by this pipeline (never FLUSHALL
+    // the shared instance).
+    if (redis->err == 0) {
+        std::string cursor = "0";
+        std::size_t deleted = 0;
+        do {
+            auto* reply = static_cast<redisReply*>(
+                redisCommand(redis, "SCAN %s MATCH *dqp-* COUNT 1000", cursor.c_str()));
+            ASSERT_NE(reply, nullptr);
+            if (reply->type == REDIS_REPLY_ARRAY && reply->elements == 2 &&
+                reply->element[0]->str != nullptr) {
+                cursor = reply->element[0]->str;
+                redisReply* keys = reply->element[1];
+                for (std::size_t index = 0; index < keys->elements; ++index) {
+                    auto* del = static_cast<redisReply*>(
+                        redisCommand(redis, "DEL %s", keys->element[index]->str));
+                    if (del != nullptr) {
+                        deleted += del->integer;
+                        freeReplyObject(del);
+                    }
+                }
+            }
+            freeReplyObject(reply);
+        } while (cursor != "0");
+        EXPECT_GT(deleted, 0u) << "expected pipeline-owned cache keys to wipe";
     }
     redisFree(redis);
 

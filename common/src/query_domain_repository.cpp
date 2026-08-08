@@ -11,7 +11,8 @@ namespace agent_rpc::common {
 namespace {
 
 template <typename... Arguments>
-pqxx::result execParams(pqxx::work& transaction, const std::string& query, Arguments&&... arguments) {
+pqxx::result execParams(pqxx::transaction_base& transaction, const std::string& query,
+                        Arguments&&... arguments) {
 #if PQXX_VERSION_MAJOR >= 8
     return transaction.exec(query, pqxx::params{std::forward<Arguments>(arguments)...});
 #else  // libpqxx 6.x/7.x
@@ -126,6 +127,11 @@ std::string generateRowId(const char* prefix) {
 
 QueryDomainRepository::QueryDomainRepository(PostgresStore& store) : store_(store) {}
 
+bool isPostgresError(const std::exception& error) {
+    // pqxx::failure is the common base of every libpqxx 7.x exception type.
+    return dynamic_cast<const pqxx::failure*>(&error) != nullptr;
+}
+
 bool QueryDomainRepository::createConversation(const ConversationRecord& conversation) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
@@ -189,18 +195,29 @@ bool QueryDomainRepository::ensureConversation(const std::string& owner_id,
             ensured = existing.front()["owner_id"].template as<std::string>() == owner_id;
             return;
         }
+        // The INSERT runs inside a subtransaction: when a concurrent creator
+        // wins the race, the unique_violation aborts only the subtransaction
+        // (never the outer pqxx::work), so the ownership re-check below stays
+        // legal. Re-running statements on an aborted transaction would throw
+        // sql_error (SQLSTATE 25P02), so no exception may escape into it.
+        bool inserted = false;
         try {
-            const auto inserted = execParams(
-                transaction,
+            pqxx::subtransaction insert_guard(transaction);
+            const auto result = execParams(
+                insert_guard,
                 "INSERT INTO conversations "
                 "(id, owner_id, title, memory_summary, created_at, updated_at) "
                 "VALUES ($1, $2, $3, '', NOW(), NOW()) RETURNING id",
                 conversation_id, owner_id, title);
-            ensured = !inserted.empty();
-            return;
+            inserted = !result.empty();
+            insert_guard.commit();
         } catch (const pqxx::unique_violation&) {
             // A concurrent insert won the race; fall through and accept it
             // only when the owner matches.
+        }
+        if (inserted) {
+            ensured = true;
+            return;
         }
         const auto recheck = execParams(
             transaction, "SELECT owner_id FROM conversations WHERE id = $1", conversation_id);

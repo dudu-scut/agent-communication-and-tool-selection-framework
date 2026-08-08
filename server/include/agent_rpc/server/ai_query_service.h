@@ -193,6 +193,9 @@ private:
     void finalizeDurableQuery(DurableQueryRun& run, const std::string& status,
                               const std::string& response_text,
                               const std::string& error_message);
+    // Crash guard: best-effort "failed" finalize when the pipeline throws,
+    // so runtime PG/Redis faults never escape into the gRPC handler.
+    void abortDurableRun(DurableQueryRun& run, const std::string& reason);
     static std::int64_t estimateTokens(const std::string& question);
     static common::BudgetLimits budgetLimitsFromEnvironment();
 

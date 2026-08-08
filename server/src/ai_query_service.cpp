@@ -257,6 +257,11 @@ grpc::Status AIQueryServiceImpl::reserveBudgetOrReject(DurableQueryRun& run) {
 
     // Step 4: estimated-token reservation keyed by request_id (idempotent on
     // same-owner retries; cross-owner reuse is refused).
+    // Semantic note (PR-C2): sandbox traffic (context_id with a "sandbox_"
+    // prefix) intentionally counts against the same PostgreSQL budget. The
+    // old Redis micro-dollar path granted sandbox contexts an exemption; that
+    // exemption was removed on purpose because the PG budget is now the
+    // source of truth and PR-E's sandbox will reuse this exact pipeline.
     run.estimated_tokens = estimateTokens(run.question);
     auto result = budget_repo_->reserve(run.owner_id, run.conversation_id,
                                         run.request_id, run.estimated_tokens,
@@ -335,13 +340,16 @@ void AIQueryServiceImpl::finalizeDurableQuery(DurableQueryRun& run, const std::s
         return;
     }
 
-    // Conversation messages (sequence assigned inside the repository
-    // transaction; never computed here).
-    domain_repo_->appendMessageAutoSequence(run.owner_id, run.conversation_id,
-                                            "user", run.question);
-    if (!response_text.empty()) {
+    // Conversation messages are appended exactly once per request_id: a
+    // retry must never duplicate history or re-inject it into SystemContext
+    // (mirrors the first_attempt deduplication of the token ledger).
+    if (run.first_attempt) {
         domain_repo_->appendMessageAutoSequence(run.owner_id, run.conversation_id,
-                                                "assistant", response_text);
+                                                "user", run.question);
+        if (!response_text.empty()) {
+            domain_repo_->appendMessageAutoSequence(run.owner_id, run.conversation_id,
+                                                    "assistant", response_text);
+        }
     }
 
     // Query log terminal update (pure owner-scoped UPDATE).
@@ -406,6 +414,20 @@ void AIQueryServiceImpl::finalizeDurableQuery(DurableQueryRun& run, const std::s
     }
 }
 
+void AIQueryServiceImpl::abortDurableRun(DurableQueryRun& run, const std::string& reason) {
+    if (run.request_id.empty()) {
+        return;
+    }
+    try {
+        finalizeDurableQuery(run, "failed", "",
+                             "Pipeline aborted: " + reason);
+    } catch (const std::exception& nested) {
+        LOG_ERROR(std::string("finalize during pipeline abort failed: ") + nested.what());
+    } catch (...) {
+        LOG_ERROR("finalize during pipeline abort failed with unknown error");
+    }
+}
+
 // Persist trace spans to Redis for ObservabilityService::GetTraceDetail.
 static void persistTraceSpansToRedis(common::RedisClient* redis_client) {
     auto* trace = common::TraceContext::current();
@@ -467,6 +489,11 @@ grpc::Status AIQueryServiceImpl::Query(
                            "Valid authentication token required");
     }
 
+    // Crash guard: any PG/Redis fault thrown by the durable pipeline below is
+    // mapped to a gRPC error and the already-created rows are finalized as
+    // "failed"; nothing may escape into the gRPC handler (std::terminate).
+    DurableQueryRun run;
+    try {
     auto start_time = std::chrono::steady_clock::now();
 
     // Step 2: stable identifiers.
@@ -481,7 +508,6 @@ grpc::Status AIQueryServiceImpl::Query(
 
     LOG_INFO("Processing AI query: " + request_id);
 
-    DurableQueryRun run;
     run.owner_id = owner_id;
     run.conversation_id = context_id;
     run.request_id = request_id;
@@ -614,6 +640,17 @@ grpc::Status AIQueryServiceImpl::Query(
         response->status().code());
     return grpc::Status(grpc_code, sanitizeErrorMessage(
         error_message.empty() ? response->status().message() : error_message));
+
+    } catch (const std::exception& error) {
+        abortDurableRun(run, error.what());
+        const bool persistence_fault = common::isPostgresError(error);
+        return grpc::Status(
+            persistence_fault ? grpc::StatusCode::UNAVAILABLE : grpc::StatusCode::INTERNAL,
+            sanitizeErrorMessage(std::string(persistence_fault
+                                                 ? "PostgreSQL persistence error: "
+                                                 : "Unexpected query pipeline error: ") +
+                                 error.what()));
+    }
 }
 
 // ============================================================================
@@ -641,6 +678,10 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                            "Valid authentication token required");
     }
 
+    // Crash guard: PG/Redis faults become gRPC errors with a "failed"
+    // terminal row; they must never reach the gRPC handler as exceptions.
+    DurableQueryRun run;
+    try {
     auto start_time = std::chrono::steady_clock::now();
 
     // Step 2: stable identifiers.
@@ -655,7 +696,6 @@ grpc::Status AIQueryServiceImpl::QueryStream(
 
     LOG_INFO("Processing streaming AI query: " + request_id);
 
-    DurableQueryRun run;
     run.owner_id = owner_id;
     run.conversation_id = context_id;
     run.request_id = request_id;
@@ -853,6 +893,17 @@ grpc::Status AIQueryServiceImpl::QueryStream(
 
     persistTraceSpansToRedis(redis_client_);
     return grpc::Status::OK;
+
+    } catch (const std::exception& error) {
+        abortDurableRun(run, error.what());
+        const bool persistence_fault = common::isPostgresError(error);
+        return grpc::Status(
+            persistence_fault ? grpc::StatusCode::UNAVAILABLE : grpc::StatusCode::INTERNAL,
+            sanitizeErrorMessage(std::string(persistence_fault
+                                                 ? "PostgreSQL persistence error: "
+                                                 : "Unexpected query pipeline error: ") +
+                                 error.what()));
+    }
 }
 
 // ============================================================================
