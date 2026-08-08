@@ -36,10 +36,12 @@ public:
 
     // Internal validation used by the authentication interceptor. Database
     // errors are deliberately collapsed to false here because the interceptor
-    // has no gRPC response in which to return UNAVAILABLE.
+    // has no gRPC response in which to return UNAVAILABLE. The resolved role
+    // (USER/ADMIN) comes from PostgreSQL and is propagated to the interceptor.
     bool validateToken(const std::string& token,
                        std::string& user_id,
-                       std::string& username);
+                       std::string& username,
+                       std::string& role);
 
 private:
     static std::string generateId(std::size_t byte_count);
@@ -51,7 +53,8 @@ private:
 
     bool validateTokenInternal(const std::string& token,
                                std::string& user_id,
-                               std::string& username);
+                               std::string& username,
+                               std::string& role);
 
     std::unique_ptr<common::AuthRepository> owned_repository_;
     common::AuthRepository* repository_ = nullptr;  // not owned unless above

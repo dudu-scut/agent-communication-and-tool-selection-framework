@@ -58,6 +58,30 @@ void AgentCommunicationServiceImpl::setAgentRouter(orchestrator::AgentRouter* ro
     }
 }
 
+void AgentCommunicationServiceImpl::setAgentRuntimeRepository(
+    common::AgentRuntimeRepository* repository) {
+    runtime_repository_ = repository;
+    if (runtime_repository_) {
+        LOG_INFO("AgentRuntimeRepository connected to AgentCommunicationService (PR-C3)");
+    }
+}
+
+void AgentCommunicationServiceImpl::setRedisClient(common::RedisClient* redis) {
+    redis_ = redis;
+}
+
+namespace {
+// Liveness cache TTL: three missed heartbeats, never below 5 minutes.
+constexpr int kDefaultLivenessTtlSeconds = 300;
+
+int livenessTtlSeconds(int heartbeat_interval) {
+    if (heartbeat_interval <= 0) {
+        return kDefaultLivenessTtlSeconds;
+    }
+    return std::max(heartbeat_interval * 3, kDefaultLivenessTtlSeconds);
+}
+}  // namespace
+
 std::string AgentCommunicationServiceImpl::generateMessageId() {
     return std::to_string(++message_id_counter_);
 }
@@ -273,6 +297,14 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     const agent_communication::RegisterAgentRequest* request,
     agent_communication::RegisterAgentResponse* response) {
 
+    // PR-C3: agent lifecycle management is an admin capability. The local
+    // deployment gates it on the statically configured ADMIN user
+    // (NEXUSAI_ADMIN_USERNAME; .env.example is delivered with PR-G).
+    const grpc::Status admin_check = AuthInterceptor::requireAdmin();
+    if (!admin_check.ok()) {
+        return admin_check;
+    }
+
     const auto& info = request->agent_info();
 
     // B-02: Validate required fields
@@ -320,6 +352,37 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
 
     common::Metrics::getInstance().recordConnection(agent_id, true);
     LOG_INFO("Agent registered: " + agent_id);
+
+    // PR-C3: persist the durable registry fact (PostgreSQL is the source of
+    // truth; re-registration after a restart rewrites this row). Failures are
+    // logged but do not block the in-memory registration path.
+    if (runtime_repository_) {
+        try {
+            nlohmann::json capabilities;
+            capabilities["skills"] = endpoint.skills;
+            capabilities["tags"] = endpoint.tags;
+            capabilities["version"] = endpoint.version;
+            const common::AgentRegistryRecord registry_record{
+                .id = "registry-" + agent_id,
+                .owner_id = "system",
+                .agent_id = agent_id,
+                .display_name = endpoint.service_name,
+                .capabilities = capabilities.dump(),
+                .health_status = "healthy",
+            };
+            if (!runtime_repository_->upsertAgentRegistry(registry_record)) {
+                LOG_WARN("Failed to persist agent_registry row for " + agent_id);
+            }
+        } catch (const std::exception& error) {
+            LOG_WARN("agent_registry persistence failed for " + agent_id + ": " +
+                     error.what());
+        }
+    }
+    // Redis carries only the short-lived liveness cache.
+    if (redis_) {
+        redis_->setex("agent:liveness:" + agent_id,
+                      livenessTtlSeconds(request->heartbeat_interval()), "1");
+    }
 
     // P0-2: Sync to AgentRouter for orchestrator routing
     if (router_) {
@@ -376,6 +439,11 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
     const agent_communication::UnregisterAgentRequest* request,
     agent_communication::UnregisterAgentResponse* response) {
 
+    const grpc::Status admin_check = AuthInterceptor::requireAdmin();
+    if (!admin_check.ok()) {
+        return admin_check;
+    }
+
     const auto& agent_id = request->agent_id();
     {
         std::lock_guard<std::mutex> lock(agents_mutex_);
@@ -386,6 +454,19 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
 
     common::Metrics::getInstance().recordDisconnection(agent_id);
     LOG_INFO("Agent unregistered: " + agent_id + " reason: " + request->reason());
+
+    // PR-C3: keep the registry row (history/metrics stay queryable) but mark
+    // the agent offline; drop the Redis liveness cache.
+    if (runtime_repository_) {
+        try {
+            runtime_repository_->markAgentStatus(agent_id, "offline");
+        } catch (const std::exception& error) {
+            LOG_WARN("agent_registry update failed for " + agent_id + ": " + error.what());
+        }
+    }
+    if (redis_) {
+        redis_->del("agent:liveness:" + agent_id);
+    }
 
     // P0-2: Remove from AgentRouter
     if (router_) {
@@ -405,7 +486,26 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
     const agent_communication::HeartbeatRequest* request,
     agent_communication::HeartbeatResponse* response) {
 
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                            "Valid authentication token required");
+    }
+
     updateAgentHeartbeat(request->agent_id());
+
+    // PR-C3: refresh the durable registry fact and the liveness cache.
+    if (runtime_repository_) {
+        try {
+            runtime_repository_->updateAgentHeartbeat(request->agent_id());
+        } catch (const std::exception& error) {
+            LOG_WARN("agent_registry heartbeat failed for " + request->agent_id() +
+                     ": " + error.what());
+        }
+    }
+    if (redis_) {
+        redis_->setex("agent:liveness:" + request->agent_id(),
+                      kDefaultLivenessTtlSeconds, "1");
+    }
 
     // P0-2: Propagate heartbeat to AgentRouter
     if (router_) {

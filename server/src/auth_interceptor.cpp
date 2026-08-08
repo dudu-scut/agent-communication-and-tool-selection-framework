@@ -86,12 +86,13 @@ void AuthInterceptor::Intercept(
             if (metadata && auth_service_ != nullptr) {
                 std::string token = extractBearerToken(*metadata);
                 if (!token.empty()) {
-                    std::string user_id, username;
-                    if (auth_service_->validateToken(token, user_id, username) &&
+                    std::string user_id, username, role;
+                    if (auth_service_->validateToken(token, user_id, username, role) &&
                         !user_id.empty() && !username.empty()) {
                         tls_auth_.authenticated = true;
                         tls_auth_.user_id = user_id;
                         tls_auth_.username = username;
+                        tls_auth_.role = role;
                     }
                 }
             }
@@ -131,8 +132,26 @@ std::string AuthInterceptor::currentUsername() {
     return tls_auth_.username;
 }
 
+std::string AuthInterceptor::currentRole() {
+    return tls_auth_.role;
+}
+
 std::string AuthInterceptor::currentTraceId() {
     return tls_auth_.trace_id;
+}
+
+grpc::Status AuthInterceptor::requireAdmin() {
+    if (!isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                            "Valid authentication token required");
+    }
+    // Disabled enforcement means a trusted local operator (tests/dev box);
+    // enabled calls must carry an ADMIN role resolved from PostgreSQL.
+    if (isAuthEnabled() && tls_auth_.role != "ADMIN") {
+        return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
+                            "Administrator role required");
+    }
+    return grpc::Status::OK;
 }
 
 void AuthInterceptor::setAuthEnabled(bool enabled) {

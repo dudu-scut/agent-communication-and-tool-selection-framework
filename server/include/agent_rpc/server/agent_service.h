@@ -3,6 +3,8 @@
 #include "agent_rpc/common/types.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
 #include "agent_service.grpc.pb.h"
 #include "agent_service.pb.h"
 #include "common.pb.h"
@@ -108,6 +110,16 @@ public:
      */
     void setAgentRouter(orchestrator::AgentRouter* router);
 
+    /**
+     * @brief PR-C3: durable registry + liveness cache wiring.
+     *
+     * RegisterAgent/UnregisterAgent/Heartbeat persist agent_registry rows
+     * through the runtime repository (PostgreSQL is the source of truth);
+     * Redis only carries the short-lived liveness key.
+     */
+    void setAgentRuntimeRepository(common::AgentRuntimeRepository* repository);
+    void setRedisClient(common::RedisClient* redis);
+
     std::vector<common::ServiceEndpoint> getAgentsList() const;
 
 private:
@@ -136,6 +148,10 @@ private:
 
     // P0-2: Optional pointer to orchestrator's AgentRouter for registration sync
     orchestrator::AgentRouter* router_ = nullptr;
+
+    // PR-C3: durable registry persistence (PostgreSQL) + Redis liveness cache
+    common::AgentRuntimeRepository* runtime_repository_ = nullptr;
+    common::RedisClient* redis_ = nullptr;
 };
 
 // 健康检查服务 gRPC 实现

@@ -97,6 +97,7 @@ RpcServer::~RpcServer() {
     agent_lifecycle_service_impl_.reset();
     user_experience_service_impl_.reset();
     observability_service_impl_.reset();
+    runtime_repository_.reset();
     query_domain_repository_.reset();
     budget_repository_.reset();
     auth_repository_.reset();
@@ -111,6 +112,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
 
     auth_service_impl_.reset();
     auth_repository_.reset();
+    runtime_repository_.reset();
     query_domain_repository_.reset();
     budget_repository_.reset();
     postgres_store_.reset();
@@ -128,9 +130,12 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
             std::make_unique<common::QueryDomainRepository>(*postgres_store_);
         budget_repository_ =
             std::make_unique<common::PostgresBudgetRepository>(*postgres_store_);
+        runtime_repository_ =
+            std::make_unique<common::AgentRuntimeRepository>(*postgres_store_);
     } catch (const common::PostgresUnavailable& error) {
         LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
         auth_repository_.reset();
+        runtime_repository_.reset();
         query_domain_repository_.reset();
         budget_repository_.reset();
         postgres_store_.reset();
@@ -138,6 +143,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     } catch (const std::exception& error) {
         LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
         auth_repository_.reset();
+        runtime_repository_.reset();
         query_domain_repository_.reset();
         budget_repository_.reset();
         postgres_store_.reset();
@@ -156,17 +162,28 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     // Initialize CostTracker with Redis for budget counters
     agent_rpc::common::CostTracker::instance().initialize(redis_client_.get());
 
-    // Initialize FeedbackAggregator with Redis for feedback-driven routing (Batch 2)
+    // Initialize FeedbackAggregator: Redis is only a metrics cache; the
+    // durable facts live in PostgreSQL (PR-C3).
     agent_rpc::orchestrator::FeedbackAggregator::initialize(redis_client_.get());
+    agent_rpc::orchestrator::FeedbackAggregator::setRuntimeRepository(runtime_repository_.get());
 
-    // Initialize lifecycle service AFTER Redis is connected
+    // Initialize lifecycle service AFTER Redis is connected; feedback itself
+    // is persisted to PostgreSQL (owner-scoped), Redis stays optional.
     agent_lifecycle_service_impl_ = std::make_unique<AgentLifecycleServiceImpl>(redis_client_.get());
+    agent_lifecycle_service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
+    agent_lifecycle_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
 
-    // Initialize observability service (reads trace spans + cost data from Redis)
+    // Initialize observability service (reads traces + cost ledger from PostgreSQL)
     observability_service_impl_ = std::make_unique<ObservabilityServiceImpl>(redis_client_.get());
+    observability_service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
+    observability_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
 
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
+    // Agent registration/heartbeat writes the durable registry to PostgreSQL
+    // and keeps only liveness in Redis (PR-C3).
+    service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
+    service_impl_->setRedisClient(redis_client_.get());
     health_service_impl_ = std::make_shared<HealthServiceImpl>();
     ai_query_service_impl_ = std::make_shared<AIQueryServiceImpl>();
     auth_service_impl_ = std::make_shared<AuthServiceImpl>(auth_repository_.get());
@@ -189,6 +206,27 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
         auto* router = ai_query_service_impl_->getAgentRouter();
         if (router) {
             service_impl_->setAgentRouter(router);
+            // PR-C3: owner-aware routing quality. The provider runs on the
+            // serving thread, so the authenticated owner comes from the
+            // thread-local auth context set by AuthInterceptor. A negative
+            // return means "no feedback for this owner" — the router then
+            // uses its neutral default and never borrows another owner's
+            // ratings.
+            common::AgentRuntimeRepository* runtime_repo = runtime_repository_.get();
+            router->setQualityProvider(
+                [runtime_repo](const std::string& agent_id,
+                               const std::string& skill_name) -> double {
+                    if (runtime_repo == nullptr) {
+                        return -1.0;
+                    }
+                    const std::string owner = AuthInterceptor::currentUserId();
+                    if (owner.empty()) {
+                        return -1.0;
+                    }
+                    const auto rate = runtime_repo->feedbackApprovalRate(
+                        owner, agent_id, skill_name);
+                    return rate.value_or(-1.0);
+                });
         }
     }
 

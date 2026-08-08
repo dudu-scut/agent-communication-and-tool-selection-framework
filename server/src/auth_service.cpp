@@ -40,13 +40,15 @@ constexpr std::size_t kMaxUsernameLength = 64;
 constexpr std::size_t kMinPasswordLength = 6;
 constexpr std::size_t kMaxPasswordLength = 128;
 
-// The administrator identity is configured out-of-band. An empty or unset
-// NEXUSAI_ADMIN_USERNAME deliberately means that no registration receives
-// ADMIN role.
-static const std::string NEXUSAI_ADMIN_USERNAME = [] {
+// The administrator identity is configured out-of-band via the
+// NEXUSAI_ADMIN_USERNAME environment variable. Default when unset/empty: no
+// registration ever receives the ADMIN role. It is read on every call (not
+// cached at process start) so operators/tests can adjust it without
+// restarting the binary.
+std::string configuredAdminUsername() {
     const char* configured = std::getenv("NEXUSAI_ADMIN_USERNAME");
     return configured == nullptr ? std::string{} : std::string{configured};
-}();
+}
 
 std::string hexEncode(const unsigned char* bytes, std::size_t length) {
     constexpr char kHex[] = "0123456789abcdef";
@@ -174,15 +176,19 @@ grpc::Status AuthServiceImpl::Register(
         return grpc::Status(grpc::StatusCode::INTERNAL, "User id generation unavailable");
     }
 
+    const std::string NEXUSAI_ADMIN_USERNAME = configuredAdminUsername();
+    const std::string role =
+        !NEXUSAI_ADMIN_USERNAME.empty() && request->username() == NEXUSAI_ADMIN_USERNAME
+            ? "ADMIN"
+            : "USER";
+
     const common::UserRecord user{
         .id = user_id,
         .owner_id = user_id,
         .username = request->username(),
         .display_name = request->display_name().empty() ? request->username() : request->display_name(),
         .password_scrypt = password_hash,
-        .role = !NEXUSAI_ADMIN_USERNAME.empty() && request->username() == NEXUSAI_ADMIN_USERNAME
-                     ? "ADMIN"
-                     : "USER",
+        .role = role,
         .created_at = {},
         .updated_at = {},
     };
@@ -202,6 +208,7 @@ grpc::Status AuthServiceImpl::Register(
     response->mutable_status()->set_message("Registration successful");
     response->set_user_id(user_id);
     response->set_username(request->username());
+    response->set_role(role);
     return grpc::Status::OK;
 }
 
@@ -270,6 +277,7 @@ grpc::Status AuthServiceImpl::Login(
     response->set_username(user->username);
     response->set_token(token);
     response->set_expires_at(expires_timestamp);
+    response->set_role(user->role);
     return grpc::Status::OK;
 }
 
@@ -287,9 +295,10 @@ grpc::Status AuthServiceImpl::ValidateToken(
 
     std::string user_id;
     std::string username;
+    std::string role;
     bool valid = false;
     try {
-        valid = validateTokenInternal(request->token(), user_id, username);
+        valid = validateTokenInternal(request->token(), user_id, username, role);
     } catch (const std::exception& error) {
         LOG_ERROR("Failed to validate token: " + std::string(error.what()));
         return unavailable(response, "PostgreSQL is unavailable");
@@ -301,6 +310,7 @@ grpc::Status AuthServiceImpl::ValidateToken(
         response->mutable_status()->set_message("Token valid");
         response->set_user_id(user_id);
         response->set_username(username);
+        response->set_role(role);
     } else {
         response->mutable_status()->set_code(401);
         response->mutable_status()->set_message("Token invalid or expired");
@@ -310,22 +320,26 @@ grpc::Status AuthServiceImpl::ValidateToken(
 
 bool AuthServiceImpl::validateToken(const std::string& token,
                                     std::string& user_id,
-                                    std::string& username) {
+                                    std::string& username,
+                                    std::string& role) {
     try {
-        return validateTokenInternal(token, user_id, username);
+        return validateTokenInternal(token, user_id, username, role);
     } catch (const std::exception& error) {
         LOG_WARN("Token validation unavailable: " + std::string(error.what()));
         user_id.clear();
         username.clear();
+        role.clear();
         return false;
     }
 }
 
 bool AuthServiceImpl::validateTokenInternal(const std::string& token,
                                             std::string& user_id,
-                                            std::string& username) {
+                                            std::string& username,
+                                            std::string& role) {
     user_id.clear();
     username.clear();
+    role.clear();
     if (repository_ == nullptr || token.size() != kTokenHexLength ||
         !std::all_of(token.begin(), token.end(), [](const unsigned char character) {
             return std::isxdigit(character) != 0;
@@ -343,6 +357,7 @@ bool AuthServiceImpl::validateTokenInternal(const std::string& token,
     }
     user_id = user->id;
     username = user->username;
+    role = user->role;
     return true;
 }
 

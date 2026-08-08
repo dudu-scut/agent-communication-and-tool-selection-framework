@@ -654,15 +654,7 @@ AgentInfo AgentRouter::selectWeightedByQuality(const std::vector<AgentInfo>& can
     for (const auto& agent : candidates) {
         // Use first skill for quality coefficient lookup
         std::string skill = agent.skills.empty() ? "" : agent.skills.front();
-        double qc = getQualityCoefficient(agent.id, skill);
-
-        // [Batch 6] Apply deployment_stage weight multiplier
-        if (agent.deployment_stage == "CANARY") {
-            qc *= 0.1;  // Canary agents get 10% of their quality weight
-        } else if (agent.deployment_stage == "DEPRECATED") {
-            qc = 0.0;   // Deprecated agents are excluded from selection
-        }
-        // STABLE (or empty): full weight, no modification
+        const double qc = getQualityCoefficient(agent.id, skill);
 
         weights.push_back(qc);
         total_weight += qc;
@@ -689,20 +681,14 @@ AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<Age
     // In that case, fall back to round-robin for fair load distribution.
     if (candidates.size() <= 1) return candidates[0];
 
-    // Compute quality coefficients with deployment stage modifiers applied,
-    // so CANARY/DEPRECATED stages are properly reflected in the fallback decision.
+    // Compute quality coefficients; when the owner-aware provider has no
+    // feedback for any candidate, all coefficients equal the neutral
+    // default and round-robin keeps the load fair.
     std::vector<double> qcs;
     qcs.reserve(candidates.size());
     for (const auto& agent : candidates) {
         std::string skill = agent.skills.empty() ? "" : agent.skills.front();
-        double qc = getQualityCoefficient(agent.id, skill);
-        // Apply deployment stage weight modifiers (same as selectWeightedByQuality)
-        if (agent.deployment_stage == "CANARY") {
-            qc *= 0.1;
-        } else if (agent.deployment_stage == "DEPRECATED") {
-            qc = 0.0;
-        }
-        qcs.push_back(qc);
+        qcs.push_back(getQualityCoefficient(agent.id, skill));
     }
 
     // Check if all coefficients are identical (within epsilon)
@@ -715,7 +701,7 @@ AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<Age
     }
 
     if (all_same) {
-        // Redis unavailable or no feedback data — use round-robin for fairness
+        // No owner feedback data — use round-robin for fairness
         return selectRoundRobin(candidates);
     }
 
@@ -1049,14 +1035,32 @@ std::string AgentRouter::findFallbackAgent(const std::string& skill_name, const 
 
 // === Batch 2: Feedback-Driven Routing ===
 
+void AgentRouter::setQualityProvider(QualityProvider provider) {
+    std::lock_guard<std::mutex> lock(quality_provider_mutex_);
+    quality_provider_ = std::move(provider);
+}
+
 double AgentRouter::getQualityCoefficient(const std::string& agent_id, const std::string& skill_name) {
-    std::string key = "feedback:" + agent_id + ":" + skill_name;
-    std::string value;
-    if (redis_ && redis_->hget(key, "approval_rate", value)) {
-        double rate = std::stod(value);
-        return 0.5 + 0.5 * rate; // range [0.5, 1.0]
+    // PR-C3: quality facts come from the owner-aware provider (backed by the
+    // PostgreSQL feedback/agent_route_quality tables). Owner-less Redis
+    // feedback keys are no longer consulted. Copy the provider under its own
+    // lock, then invoke outside the lock (the provider may hit PostgreSQL).
+    QualityProvider provider;
+    {
+        std::lock_guard<std::mutex> lock(quality_provider_mutex_);
+        provider = quality_provider_;
     }
-    return 0.75; // default for new agents
+    if (provider) {
+        try {
+            const double approval_rate = provider(agent_id, skill_name);
+            if (approval_rate >= 0.0) {
+                return 0.5 + 0.5 * approval_rate;  // range [0.5, 1.0]
+            }
+        } catch (const std::exception&) {
+            // Provider failure degrades to the neutral default below.
+        }
+    }
+    return 0.75;  // neutral default for agents without owner feedback
 }
 
 } // namespace orchestrator

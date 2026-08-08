@@ -16,6 +16,7 @@ set(COMMON_SOURCES
     src/postgres_store.cpp
     src/postgres_budget_repository.cpp
     src/query_domain_repository.cpp
+    src/agent_runtime_repository.cpp
     src/auth_repository.cpp
     src/profile_summarizer.cpp  # Batch 4 U2
 )

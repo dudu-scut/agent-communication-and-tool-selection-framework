@@ -44,6 +44,7 @@ message CostRecord {
     int32 total_prompt_tokens = 4;
     int32 total_completion_tokens = 5;
     int32 total_requests = 6;
+    bool estimated = 7;            // true when provider usage was unavailable (PR-C3)
 }
 
 // ============================================================================

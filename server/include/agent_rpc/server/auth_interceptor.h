@@ -36,6 +36,7 @@ public:
     struct AuthContext {
         std::string user_id;
         std::string username;
+        std::string role;
         bool authenticated = false;
         std::string trace_id;
     };
@@ -44,7 +45,14 @@ public:
     static bool isAuthenticated();
     static std::string currentUserId();
     static std::string currentUsername();
+    static std::string currentRole();
     static std::string currentTraceId();
+
+    // Server-side admin gate for management RPCs. Returns UNAUTHENTICATED when
+    // no valid owner context exists and PERMISSION_DENIED when the caller is
+    // not ADMIN. When auth enforcement is disabled the call is treated as an
+    // authorized local operator (mirrors isAuthenticated()).
+    static grpc::Status requireAdmin();
 
     // Auth enable flag: when false, isAuthenticated() returns true (no enforcement)
     static void setAuthEnabled(bool enabled);

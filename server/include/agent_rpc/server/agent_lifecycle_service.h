@@ -3,12 +3,23 @@
 #include "agent_lifecycle.pb.h"
 #include "agent_rpc/common/redis_client.h"
 
+namespace agent_rpc::common {
+class AgentRuntimeRepository;
+class QueryDomainRepository;
+}  // namespace agent_rpc::common
+
 namespace agent_rpc { namespace server {
 
 class AgentLifecycleServiceImpl final : public agent_communication::AgentLifecycleService::Service {
 public:
     explicit AgentLifecycleServiceImpl(common::RedisClient* redis);
     ~AgentLifecycleServiceImpl() override = default;
+
+    // PostgreSQL is the durable feedback store; Redis stays an optional cache.
+    // Both may be null in minimal test setups (the RPC then degrades to a
+    // database-independent NOT_FOUND instead of crashing).
+    void setAgentRuntimeRepository(common::AgentRuntimeRepository* repository);
+    void setQueryDomainRepository(common::QueryDomainRepository* repository);
 
     grpc::Status SubmitFeedback(
         grpc::ServerContext* context,
@@ -32,6 +43,8 @@ public:
 
 private:
     common::RedisClient* redis_;
+    common::AgentRuntimeRepository* runtime_repository_ = nullptr;
+    common::QueryDomainRepository* query_repository_ = nullptr;
 };
 
 }} // namespaces

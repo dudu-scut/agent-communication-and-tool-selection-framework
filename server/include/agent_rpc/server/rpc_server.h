@@ -8,6 +8,7 @@
 #include "agent_rpc/common/auth_repository.h"
 #include "agent_rpc/common/query_domain_repository.h"
 #include "agent_rpc/common/postgres_budget_repository.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/registry/service_registry.h"
 #include "agent_rpc/server/agent_lifecycle_service.h"
@@ -65,7 +66,7 @@ public:
     // 获取认证服务
     std::shared_ptr<AuthServiceImpl> getAuthService();
 
-    // 获取 Redis 客户端 (Batch 6: for CronScheduler and Canary)
+    // 获取 Redis 客户端 (PR-C3: liveness/metrics cache only)
     common::RedisClient* getRedisClient() { return redis_client_.get(); }
     
     // 设置A2A配置
@@ -108,6 +109,8 @@ private:
     // AIQueryServiceImpl only keeps non-owning references to them.
     std::unique_ptr<common::QueryDomainRepository> query_domain_repository_;
     std::unique_ptr<common::PostgresBudgetRepository> budget_repository_;
+    // Owner-scoped runtime facts (registry/feedback/route quality/costs).
+    std::unique_ptr<common::AgentRuntimeRepository> runtime_repository_;
     
     // A2A配置
     a2a_adapter::A2AConfig a2a_config_;
