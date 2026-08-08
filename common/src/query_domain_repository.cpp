@@ -129,7 +129,11 @@ QueryDomainRepository::QueryDomainRepository(PostgresStore& store) : store_(stor
 
 bool isPostgresError(const std::exception& error) {
     // pqxx::failure is the common base of every libpqxx 7.x exception type.
-    return dynamic_cast<const pqxx::failure*>(&error) != nullptr;
+    // PostgresUnavailable (thrown by PostgresStore on broken connections,
+    // pool exhaustion, etc.) derives from std::runtime_error instead, so it
+    // must be matched separately to keep the UNAVAILABLE mapping intact.
+    return dynamic_cast<const pqxx::failure*>(&error) != nullptr ||
+           dynamic_cast<const PostgresUnavailable*>(&error) != nullptr;
 }
 
 bool QueryDomainRepository::createConversation(const ConversationRecord& conversation) {
@@ -249,17 +253,39 @@ bool QueryDomainRepository::appendMessage(const MessageRecord& message) {
 std::optional<MessageRecord> QueryDomainRepository::appendMessageAutoSequence(
     const std::string& owner_id, const std::string& conversation_id, const std::string& role,
     const std::string& content) {
+    return appendMessageAutoSequence(generateRowId("msg"), owner_id, conversation_id, role,
+                                     content);
+}
+
+std::optional<MessageRecord> QueryDomainRepository::appendMessageAutoSequence(
+    const std::string& message_id, const std::string& owner_id,
+    const std::string& conversation_id, const std::string& role, const std::string& content) {
     std::optional<MessageRecord> stored;
     store_.executeTransaction([&](pqxx::work& transaction) {
         // Lock the owner's conversation row first. Every auto-sequenced
         // append takes this lock, so the next sequence_no is assigned under
         // serialization and concurrent appends cannot collide or overwrite
-        // each other.
+        // each other. The same lock serializes the idempotency check below.
         const auto conversation = execParams(
             transaction,
             "SELECT id FROM conversations WHERE id = $2 AND owner_id = $1 FOR UPDATE",
             owner_id, conversation_id);
         if (conversation.empty()) {
+            return;
+        }
+        // Idempotency: a message id deterministically derived from the
+        // request id makes retry finalizes safe. An existing row is returned
+        // as-is and consumes no sequence number (no duplicate history, no
+        // sequence gap), while the sequence assignment stays inside this
+        // transaction.
+        const auto existing = execParams(
+            transaction,
+            "SELECT id, owner_id, conversation_id, role, content, sequence_no, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM conversation_messages WHERE id = $1 AND owner_id = $2",
+            message_id, owner_id);
+        if (!existing.empty()) {
+            stored = messageFromRow(existing.front());
             return;
         }
         const auto result = execParams(
@@ -271,7 +297,7 @@ std::optional<MessageRecord> QueryDomainRepository::appendMessageAutoSequence(
             "WHERE owner_id = $2 AND conversation_id = $3), NOW(), NOW()) "
             "RETURNING id, owner_id, conversation_id, role, content, sequence_no, "
             "created_at::text AS created_at, updated_at::text AS updated_at",
-            generateRowId("msg"), owner_id, conversation_id, role, content);
+            message_id, owner_id, conversation_id, role, content);
         if (!result.empty()) {
             stored = messageFromRow(result.front());
         }
@@ -418,19 +444,26 @@ bool QueryDomainRepository::updateTrace(const TraceRecord& trace) {
 bool QueryDomainRepository::appendTokenUsageLedger(const TokenUsageLedgerRecord& usage) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
-        const auto result = execParams(
-            transaction,
-            "INSERT INTO token_usage_ledger "
-            "(id, owner_id, query_log_id, model, prompt_tokens, completion_tokens, estimated, "
-            "cost_usd, created_at, updated_at) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, '')::numeric, 0::numeric), "
-            "COALESCE(NULLIF($9, '')::timestamptz, NOW()), "
-            "COALESCE(NULLIF($10, '')::timestamptz, NOW())) "
-            "RETURNING id",
-            usage.id, usage.owner_id, usage.query_log_id, usage.model, usage.prompt_tokens,
-            usage.completion_tokens, usage.estimated, usage.cost_usd, usage.created_at,
-            usage.updated_at);
-        inserted = !result.empty();
+        try {
+            const auto result = execParams(
+                transaction,
+                "INSERT INTO token_usage_ledger "
+                "(id, owner_id, query_log_id, model, prompt_tokens, completion_tokens, estimated, "
+                "cost_usd, created_at, updated_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, '')::numeric, 0::numeric), "
+                "COALESCE(NULLIF($9, '')::timestamptz, NOW()), "
+                "COALESCE(NULLIF($10, '')::timestamptz, NOW())) "
+                "RETURNING id",
+                usage.id, usage.owner_id, usage.query_log_id, usage.model, usage.prompt_tokens,
+                usage.completion_tokens, usage.estimated, usage.cost_usd, usage.created_at,
+                usage.updated_at);
+            inserted = !result.empty();
+        } catch (const pqxx::unique_violation&) {
+            // Duplicate id (same request retried): the existing estimate stays
+            // authoritative. Report the conflict instead of throwing so
+            // finalize paths can call this unconditionally.
+            inserted = false;
+        }
     });
     return inserted;
 }

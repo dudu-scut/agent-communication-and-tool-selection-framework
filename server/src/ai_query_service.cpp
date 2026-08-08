@@ -340,16 +340,19 @@ void AIQueryServiceImpl::finalizeDurableQuery(DurableQueryRun& run, const std::s
         return;
     }
 
-    // Conversation messages are appended exactly once per request_id: a
-    // retry must never duplicate history or re-inject it into SystemContext
-    // (mirrors the first_attempt deduplication of the token ledger).
-    if (run.first_attempt) {
-        domain_repo_->appendMessageAutoSequence(run.owner_id, run.conversation_id,
-                                                "user", run.question);
-        if (!response_text.empty()) {
-            domain_repo_->appendMessageAutoSequence(run.owner_id, run.conversation_id,
-                                                    "assistant", response_text);
-        }
+    // Conversation messages are appended at most once per request_id. The
+    // message ids are deterministic ("msg-user-" / "msg-assistant-" +
+    // request_id) and the repository deduplicates on them, so every run that
+    // reaches finalize attempts the write: the FIRST successful run persists
+    // the history, later retries are discarded without consuming a sequence
+    // number. This keeps "rejected then retried successfully" requests
+    // recorded while retries still never duplicate history.
+    domain_repo_->appendMessageAutoSequence("msg-user-" + run.request_id, run.owner_id,
+                                            run.conversation_id, "user", run.question);
+    if (!response_text.empty()) {
+        domain_repo_->appendMessageAutoSequence("msg-assistant-" + run.request_id,
+                                                run.owner_id, run.conversation_id,
+                                                "assistant", response_text);
     }
 
     // Query log terminal update (pure owner-scoped UPDATE).
@@ -394,23 +397,24 @@ void AIQueryServiceImpl::finalizeDurableQuery(DurableQueryRun& run, const std::s
         LOG_WARN("finalize: trace update missed for request " + run.request_id);
     }
 
-    // Token ledger: one estimate-only entry per request_id (first attempt),
-    // never per retry. There is no provider settlement yet (estimated=true).
-    if (run.first_attempt) {
-        common::TokenUsageLedgerRecord usage;
-        usage.id = "usage-" + run.request_id;
-        usage.owner_id = run.owner_id;
-        usage.query_log_id = run.request_id;
-        usage.model = run.model;
-        usage.prompt_tokens = run.estimated_tokens;
-        usage.completion_tokens = response_text.empty()
-            ? 0
-            : static_cast<std::int64_t>(response_text.size()) / 4;
-        usage.estimated = true;
-        usage.cost_usd = "0";
-        if (!domain_repo_->appendTokenUsageLedger(usage)) {
-            LOG_WARN("finalize: token ledger append missed for request " + run.request_id);
-        }
+    // Token ledger: one estimate-only entry per request_id, never per retry.
+    // The entry id is the deduplication key: the repository reports the
+    // conflict instead of throwing, so retries may call this unconditionally
+    // (a request rejected first and retried successfully is billed exactly
+    // once). There is no provider settlement yet (estimated=true).
+    common::TokenUsageLedgerRecord usage;
+    usage.id = "usage-" + run.request_id;
+    usage.owner_id = run.owner_id;
+    usage.query_log_id = run.request_id;
+    usage.model = run.model;
+    usage.prompt_tokens = run.estimated_tokens;
+    usage.completion_tokens = response_text.empty()
+        ? 0
+        : static_cast<std::int64_t>(response_text.size()) / 4;
+    usage.estimated = true;
+    usage.cost_usd = "0";
+    if (!domain_repo_->appendTokenUsageLedger(usage)) {
+        LOG_WARN("finalize: token ledger append missed for request " + run.request_id);
     }
 }
 
@@ -425,6 +429,20 @@ void AIQueryServiceImpl::abortDurableRun(DurableQueryRun& run, const std::string
         LOG_ERROR(std::string("finalize during pipeline abort failed: ") + nested.what());
     } catch (...) {
         LOG_ERROR("finalize during pipeline abort failed with unknown error");
+    }
+}
+
+// Cache-only guard: Redis-backed bookkeeping that runs alongside (or after)
+// the durable terminal persistence must never flip an already-finalized
+// request into INTERNAL/UNAVAILABLE. Failures are logged and swallowed.
+template <typename Fn>
+static void runCacheOnly(Fn&& operation, const std::string& what) {
+    try {
+        operation();
+    } catch (const std::exception& error) {
+        LOG_WARN(std::string("cache-only step failed (") + what + "): " + error.what());
+    } catch (...) {
+        LOG_WARN(std::string("cache-only step failed (") + what + "): unknown error");
     }
 }
 
@@ -602,12 +620,17 @@ grpc::Status AIQueryServiceImpl::Query(
     QueryHelpers::recordMetrics("Query", duration.count(), success);
 
     // Memory cache (Redis only; PostgreSQL remains the source of truth).
+    // Cache-only: a Redis fault here must not convert a successful query
+    // into an error response.
     if (success && memory_service_) {
-        memory_service_->updateUserMemoryFromHints(
-            owner_id, {response->memory_hints().begin(), response->memory_hints().end()});
-        helpers_.handleAgentSwitch(memory_service_.get(), memory_llm_client_.get(),
-                                   owner_id, context_id,
-                                   response->agent_id().empty() ? "default" : response->agent_id());
+        runCacheOnly([&] {
+            memory_service_->updateUserMemoryFromHints(
+                owner_id, {response->memory_hints().begin(), response->memory_hints().end()});
+            helpers_.handleAgentSwitch(memory_service_.get(), memory_llm_client_.get(),
+                                       owner_id, context_id,
+                                       response->agent_id().empty() ? "default"
+                                                                    : response->agent_id());
+        }, "query memory cache");
     }
 
     // Step 6: exactly-once terminal persistence.
@@ -631,7 +654,7 @@ grpc::Status AIQueryServiceImpl::Query(
         LOG_ERROR("AI query failed: " + request_id + " - " + error_message);
     }
 
-    persistTraceSpansToRedis(redis_client_);
+    runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
 
     if (success) {
         return grpc::Status::OK;
@@ -765,20 +788,22 @@ grpc::Status AIQueryServiceImpl::QueryStream(
             emitTerminal("complete", "");
             finalizeDurableQuery(run, "completed", answer, "");
             helpers_.updateTaskStatus(request_id, "completed");
-            persistTraceSpansToRedis(redis_client_);
+            runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); },
+                         "trace span cache");
             return grpc::Status::OK;
         }
         if (status.error_code() == grpc::StatusCode::CANCELLED) {
             finalizeDurableQuery(run, "cancelled", answer, "Request cancelled");
             helpers_.updateTaskStatus(request_id, "cancelled");
-            persistTraceSpansToRedis(redis_client_);
+            runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); },
+                         "trace span cache");
             return status;
         }
         const std::string message = lower_error.empty() ? status.error_message() : lower_error;
         emitTerminal("error", sanitizeErrorMessage(message));
         finalizeDurableQuery(run, "failed", answer, message);
         helpers_.updateTaskStatus(request_id, "failed", "", "", message);
-        persistTraceSpansToRedis(redis_client_);
+        runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return status;
     }
 
@@ -853,7 +878,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         finalizeDurableQuery(run, "cancelled", streamed_content, "Request cancelled");
         helpers_.updateTaskStatus(request_id, "cancelled");
         a2a_adapter_->cancelTask(request_id);
-        persistTraceSpansToRedis(redis_client_);
+        runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
     }
 
@@ -862,7 +887,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         finalizeDurableQuery(run, "failed", streamed_content, lower_error);
         helpers_.updateTaskStatus(request_id, "failed", "", "", lower_error);
         LOG_ERROR("Streaming AI query failed: " + request_id + " - " + lower_error);
-        persistTraceSpansToRedis(redis_client_);
+        runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return grpc::Status(grpc::StatusCode::INTERNAL, sanitizeErrorMessage(lower_error));
     }
 
@@ -871,13 +896,16 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                              "Failed to write stream event");
         helpers_.updateTaskStatus(request_id, "failed", "", "",
                                   "Failed to write stream event");
-        persistTraceSpansToRedis(redis_client_);
+        runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to write stream event");
     }
 
     // Memory cache (Redis only; PostgreSQL remains the source of truth).
+    // Cache-only: a Redis fault must not flip a completed stream into an
+    // error result.
     if (memory_service_) {
-        memory_service_->setLastAgent(context_id, "default");
+        runCacheOnly([&] { memory_service_->setLastAgent(context_id, "default"); },
+                     "stream memory cache");
     }
 
     // Step 6: single terminal event + exactly-once persistence.
@@ -891,7 +919,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     LOG_INFO("Streaming AI query completed: " + request_id +
             " in " + std::to_string(duration.count()) + "ms");
 
-    persistTraceSpansToRedis(redis_client_);
+    runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
     return grpc::Status::OK;
 
     } catch (const std::exception& error) {

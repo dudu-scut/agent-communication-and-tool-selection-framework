@@ -125,6 +125,18 @@ public:
                                                              const std::string& role,
                                                              const std::string& content);
 
+    // Idempotent variant with a caller-chosen message id (deterministically
+    // derived from the request id). When a row with that id already exists
+    // the append is skipped WITHOUT consuming a sequence number, so retries
+    // never duplicate history nor leave sequence gaps; the existing row is
+    // returned. Unknown conversations or foreign owners still return
+    // std::nullopt.
+    std::optional<MessageRecord> appendMessageAutoSequence(const std::string& message_id,
+                                                             const std::string& owner_id,
+                                                             const std::string& conversation_id,
+                                                             const std::string& role,
+                                                             const std::string& content);
+
     std::vector<MessageRecord> listMessages(const std::string& owner_id,
                                              const std::string& conversation_id);
 
@@ -149,6 +161,9 @@ public:
     // updated_at); every other record field is ignored.
     bool updateTrace(const TraceRecord& trace);
 
+    // Appends one estimate-only ledger entry per id. A duplicate id (same
+    // request retried) returns false instead of throwing, so finalize paths
+    // can call it unconditionally; other PostgreSQL failures propagate.
     bool appendTokenUsageLedger(const TokenUsageLedgerRecord& usage);
     std::vector<TokenUsageLedgerRecord> listTokenUsageLedgerByOwner(const std::string& owner_id);
 

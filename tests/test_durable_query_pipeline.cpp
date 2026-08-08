@@ -311,15 +311,26 @@ TEST_F(DurableRepositoryTest, EnsureConversationSurvivesConcurrentFirstCreation)
 
     std::atomic<bool> gate{false};
     std::atomic<int> successes{0};
+    std::atomic<int> failures{0};
     std::vector<std::thread> workers;
     workers.reserve(2);
     for (int worker = 0; worker < 2; ++worker) {
         workers.emplace_back([&] {
-            while (!gate.load()) {
-                std::this_thread::yield();
-            }
-            if (context->repository->ensureConversation(owner_id, conversation_id, "race")) {
-                successes.fetch_add(1);
+            // A regression of the old aborted-transaction bug must surface as
+            // a failed assertion here, never as an exception escaping the
+            // worker thread (which would terminate the whole test process).
+            try {
+                while (!gate.load()) {
+                    std::this_thread::yield();
+                }
+                if (context->repository->ensureConversation(owner_id, conversation_id,
+                                                            "race")) {
+                    successes.fetch_add(1);
+                }
+            } catch (const std::exception&) {
+                failures.fetch_add(1);
+            } catch (...) {
+                failures.fetch_add(1);
             }
         });
     }
@@ -328,6 +339,7 @@ TEST_F(DurableRepositoryTest, EnsureConversationSurvivesConcurrentFirstCreation)
         thread.join();
     }
 
+    EXPECT_EQ(failures.load(), 0) << "ensureConversation threw inside a worker";
     EXPECT_EQ(successes.load(), 2);
     EXPECT_EQ(context->repository->listConversations(owner_id).size(), 1u);
     const auto conversation =
@@ -812,6 +824,73 @@ TEST_F(DurableQueryPipelineTest, BudgetRejectionPersistsRejectedTerminalState) {
     EXPECT_EQ(countRows("token_usage_ledger", "query_log_id", request_id), 0);
 }
 
+// N3 regression: a request that was budget-rejected first must still record
+// its conversation history and exactly one ledger entry when the SAME
+// request_id is retried after the owner's quota is relaxed. The old
+// first_attempt guard skipped the message/ledger writes on the successful
+// retry and left a "completed" request with zero durable records.
+TEST_F(DurableQueryPipelineTest, RetryAfterBudgetRejectionRecordsMessagesAndLedgerOnce) {
+    startPipeline("ok");
+    const auto user = registerUser("rejretry");
+    common_ns::BudgetLimits tiny_limits;
+    tiny_limits.global = 0;
+    tiny_limits.user_daily = 10;  // below the minimum stable estimate
+    tiny_limits.user_monthly = 0;
+    tiny_limits.session = 0;
+    ASSERT_TRUE(handles_->budget->setOwnerPolicy(user.id, tiny_limits));
+
+    const std::string request_id = "dqp-rejretry-" + uniqueSuffix();
+    const std::string context_id = "dqp-ctx-rejretry-" + uniqueSuffix();
+    auto request = makeRequest(request_id, context_id);
+
+    // Attempt 1: rejected before any history or ledger entry exists.
+    {
+        agent_communication::AIQueryResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, user);
+        const auto status = query_stub_->Query(&context, request, &response);
+        ASSERT_EQ(status.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
+    }
+    EXPECT_EQ(queryLogStatus(user.id, request_id), "rejected");
+    EXPECT_EQ(countRows("conversation_messages", "conversation_id", context_id), 0);
+    EXPECT_EQ(countRows("token_usage_ledger", "query_log_id", request_id), 0);
+
+    // Relax the owner's quota, then retry with the same request_id.
+    common_ns::BudgetLimits relaxed_limits;
+    relaxed_limits.global = 0;
+    relaxed_limits.user_daily = 1000000;
+    relaxed_limits.user_monthly = 0;
+    relaxed_limits.session = 0;
+    ASSERT_TRUE(handles_->budget->setOwnerPolicy(user.id, relaxed_limits));
+
+    {
+        agent_communication::AIQueryResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, user);
+        const auto status = query_stub_->Query(&context, request, &response);
+        ASSERT_TRUE(status.ok()) << status.error_message();
+    }
+
+    EXPECT_EQ(queryLogStatus(user.id, request_id), "completed");
+    // The successful retry persists the history (1 user + 1 assistant) and
+    // exactly one estimated ledger entry.
+    EXPECT_EQ(countRows("conversation_messages", "conversation_id", context_id), 2);
+    EXPECT_EQ(countRows("token_usage_ledger", "query_log_id", request_id), 1);
+    EXPECT_EQ(countRows("budget_reservations", "request_id", request_id), 1);
+
+    // A further retry still never duplicates anything.
+    {
+        agent_communication::AIQueryResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, user);
+        const auto status = query_stub_->Query(&context, request, &response);
+        ASSERT_TRUE(status.ok()) << status.error_message();
+    }
+    EXPECT_EQ(countRows("conversation_messages", "conversation_id", context_id), 2);
+    EXPECT_EQ(countRows("token_usage_ledger", "query_log_id", request_id), 1);
+    EXPECT_EQ(countRows("budget_reservations", "request_id", request_id), 1);
+}
+
 // Requirement F.3: agent exception persists "failed".
 TEST_F(DurableQueryPipelineTest, AgentFailurePersistsFailedTerminalState) {
     startPipeline("http500");
@@ -910,8 +989,11 @@ TEST_F(DurableQueryPipelineTest, QueryStreamEmitsExactlyOneCompleteEvent) {
 TEST_F(DurableQueryPipelineTest, RedisFlushLeavesPostgresDataReadable) {
     startPipeline("ok");
     const auto user = registerUser("flush");
-    const std::string request_id = "dqp-flush-" + uniqueSuffix();
-    auto request = makeRequest(request_id, "dqp-ctx-flush-" + uniqueSuffix());
+    // One suffix per run: every id and cache key created by this test shares
+    // it, so the cleanup SCAN below only ever touches this test's own keys.
+    const std::string run_suffix = uniqueSuffix();
+    const std::string request_id = "dqp-flush-" + run_suffix;
+    auto request = makeRequest(request_id, "dqp-ctx-flush-" + run_suffix);
 
     {
         agent_communication::AIQueryResponse response;
@@ -931,19 +1013,21 @@ TEST_F(DurableQueryPipelineTest, RedisFlushLeavesPostgresDataReadable) {
     ASSERT_NE(redis, nullptr) << "redis connection required for this test";
     if (redis->err == 0) {
         auto* seed = static_cast<redisReply*>(
-            redisCommand(redis, "SET cache:%s 1", ("dqp-flush-" + uniqueSuffix()).c_str()));
+            redisCommand(redis, "SET cache:%s 1", ("dqp-flush-" + run_suffix).c_str()));
         ASSERT_NE(seed, nullptr);
         freeReplyObject(seed);
     }
 
-    // Wipe only the cache entries created by this pipeline (never FLUSHALL
-    // the shared instance).
+    // Wipe only the cache entries created by THIS pipeline run (the pattern
+    // embeds run_suffix, never FLUSHALL and never foreign test keys).
     if (redis->err == 0) {
         std::string cursor = "0";
         std::size_t deleted = 0;
+        const std::string pattern = "*dqp-*" + run_suffix + "*";
         do {
             auto* reply = static_cast<redisReply*>(
-                redisCommand(redis, "SCAN %s MATCH *dqp-* COUNT 1000", cursor.c_str()));
+                redisCommand(redis, "SCAN %s MATCH %s COUNT 1000", cursor.c_str(),
+                             pattern.c_str()));
             ASSERT_NE(reply, nullptr);
             if (reply->type == REDIS_REPLY_ARRAY && reply->elements == 2 &&
                 reply->element[0]->str != nullptr) {
@@ -971,7 +1055,7 @@ TEST_F(DurableQueryPipelineTest, RedisFlushLeavesPostgresDataReadable) {
     EXPECT_FALSE(handles_->domain->listMessages(user.id, request.context_id()).empty());
 
     // ...and the pipeline keeps serving afterwards.
-    const std::string second_request_id = "dqp-flush2-" + uniqueSuffix();
+    const std::string second_request_id = "dqp-flush2-" + run_suffix;
     auto second_request = makeRequest(second_request_id, request.context_id());
     agent_communication::AIQueryResponse second_response;
     grpc::ClientContext second_context;
