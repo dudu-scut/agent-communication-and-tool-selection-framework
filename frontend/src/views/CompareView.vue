@@ -28,20 +28,48 @@
       </div>
       <div class="query-group">
         <textarea v-model="compareQuery" placeholder="Enter comparison query..." class="query-input" rows="3"></textarea>
-        <button class="btn-compare" disabled>
+        <button class="btn-compare" :disabled="comparing || !compareQuery.trim()" @click="runCompare">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Compare (Coming Soon)
+          {{ comparing ? 'Comparing…' : 'Compare' }}
         </button>
       </div>
     </div>
 
     <div class="results-area">
-      <GlassCard variant="highlight" padding="lg">
-        <EmptyState
-          icon="mdi:flask-outline"
-          title="Agent 对比功能开发中"
-          description="多 Agent 侧边对比功能正在开发中，敬请期待"
-        />
+      <!-- Loading -->
+      <GlassCard v-if="comparing" variant="highlight" padding="lg">
+        <div class="compare-status">Running the same question through up to 3 agents in parallel…</div>
+      </GlassCard>
+
+      <!-- Error -->
+      <GlassCard v-else-if="compareError" variant="highlight" padding="lg">
+        <div class="compare-error">{{ compareError }}</div>
+      </GlassCard>
+
+      <!-- Result -->
+      <template v-else-if="compareOutcome">
+        <div class="run-summary">
+          Run <code>{{ compareOutcome.run_id }}</code>
+          <span class="run-status" :data-status="compareOutcome.run_status">{{ compareOutcome.run_status }}</span>
+        </div>
+        <div class="result-grid">
+          <GlassCard v-for="result in compareOutcome.results" :key="result.agent_id" variant="highlight" padding="lg">
+            <div class="result-card">
+              <div class="result-head">
+                <strong>{{ result.agent_id }}</strong>
+                <span class="agent-status" :data-status="result.status">{{ result.status }}</span>
+              </div>
+              <pre v-if="result.status === 'completed'" class="agent-answer">{{ result.answer }}</pre>
+              <div v-else class="agent-error">{{ result.error || 'No answer' }}</div>
+              <div v-if="result.request_id" class="agent-meta">request_id: <code>{{ result.request_id }}</code></div>
+            </div>
+          </GlassCard>
+        </div>
+      </template>
+
+      <!-- Empty -->
+      <GlassCard v-else variant="highlight" padding="lg">
+        <div class="compare-status">Select 1–3 agents and a question, then run a real comparison. Each agent answers independently; failures stay visible per agent.</div>
       </GlassCard>
     </div>
   </div>
@@ -49,13 +77,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getAgents } from '../services/grpc-client'
+import { getAgents, compareAgents } from '../services/grpc-client'
+import type { CompareAgentsResponse } from '../types/proto'
 import GlassCard from '../components/layout/GlassCard.vue'
-import EmptyState from '../components/feedback/EmptyState.vue'
 
 const availableAgents = ref<string[]>([])
 const selectedAgents = ref<string[]>(['', '', ''])
 const compareQuery = ref('')
+
+// Compare states: loading / error / result / empty
+const comparing = ref(false)
+const compareError = ref('')
+const compareOutcome = ref<CompareAgentsResponse | null>(null)
 
 onMounted(async () => {
   try {
@@ -66,7 +99,20 @@ onMounted(async () => {
   }
 })
 
-
+async function runCompare() {
+  const agentIds = selectedAgents.value.filter(a => a !== '')
+  if (!compareQuery.value.trim() || agentIds.length === 0) return
+  comparing.value = true
+  compareError.value = ''
+  compareOutcome.value = null
+  try {
+    compareOutcome.value = await compareAgents(compareQuery.value.trim(), agentIds)
+  } catch (e) {
+    compareError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    comparing.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -121,6 +167,38 @@ onMounted(async () => {
 .btn-compare:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .results-area { padding: 24px 32px; max-width: 1400px; }
+
+.compare-status { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+.compare-error { font-size: 13px; color: var(--status-error, #ef4444); }
+
+.run-summary {
+  font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.run-summary code { font-size: 11px; color: var(--text-tertiary); }
+
+.run-status, .agent-status {
+  padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border-subtle); color: var(--text-secondary);
+}
+.run-status[data-status="completed"], .agent-status[data-status="completed"] { color: #22c55e; border-color: #22c55e; }
+.run-status[data-status="partial"], .agent-status[data-status="failed"] { color: var(--status-error, #ef4444); border-color: var(--status-error, #ef4444); }
+
+.result-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px;
+}
+
+.result-card { display: flex; flex-direction: column; gap: 10px; }
+.result-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.result-head strong { font-size: 14px; color: var(--text-primary); }
+
+.agent-answer {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-size: 13px; color: var(--text-primary); max-height: 280px; overflow: auto;
+}
+.agent-error { font-size: 13px; color: var(--status-error, #ef4444); }
+.agent-meta { font-size: 11px; color: var(--text-tertiary); }
+.agent-meta code { font-size: 10px; }
 
 /* Responsive */
 @media (max-width: 1024px) {

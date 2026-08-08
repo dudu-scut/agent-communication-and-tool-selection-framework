@@ -35,6 +35,18 @@ import type {
   ListTemplatesResponse,
   GetTemplateResponse,
   UseTemplateResponse,
+  SandboxQueryRequest,
+  SandboxQueryResponse,
+  InterventionResponseRequest,
+  InterventionResponseResponse,
+  CompareAgentsRequest,
+  CompareAgentsResponse,
+  GetAgentCompareRequest,
+  GetAgentCompareResponse,
+  SetAutonomyLevelRequest,
+  SetAutonomyLevelResponse,
+  UndoActionRequest,
+  UndoActionResponse,
 } from '../types/proto'
 
 const BASE_URL = import.meta.env.VITE_API_BASE || ''
@@ -46,6 +58,8 @@ const USER_AUTH = '/agent_communication.auth.UserService'
 const OBSERVABILITY = '/agent_communication.ObservabilityService'
 const ORCHESTRATION = '/agent_communication.OrchestrationService'
 const SHARING = '/agent_communication.SharingService'
+const USER_EXPERIENCE = '/agent_communication.UserExperienceService'
+const AGENT_LIFECYCLE = '/agent_communication.AgentLifecycleService'
 
 // Auth token accessor (set by auth store)
 let _getAuthToken: (() => string | null) | null = null
@@ -419,5 +433,81 @@ export async function saveTemplate(
 export async function useTemplate(templateId: string): Promise<UseTemplateResponse> {
   return unaryCall<{ template_id: string }, UseTemplateResponse>(
     SHARING, 'UseTemplate', { template_id: templateId },
+  )
+}
+
+// ============================================================================
+// UserExperienceService — PR-E: Sandbox / Intervention
+// ============================================================================
+
+/**
+ * Run a sandbox query through the durable pipeline. When the owner's
+ * autonomy level requires confirmation, the backend creates a pending
+ * intervention instead of executing (intervention_required = true).
+ */
+export async function sandboxQuery(
+  agentId: string,
+  queryText: string,
+): Promise<SandboxQueryResponse> {
+  const req: SandboxQueryRequest = { agent_id: agentId, query_text: queryText }
+  return unaryCall<SandboxQueryRequest, SandboxQueryResponse>(
+    USER_EXPERIENCE, 'SandboxQuery', req,
+  )
+}
+
+/** Resolve a pending intervention (PROCEED / MODIFY / SKIP / ABORT) */
+export async function interventionResponse(
+  interventionId: string,
+  decision: 'PROCEED' | 'MODIFY' | 'SKIP' | 'ABORT',
+  modificationText?: string,
+): Promise<InterventionResponseResponse> {
+  const req: InterventionResponseRequest = {
+    intervention_id: interventionId,
+    decision,
+    modification_text: modificationText,
+  }
+  return unaryCall<InterventionResponseRequest, InterventionResponseResponse>(
+    USER_EXPERIENCE, 'InterventionResponse', req,
+  )
+}
+
+// ============================================================================
+// AgentLifecycleService — PR-E: Compare / Autonomy / Undo
+// ============================================================================
+
+/** Compare at most 3 agents running the same question in parallel */
+export async function compareAgents(
+  question: string,
+  agentIds: string[],
+): Promise<CompareAgentsResponse> {
+  const req: CompareAgentsRequest = { question, agent_ids: agentIds }
+  return unaryCall<CompareAgentsRequest, CompareAgentsResponse>(
+    AGENT_LIFECYCLE, 'CompareAgents', req,
+  )
+}
+
+/** List the owner's persisted compare runs (true empty state when none) */
+export async function getAgentCompare(): Promise<GetAgentCompareResponse> {
+  return unaryCall<GetAgentCompareRequest, GetAgentCompareResponse>(
+    AGENT_LIFECYCLE, 'GetAgentCompare', {},
+  )
+}
+
+/** Set the owner's autonomy level (1..4) for one agent */
+export async function setAutonomyLevel(
+  agentId: string,
+  level: number,
+): Promise<SetAutonomyLevelResponse> {
+  const req: SetAutonomyLevelRequest = { agent_id: agentId, level }
+  return unaryCall<SetAutonomyLevelRequest, SetAutonomyLevelResponse>(
+    AGENT_LIFECYCLE, 'SetAutonomyLevel', req,
+  )
+}
+
+/** Undo a reversible action by its undo_actions id */
+export async function undoAction(actionId: string): Promise<UndoActionResponse> {
+  const req: UndoActionRequest = { action_id: actionId }
+  return unaryCall<UndoActionRequest, UndoActionResponse>(
+    AGENT_LIFECYCLE, 'UndoAction', req,
   )
 }

@@ -438,3 +438,93 @@ export interface GetCostReportResponse {
   records: CostRecord[]
   total_cost_usd: number
 }
+
+// === Sandbox & Intervention (user_experience.proto, PR-E) ===
+
+export interface SandboxQueryRequest {
+  query_text: string
+  agent_id: string
+  context_id?: string
+}
+
+export interface SandboxQueryResponse {
+  status: Status
+  result: string
+  request_id: string           // durable pipeline request id (empty when gated)
+  intervention_required: boolean
+  intervention_id: string
+}
+
+export interface InterventionResponseRequest {
+  trace_id?: string
+  decision: 'PROCEED' | 'MODIFY' | 'SKIP' | 'ABORT'
+  modification_text?: string
+  intervention_id: string
+}
+
+export interface InterventionResponseResponse {
+  status: Status
+  new_state: string
+  undo_action_id: string
+  executed_request_id: string
+}
+
+// === Compare / Autonomy / Undo (agent_lifecycle.proto, PR-E) ===
+
+export interface CompareAgentsRequest {
+  question: string
+  agent_ids: string[] // 1..3 entries, duplicates refused
+}
+
+export interface CompareAgentResult {
+  agent_id: string
+  status: string // completed | failed | cancelled
+  answer: string
+  error: string
+  request_id: string
+  trace_id: string
+}
+
+export interface CompareAgentsResponse {
+  status: Status
+  run_id: string
+  run_status: string // completed | partial | failed | cancelled
+  results: CompareAgentResult[]
+}
+
+export interface CompareRunSummary {
+  run_id: string
+  request_text: string
+  status: string
+  results_json: string
+  created_at: string
+}
+
+export interface GetAgentCompareRequest {
+  skill_name?: string
+}
+
+export interface GetAgentCompareResponse {
+  status: Status
+  agents: AgentMetrics[]
+  runs: CompareRunSummary[]
+}
+
+export interface SetAutonomyLevelRequest {
+  agent_id: string
+  level: number // 1..4
+}
+
+export interface SetAutonomyLevelResponse {
+  status: Status
+}
+
+export interface UndoActionRequest {
+  action_id: string
+}
+
+export interface UndoActionResponse {
+  status: Status
+  success: boolean
+  message: string
+}

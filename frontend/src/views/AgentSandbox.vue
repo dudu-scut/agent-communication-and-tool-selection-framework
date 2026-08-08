@@ -22,7 +22,7 @@
             <span>🏷️ {{ agent.version }}</span>
             <span v-if="agent.host">🌐 {{ agent.host }}:{{ agent.port }}</span>
           </div>
-          <button class="try-btn" @click="showSandboxModal">
+          <button class="try-btn" @click="showSandboxModal(agent)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Try Now
           </button>
@@ -44,11 +44,41 @@
               </div>
               <div class="modal-body">
                 <GlassCard variant="highlight" padding="lg">
-                  <EmptyState
-                    icon="mdi:flask-outline"
-                    title="沙箱模式开发中"
-                    description="Agent 沙箱执行功能正在开发中，敬请期待"
-                  />
+                  <div class="sandbox-form">
+                    <div class="sandbox-target">Agent: <strong>{{ selectedAgent?.name || '-' }}</strong></div>
+                    <textarea
+                      v-model="sandboxQueryText"
+                      class="sandbox-input"
+                      rows="3"
+                      placeholder="Enter a test question for the sandbox..."
+                    ></textarea>
+                    <button class="sandbox-run-btn" :disabled="sandboxLoading || !sandboxQueryText.trim()" @click="runSandbox">
+                      {{ sandboxLoading ? 'Executing…' : 'Run in Sandbox' }}
+                    </button>
+
+                    <!-- Loading -->
+                    <div v-if="sandboxLoading" class="sandbox-state sandbox-loading">Running through the durable pipeline…</div>
+
+                    <!-- Error -->
+                    <div v-else-if="sandboxError" class="sandbox-state sandbox-error">{{ sandboxError }}</div>
+
+                    <!-- Intervention required (autonomy gate) -->
+                    <div v-else-if="pendingInterventionId" class="sandbox-state sandbox-gated">
+                      <p>Autonomy level requires confirmation. A pending intervention was created instead of executing.</p>
+                      <p class="intervention-id">Intervention: <code>{{ pendingInterventionId }}</code></p>
+                      <div class="intervention-actions">
+                        <button class="decision-btn proceed" :disabled="deciding" @click="resolveIntervention('PROCEED')">Proceed</button>
+                        <button class="decision-btn abort" :disabled="deciding" @click="resolveIntervention('ABORT')">Abort</button>
+                      </div>
+                      <div v-if="decisionInfo" class="decision-info">{{ decisionInfo }}</div>
+                    </div>
+
+                    <!-- Result -->
+                    <div v-else-if="sandboxResult !== null" class="sandbox-state sandbox-result">
+                      <div class="result-meta" v-if="sandboxRequestId">request_id: <code>{{ sandboxRequestId }}</code></div>
+                      <pre class="result-text">{{ sandboxResult }}</pre>
+                    </div>
+                  </div>
                 </GlassCard>
               </div>
             </div>
@@ -61,9 +91,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getAgents } from '../services/grpc-client'
+import { getAgents, sandboxQuery, interventionResponse } from '../services/grpc-client'
 import GlassCard from '../components/layout/GlassCard.vue'
-import EmptyState from '../components/feedback/EmptyState.vue'
 
 interface SandboxAgent {
   id: string
@@ -77,6 +106,17 @@ interface SandboxAgent {
 
 const sandboxAgents = ref<SandboxAgent[]>([])
 const sandboxModalOpen = ref(false)
+const selectedAgent = ref<SandboxAgent | null>(null)
+
+// Sandbox execution states: loading / error / gated(intervention) / result
+const sandboxQueryText = ref('')
+const sandboxLoading = ref(false)
+const sandboxError = ref('')
+const sandboxResult = ref<string | null>(null)
+const sandboxRequestId = ref('')
+const pendingInterventionId = ref('')
+const deciding = ref(false)
+const decisionInfo = ref('')
 
 onMounted(async () => {
   try {
@@ -95,8 +135,61 @@ onMounted(async () => {
   }
 })
 
-function showSandboxModal() {
+function showSandboxModal(agent: SandboxAgent) {
+  selectedAgent.value = agent
+  sandboxQueryText.value = ''
+  sandboxError.value = ''
+  sandboxResult.value = null
+  sandboxRequestId.value = ''
+  pendingInterventionId.value = ''
+  decisionInfo.value = ''
   sandboxModalOpen.value = true
+}
+
+async function runSandbox() {
+  if (!selectedAgent.value || !sandboxQueryText.value.trim()) return
+  sandboxLoading.value = true
+  sandboxError.value = ''
+  sandboxResult.value = null
+  sandboxRequestId.value = ''
+  pendingInterventionId.value = ''
+  decisionInfo.value = ''
+  try {
+    const resp = await sandboxQuery(selectedAgent.value.id, sandboxQueryText.value.trim())
+    if (resp.intervention_required) {
+      pendingInterventionId.value = resp.intervention_id
+    } else {
+      sandboxResult.value = resp.result
+      sandboxRequestId.value = resp.request_id
+    }
+  } catch (e) {
+    sandboxError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    sandboxLoading.value = false
+  }
+}
+
+async function resolveIntervention(decision: 'PROCEED' | 'ABORT') {
+  if (!pendingInterventionId.value) return
+  deciding.value = true
+  decisionInfo.value = ''
+  try {
+    const resp = await interventionResponse(pendingInterventionId.value, decision)
+    if (resp.executed_request_id) {
+      // Deferred execution ran: fetch the result via a fresh sandbox view state.
+      pendingInterventionId.value = ''
+      sandboxRequestId.value = resp.executed_request_id
+      sandboxResult.value = `Executed (new_state=${resp.new_state}). request_id=${resp.executed_request_id}`
+      decisionInfo.value = ''
+    } else {
+      pendingInterventionId.value = ''
+      sandboxResult.value = `Decision recorded: ${resp.new_state} (no execution).`
+    }
+  } catch (e) {
+    decisionInfo.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    deciding.value = false
+  }
 }
 </script>
 
@@ -247,6 +340,40 @@ function showSandboxModal() {
 .modal-close:hover { color: var(--text-primary); background: var(--glass-bg-hover); }
 
 .modal-body { padding: 20px; }
+
+/* Sandbox form */
+.sandbox-form { display: flex; flex-direction: column; gap: 12px; }
+.sandbox-target { font-size: 13px; color: var(--text-secondary); }
+.sandbox-input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); font-size: 14px; font-family: inherit;
+  background: var(--bg-surface); color: var(--text-primary); resize: vertical; outline: none;
+}
+.sandbox-input:focus { border-color: var(--brand-primary); }
+.sandbox-run-btn {
+  padding: 10px 16px; border: none; border-radius: var(--radius-md);
+  background: var(--brand-primary); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.sandbox-run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.sandbox-state { font-size: 13px; border-radius: var(--radius-md); padding: 12px; border: 1px solid var(--border-subtle); }
+.sandbox-loading { color: var(--text-secondary); }
+.sandbox-error { color: var(--status-error, #ef4444); border-color: var(--status-error, #ef4444); }
+.sandbox-gated { color: var(--text-primary); }
+.intervention-id code { font-size: 11px; color: var(--text-tertiary); }
+.intervention-actions { display: flex; gap: 8px; margin-top: 8px; }
+.decision-btn {
+  padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-default);
+  background: var(--bg-surface); color: var(--text-primary); font-size: 13px; cursor: pointer;
+}
+.decision-btn.proceed { border-color: var(--brand-primary); color: var(--brand-primary); }
+.decision-btn.abort { border-color: var(--status-error, #ef4444); color: var(--status-error, #ef4444); }
+.decision-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.decision-info { margin-top: 8px; color: var(--status-error, #ef4444); }
+.sandbox-result .result-meta { font-size: 11px; color: var(--text-tertiary); margin-bottom: 6px; }
+.sandbox-result .result-text {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-size: 13px; color: var(--text-primary);
+}
 
 /* Responsive */
 @media (max-width: 1024px) {
