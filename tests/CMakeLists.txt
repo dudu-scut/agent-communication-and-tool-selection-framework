@@ -677,6 +677,39 @@ target_compile_definitions(test_durable_workflows_contract PRIVATE
 )
 add_test(NAME DurableWorkflowsContractTest COMMAND test_durable_workflows_contract)
 
+# PR-E: Sandbox/Compare/Intervention/Undo/Autonomy（静态守卫 + 真实 PG/Redis/gRPC 集成）
+add_executable(test_workflow_control_contract test_workflow_control_contract.cpp)
+target_link_libraries(test_workflow_control_contract
+    agent_rpc_server
+    agent_rpc_common
+    a2a_adapter
+    a2a
+    proto_lib
+    ${AGENT_RPC_PQXX_TARGET}
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_workflow_control_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+target_compile_definitions(test_workflow_control_contract PRIVATE
+    NEXUSAI_WORKFLOW_CONTROL_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
+add_test(NAME WorkflowControlContractTest COMMAND test_workflow_control_contract)
+
 # PR-C3: PG 可观测性、反馈与 Agent 生命周期（静态契约 + 真实 PG/Redis/gRPC 集成）
 add_executable(test_agent_runtime_repository_contract test_agent_runtime_repository_contract.cpp)
 target_link_libraries(test_agent_runtime_repository_contract

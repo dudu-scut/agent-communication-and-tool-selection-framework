@@ -45,6 +45,10 @@ message AIQueryRequest {
     AgentPreference preference = 7;   // Agent偏好设置
     string user_id = 8;              // 用户ID (登录后注入)
     SystemContext system_context = 9; // 平台注入的系统上下文 (记忆+历史)
+    // [PR-E] 沙箱执行标志：复用同一 durable pipeline，但跳过长期记忆
+    // (memory hints / agent-switch 摘要) 写入路径；预算/owner/trace/cost
+    // 等六步流程与正常查询完全一致。
+    bool sandbox = 10;
 }
 
 // 产物

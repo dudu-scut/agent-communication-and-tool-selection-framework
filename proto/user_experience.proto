@@ -14,10 +14,21 @@ message InterventionResponseRequest {
     string trace_id = 1;
     string decision = 2; // PROCEED, MODIFY, SKIP, ABORT
     string modification_text = 3;
+    // [PR-E] Stable identifier of the persisted interventions row. The owner
+    // is always taken from the auth context; this id selects the record.
+    string intervention_id = 4;
 }
 
 message InterventionResponseResponse {
     common.Status status = 1;
+    // [PR-E] The resolved state persisted to interventions.state.
+    string new_state = 2;
+    // [PR-E] Id of a reversible action written to undo_actions (empty when
+    // the decision is not reversible).
+    string undo_action_id = 3;
+    // [PR-E] For PROCEED/MODIFY the deferred sandbox execution runs through
+    // the durable pipeline; this is its request_id (empty otherwise).
+    string executed_request_id = 4;
 }
 
 // Sandbox query for safe user-agent interaction
@@ -30,6 +41,13 @@ message SandboxQueryRequest {
 message SandboxQueryResponse {
     common.Status status = 1;
     string result = 2;
+    // [PR-E] request_id of the real durable pipeline execution (query log /
+    // trace ids derive from it). Empty when no execution happened.
+    string request_id = 3;
+    // [PR-E] True when the owner's autonomy level required confirmation and
+    // a pending intervention was created instead of executing.
+    bool intervention_required = 4;
+    string intervention_id = 5;
 }
 
 // ============================================================================
