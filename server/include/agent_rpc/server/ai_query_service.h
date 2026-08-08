@@ -18,12 +18,13 @@
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/circuit_breaker.h"
 #include "agent_rpc/common/memory_service.h"
+#include "agent_rpc/common/query_domain_repository.h"
+#include "agent_rpc/common/postgres_budget_repository.h"
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/orchestrator/agent_router.h"
 #include "agent_rpc/orchestrator/task_planner.h"
 #include "agent_rpc/orchestrator/task_executor.h"
-#include "agent_rpc/server/budget_middleware.h"
 #include "agent_rpc/orchestrator/result_aggregator.h"
 #include "agent_rpc/server/orchestration_service_impl.h"
 #include "agent_rpc/server/multi_agent_handler.h"
@@ -44,6 +45,13 @@
 namespace agent_rpc {
 namespace server {
 
+// Defined in multi_agent_handler.cpp: the streaming multi-agent handler keeps
+// its accumulated answer/error in a thread-local slot instead of emitting
+// terminal stream events itself. The top-level QueryStream relay is the only
+// component allowed to emit "complete"/"error" events.
+std::string takeMultiAgentStreamedAnswer();
+std::string takeMultiAgentStreamError();
+
 /**
  * @brief AI Query Service implementation
  * 
@@ -63,11 +71,18 @@ public:
      * @brief Initialize the service with configuration
      * @param rpc_config RPC configuration
      * @param a2a_config A2A adapter configuration
+     * @param redis Redis client (non-owning, cache-only)
+     * @param store PostgreSQL store owned by RpcServer (non-owning reference)
+     * @param domain durable query-domain repository owned by RpcServer
+     * @param budget PostgreSQL budget repository owned by RpcServer
      * @return true if initialization successful
      */
     bool initialize(const common::RpcConfig& rpc_config,
                    const a2a_adapter::A2AConfig& a2a_config,
-                   common::RedisClient* redis = nullptr);
+                   common::RedisClient* redis,
+                   common::PostgresStore& store,
+                   common::QueryDomainRepository& domain,
+                   common::PostgresBudgetRepository& budget);
     
     /**
      * @brief Shutdown the service
@@ -142,6 +157,44 @@ private:
     std::atomic<bool> initialized_{false};
     std::unique_ptr<common::MemoryService> memory_service_;
     common::RedisClient* redis_client_ = nullptr;
+
+    // ========================================================================
+    // Durable pipeline dependencies (non-owning; RpcServer owns the objects)
+    // ========================================================================
+    common::PostgresStore* store_ = nullptr;
+    common::QueryDomainRepository* domain_repo_ = nullptr;
+    common::PostgresBudgetRepository* budget_repo_ = nullptr;
+    common::BudgetLimits budget_limits_;
+
+    // Per-request durable state carried through the fixed six-step pipeline.
+    struct DurableQueryRun {
+        std::string owner_id;
+        std::string conversation_id;
+        std::string request_id;
+        std::string trace_row_id;
+        std::string question;
+        std::string model;
+        std::int64_t estimated_tokens = 0;
+        bool first_attempt = false;
+        std::atomic<bool> finalized{false};
+    };
+
+    // Steps 2-3: ensure conversation, create running query_log/trace rows.
+    bool beginDurableRows(DurableQueryRun& run, const std::string& route,
+                          const std::string& plan_json);
+    // Step 4: PostgreSQL budget reservation; rejected requests are persisted
+    // as "rejected" before the caller returns RESOURCE_EXHAUSTED.
+    grpc::Status reserveBudgetOrReject(DurableQueryRun& run);
+    // Step 5: SystemContext assembled from PostgreSQL (Redis is cache-only).
+    void buildSystemContextFromPg(const std::string& owner_id,
+                                  const std::string& conversation_id,
+                                  agent_communication::SystemContext* system_context);
+    // Step 6: terminal persistence, executed at most once per run.
+    void finalizeDurableQuery(DurableQueryRun& run, const std::string& status,
+                              const std::string& response_text,
+                              const std::string& error_message);
+    static std::int64_t estimateTokens(const std::string& question);
+    static common::BudgetLimits budgetLimitsFromEnvironment();
 
     // ========================================================================
     // Multi-Agent Orchestration (P4-4)

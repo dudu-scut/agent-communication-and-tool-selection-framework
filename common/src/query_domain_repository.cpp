@@ -3,6 +3,7 @@
 #include <pqxx/version>
 
 #include <cstdint>
+#include <random>
 #include <string>
 #include <utility>
 
@@ -104,6 +105,23 @@ RouteQualityRecord routeQualityFromRow(const Row& row) {
     };
 }
 
+// Locally generated primary keys keep the repository free of database
+// sequences while staying collision-safe for message identifiers.
+std::string generateRowId(const char* prefix) {
+    static thread_local std::mt19937_64 generator{std::random_device{}()};
+    constexpr char kHex[] = "0123456789abcdef";
+    std::string suffix;
+    suffix.reserve(32);
+    for (int round = 0; round < 2; ++round) {
+        std::uint64_t value = generator();
+        for (int index = 0; index < 16; ++index) {
+            suffix.push_back(kHex[value & 0xf]);
+            value >>= 4;
+        }
+    }
+    return std::string{prefix} + "-" + suffix;
+}
+
 }  // namespace
 
 QueryDomainRepository::QueryDomainRepository(PostgresStore& store) : store_(store) {}
@@ -160,6 +178,38 @@ std::vector<ConversationRecord> QueryDomainRepository::listConversations(const s
     return conversations;
 }
 
+bool QueryDomainRepository::ensureConversation(const std::string& owner_id,
+                                                 const std::string& conversation_id,
+                                                 const std::string& title) {
+    bool ensured = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto existing = execParams(
+            transaction, "SELECT owner_id FROM conversations WHERE id = $1", conversation_id);
+        if (!existing.empty()) {
+            ensured = existing.front()["owner_id"].template as<std::string>() == owner_id;
+            return;
+        }
+        try {
+            const auto inserted = execParams(
+                transaction,
+                "INSERT INTO conversations "
+                "(id, owner_id, title, memory_summary, created_at, updated_at) "
+                "VALUES ($1, $2, $3, '', NOW(), NOW()) RETURNING id",
+                conversation_id, owner_id, title);
+            ensured = !inserted.empty();
+            return;
+        } catch (const pqxx::unique_violation&) {
+            // A concurrent insert won the race; fall through and accept it
+            // only when the owner matches.
+        }
+        const auto recheck = execParams(
+            transaction, "SELECT owner_id FROM conversations WHERE id = $1", conversation_id);
+        ensured = !recheck.empty() &&
+                  recheck.front()["owner_id"].template as<std::string>() == owner_id;
+    });
+    return ensured;
+}
+
 bool QueryDomainRepository::appendMessage(const MessageRecord& message) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
@@ -177,6 +227,39 @@ bool QueryDomainRepository::appendMessage(const MessageRecord& message) {
         inserted = !result.empty();
     });
     return inserted;
+}
+
+std::optional<MessageRecord> QueryDomainRepository::appendMessageAutoSequence(
+    const std::string& owner_id, const std::string& conversation_id, const std::string& role,
+    const std::string& content) {
+    std::optional<MessageRecord> stored;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        // Lock the owner's conversation row first. Every auto-sequenced
+        // append takes this lock, so the next sequence_no is assigned under
+        // serialization and concurrent appends cannot collide or overwrite
+        // each other.
+        const auto conversation = execParams(
+            transaction,
+            "SELECT id FROM conversations WHERE id = $2 AND owner_id = $1 FOR UPDATE",
+            owner_id, conversation_id);
+        if (conversation.empty()) {
+            return;
+        }
+        const auto result = execParams(
+            transaction,
+            "INSERT INTO conversation_messages "
+            "(id, owner_id, conversation_id, role, content, sequence_no, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, $5, "
+            "(SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM conversation_messages "
+            "WHERE owner_id = $2 AND conversation_id = $3), NOW(), NOW()) "
+            "RETURNING id, owner_id, conversation_id, role, content, sequence_no, "
+            "created_at::text AS created_at, updated_at::text AS updated_at",
+            generateRowId("msg"), owner_id, conversation_id, role, content);
+        if (!result.empty()) {
+            stored = messageFromRow(result.front());
+        }
+    });
+    return stored;
 }
 
 std::vector<MessageRecord> QueryDomainRepository::listMessages(const std::string& owner_id,
@@ -202,20 +285,26 @@ std::vector<MessageRecord> QueryDomainRepository::listMessages(const std::string
 bool QueryDomainRepository::createQueryLog(const QueryLogRecord& query_log) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
-        const auto result = execParams(
-            transaction,
-            "INSERT INTO query_logs "
-            "(id, owner_id, conversation_id, request_text, route_decision, execution_plan, "
-            "response_text, model, status, created_at, updated_at) "
-            "VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, '')::jsonb, '{}'::jsonb), "
-            "COALESCE(NULLIF($6, '')::jsonb, '{}'::jsonb), $7, $8, $9, "
-            "COALESCE(NULLIF($10, '')::timestamptz, NOW()), "
-            "COALESCE(NULLIF($11, '')::timestamptz, NOW())) "
-            "RETURNING id",
-            query_log.id, query_log.owner_id, query_log.conversation_id, query_log.request_text,
-            query_log.route_decision, query_log.execution_plan, query_log.response_text,
-            query_log.model, query_log.status, query_log.created_at, query_log.updated_at);
-        inserted = !result.empty();
+        try {
+            const auto result = execParams(
+                transaction,
+                "INSERT INTO query_logs "
+                "(id, owner_id, conversation_id, request_text, route_decision, execution_plan, "
+                "response_text, model, status, created_at, updated_at) "
+                "VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, '')::jsonb, '{}'::jsonb), "
+                "COALESCE(NULLIF($6, '')::jsonb, '{}'::jsonb), $7, $8, $9, "
+                "COALESCE(NULLIF($10, '')::timestamptz, NOW()), "
+                "COALESCE(NULLIF($11, '')::timestamptz, NOW())) "
+                "RETURNING id",
+                query_log.id, query_log.owner_id, query_log.conversation_id, query_log.request_text,
+                query_log.route_decision, query_log.execution_plan, query_log.response_text,
+                query_log.model, query_log.status, query_log.created_at, query_log.updated_at);
+            inserted = !result.empty();
+        } catch (const pqxx::unique_violation&) {
+            // Duplicate id (same-request retry or cross-owner reuse): never
+            // upsert; report the conflict so callers can verify ownership.
+            inserted = false;
+        }
     });
     return inserted;
 }
@@ -256,17 +345,23 @@ bool QueryDomainRepository::updateQueryLog(const QueryLogRecord& query_log) {
 bool QueryDomainRepository::createTrace(const TraceRecord& trace) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
-        const auto result = execParams(
-            transaction,
-            "INSERT INTO traces "
-            "(id, owner_id, query_log_id, trace_payload, status, created_at, updated_at) "
-            "VALUES ($1, $2, $3, COALESCE(NULLIF($4, '')::jsonb, '{}'::jsonb), $5, "
-            "COALESCE(NULLIF($6, '')::timestamptz, NOW()), "
-            "COALESCE(NULLIF($7, '')::timestamptz, NOW())) "
-            "RETURNING id",
-            trace.id, trace.owner_id, trace.query_log_id, trace.trace_payload, trace.status,
-            trace.created_at, trace.updated_at);
-        inserted = !result.empty();
+        try {
+            const auto result = execParams(
+                transaction,
+                "INSERT INTO traces "
+                "(id, owner_id, query_log_id, trace_payload, status, created_at, updated_at) "
+                "VALUES ($1, $2, $3, COALESCE(NULLIF($4, '')::jsonb, '{}'::jsonb), $5, "
+                "COALESCE(NULLIF($6, '')::timestamptz, NOW()), "
+                "COALESCE(NULLIF($7, '')::timestamptz, NOW())) "
+                "RETURNING id",
+                trace.id, trace.owner_id, trace.query_log_id, trace.trace_payload, trace.status,
+                trace.created_at, trace.updated_at);
+            inserted = !result.empty();
+        } catch (const pqxx::unique_violation&) {
+            // Duplicate id (same-request retry or cross-owner reuse): never
+            // upsert; report the conflict so callers can verify ownership.
+            inserted = false;
+        }
     });
     return inserted;
 }

@@ -6,6 +6,8 @@
 #include "agent_rpc/common/redis_client.h"
 #include "agent_rpc/common/postgres_store.h"
 #include "agent_rpc/common/auth_repository.h"
+#include "agent_rpc/common/query_domain_repository.h"
+#include "agent_rpc/common/postgres_budget_repository.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/registry/service_registry.h"
 #include "agent_rpc/server/agent_lifecycle_service.h"
@@ -102,6 +104,10 @@ private:
     std::unique_ptr<common::RedisClient> redis_client_;
     std::unique_ptr<common::PostgresStore> postgres_store_;
     std::unique_ptr<common::AuthRepository> auth_repository_;
+    // RpcServer is the single owner of the durable PostgreSQL repositories;
+    // AIQueryServiceImpl only keeps non-owning references to them.
+    std::unique_ptr<common::QueryDomainRepository> query_domain_repository_;
+    std::unique_ptr<common::PostgresBudgetRepository> budget_repository_;
     
     // A2A配置
     a2a_adapter::A2AConfig a2a_config_;

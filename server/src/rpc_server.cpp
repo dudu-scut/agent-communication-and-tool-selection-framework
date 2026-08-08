@@ -97,6 +97,10 @@ RpcServer::~RpcServer() {
     agent_lifecycle_service_impl_.reset();
     user_experience_service_impl_.reset();
     observability_service_impl_.reset();
+    query_domain_repository_.reset();
+    budget_repository_.reset();
+    auth_repository_.reset();
+    postgres_store_.reset();
     server_.reset();
     builders_.clear();
 }
@@ -107,9 +111,12 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
 
     auth_service_impl_.reset();
     auth_repository_.reset();
+    query_domain_repository_.reset();
+    budget_repository_.reset();
     postgres_store_.reset();
 
-    // Authentication is durable and fails closed when PostgreSQL is unavailable.
+    // Authentication and the durable query pipeline are PostgreSQL-backed and
+    // fail closed when the database is unavailable.
     try {
         postgres_store_ = std::make_unique<common::PostgresStore>(
             common::PostgresConfig::fromEnvironment());
@@ -117,14 +124,22 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
             throw common::PostgresUnavailable("PostgreSQL health check failed");
         }
         auth_repository_ = std::make_unique<common::AuthRepository>(*postgres_store_);
+        query_domain_repository_ =
+            std::make_unique<common::QueryDomainRepository>(*postgres_store_);
+        budget_repository_ =
+            std::make_unique<common::PostgresBudgetRepository>(*postgres_store_);
     } catch (const common::PostgresUnavailable& error) {
         LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
         auth_repository_.reset();
+        query_domain_repository_.reset();
+        budget_repository_.reset();
         postgres_store_.reset();
         return false;
     } catch (const std::exception& error) {
         LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
         auth_repository_.reset();
+        query_domain_repository_.reset();
+        budget_repository_.reset();
         postgres_store_.reset();
         return false;
     }
@@ -159,9 +174,14 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     // 初始化序列化器
     common::MessageSerializer::getInstance().initialize(common::SerializerFactory::PROTOBUF_BINARY);
     
-    // 初始化AI查询服务
-    if (!ai_query_service_impl_->initialize(config_, a2a_config_, redis_client_.get())) {
-        LOG_WARN("Failed to initialize AI Query Service, continuing without it");
+    // 初始化AI查询服务：durable pipeline 依赖三个 PostgreSQL 对象，任一
+    // 初始化失败即启动失败（不注册 Query 服务，不允许静默降级）。
+    if (!ai_query_service_impl_->initialize(config_, a2a_config_, redis_client_.get(),
+                                            *postgres_store_,
+                                            *query_domain_repository_,
+                                            *budget_repository_)) {
+        LOG_ERROR("Failed to initialize AI Query Service; refusing to start without it");
+        return false;
     }
 
     // P0-2: Wire AgentRouter to AgentCommunicationService for registration sync

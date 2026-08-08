@@ -610,3 +610,36 @@ target_compile_definitions(test_query_domain_repository_contract PRIVATE
     NEXUSAI_QUERY_DOMAIN_REPOSITORY_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../common/src/query_domain_repository.cpp"
 )
 add_test(NAME QueryDomainRepositoryContractTest COMMAND test_query_domain_repository_contract)
+
+# PR-C2: Query/QueryStream durable pipeline（静态契约 + 真实 PG/Redis/gRPC 集成）
+add_executable(test_durable_query_pipeline test_durable_query_pipeline.cpp)
+target_link_libraries(test_durable_query_pipeline
+    agent_rpc_server
+    agent_rpc_common
+    a2a_adapter
+    a2a
+    proto_lib
+    ${AGENT_RPC_PQXX_TARGET}
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_durable_query_pipeline PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+target_compile_definitions(test_durable_query_pipeline PRIVATE
+    NEXUSAI_PIPELINE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
+add_test(NAME DurableQueryPipelineTest COMMAND test_durable_query_pipeline)

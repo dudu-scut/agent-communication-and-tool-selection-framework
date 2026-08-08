@@ -25,6 +25,33 @@
 namespace agent_rpc {
 namespace server {
 
+namespace {
+
+// PR-C2: MultiAgentHandler never emits terminal stream events. The top-level
+// AIQueryServiceImpl::QueryStream is the single emitter of "complete" and
+// "error" events; this thread-local slot hands the accumulated answer/error
+// back to it after handleQueryStream returns.
+struct StreamResultSlot {
+    std::string answer;
+    std::string error;
+};
+
+thread_local StreamResultSlot tls_stream_result;
+
+}  // namespace
+
+std::string takeMultiAgentStreamedAnswer() {
+    std::string answer = std::move(tls_stream_result.answer);
+    tls_stream_result.answer.clear();
+    return answer;
+}
+
+std::string takeMultiAgentStreamError() {
+    std::string error = std::move(tls_stream_result.error);
+    tls_stream_result.error.clear();
+    return error;
+}
+
 MultiAgentHandler::MultiAgentHandler(
     orchestrator::TaskPlanner* planner,
     orchestrator::AgentRouter* router,
@@ -230,7 +257,7 @@ grpc::Status MultiAgentHandler::handleQueryStream(
     grpc::ServerWriter<agent_communication::AIStreamEvent>* writer,
     const std::string& request_id) {
 
-    (void)context;
+    tls_stream_result = StreamResultSlot{};
     auto start_time = std::chrono::steady_clock::now();
     std::string question = request->question();
     std::string context_id = request->context_id();
@@ -256,10 +283,37 @@ grpc::Status MultiAgentHandler::handleQueryStream(
 
     task_planner_->resolveAgents(plan, *agent_router_);
 
-    // Single-agent fast path
+    // Single-agent fast path. The relay below filters terminal events coming
+    // from the A2A adapter, records partial content, and checks both
+    // context->IsCancelled() and the writer result. No terminal event is
+    // emitted here; AIQueryServiceImpl owns the single terminal emission.
     if (plan.is_single_agent) {
-        auto write_cb = [writer](const agent_communication::AIStreamEvent& event) {
-            writer->Write(event);
+        bool cancelled = false;
+        bool write_failed = false;
+        std::string lower_error;
+
+        auto write_cb = [context, writer, &cancelled, &write_failed,
+                         &lower_error](const agent_communication::AIStreamEvent& event) {
+            if (event.event_type() == "complete") {
+                return;  // filtered: terminal belongs to the service layer
+            }
+            if (event.event_type() == "error") {
+                if (lower_error.empty()) {
+                    lower_error = event.content().empty()
+                        ? "Agent reported an error" : event.content();
+                }
+                return;  // filtered: terminal belongs to the service layer
+            }
+            if (context->IsCancelled()) {
+                cancelled = true;
+                return;
+            }
+            if (event.event_type() == "partial") {
+                tls_stream_result.answer += event.content();
+            }
+            if (!writer->Write(event)) {
+                write_failed = true;
+            }
         };
 
         std::string agent_url;
@@ -281,11 +335,7 @@ grpc::Status MultiAgentHandler::handleQueryStream(
             }
         } catch (const std::exception& e) {
             LOG_ERROR("Single-agent streaming failed: " + request_id + " - " + e.what());
-            agent_communication::AIStreamEvent error_event;
-            error_event.set_event_type("error");
-            error_event.set_content(std::string("Agent communication failed: ") + e.what());
-            error_event.set_context_id(context_id);
-            writer->Write(error_event);
+            tls_stream_result.error = std::string("Agent communication failed: ") + e.what();
 
             auto end_time = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -297,13 +347,21 @@ grpc::Status MultiAgentHandler::handleQueryStream(
                                    std::string("Agent streaming failed: ") + e.what()));
         }
 
-        agent_communication::AIStreamEvent complete;
-        complete.set_event_type("complete");
-        complete.set_context_id(context_id);
-        if (auto* tc = common::TraceContext::current()) {
-            complete.set_trace_summary(tc->traceSummary());
+        if (cancelled) {
+            update_status_(request_id, "cancelled", "", "", "");
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
         }
-        writer->Write(complete);
+        if (!lower_error.empty()) {
+            tls_stream_result.error = lower_error;
+            update_status_(request_id, "failed", "", "", lower_error);
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                               QueryHelpers::sanitizeErrorMessage(lower_error));
+        }
+        if (write_failed) {
+            tls_stream_result.error = "Failed to write stream event";
+            update_status_(request_id, "failed", "", "", "Failed to write stream event");
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to write stream event");
+        }
 
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -371,13 +429,9 @@ grpc::Status MultiAgentHandler::handleQueryStream(
         answer_event.set_context_id(context_id);
         writer->Write(answer_event);
 
-        agent_communication::AIStreamEvent complete_event;
-        complete_event.set_event_type("complete");
-        complete_event.set_context_id(context_id);
-        if (auto* tc = common::TraceContext::current()) {
-            complete_event.set_trace_summary(tc->traceSummary());
-        }
-        writer->Write(complete_event);
+        // The accumulated answer is handed to the service layer, which emits
+        // the single terminal event after this call returns.
+        tls_stream_result.answer = aggregated.final_answer;
 
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -399,11 +453,9 @@ grpc::Status MultiAgentHandler::handleQueryStream(
         update_status_(request_id, "failed", "", "", e.what());
         record_metrics_("QueryStream", duration.count(), false);
 
-        agent_communication::AIStreamEvent error_event;
-        error_event.set_event_type("error");
-        error_event.set_content(std::string("Multi-agent orchestration failed: ") + e.what());
-        error_event.set_context_id(context_id);
-        writer->Write(error_event);
+        // Hand the failure to the service layer; it owns the terminal event.
+        tls_stream_result.error =
+            std::string("Multi-agent orchestration failed: ") + e.what();
 
         return grpc::Status(grpc::StatusCode::INTERNAL,
                            std::string("Multi-agent orchestration failed: ") + e.what());

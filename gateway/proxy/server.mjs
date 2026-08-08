@@ -180,9 +180,16 @@ function streamCall(serviceName, methodName, body, metadata, res) {
 
   const stream = client[grpcMethod](body, metadata);
   let ended = false;
+  // PR-C2: the gRPC server is the single authoritative emitter of terminal
+  // events. Track whether a terminal event (complete/error) was relayed and
+  // only synthesize a fallback complete when gRPC ended without one.
+  let completeSeen = false;
 
   stream.on('data', (event) => {
     if (ended) return;
+    if (event && (event.event_type === 'complete' || event.event_type === 'error')) {
+      completeSeen = true;
+    }
     const json = JSON.stringify(sanitizeBuffers(event));
     res.write(`data: ${json}\n\n`);
   });
@@ -190,7 +197,9 @@ function streamCall(serviceName, methodName, body, metadata, res) {
   stream.on('end', () => {
     if (ended) return;
     ended = true;
-    res.write(`data: ${JSON.stringify({ event_type: 'complete' })}\n\n`);
+    if (!completeSeen) {
+      res.write(`data: ${JSON.stringify({ event_type: 'complete' })}\n\n`);
+    }
     res.end();
   });
 
@@ -208,7 +217,8 @@ function streamCall(serviceName, methodName, body, metadata, res) {
     res.end();
   });
 
-  // Handle client disconnect
+  // Handle client disconnect: browser/SSE close must cancel the gRPC stream
+  // so the server can persist the cancelled terminal state.
   res.on('close', () => {
     if (!ended) {
       ended = true;

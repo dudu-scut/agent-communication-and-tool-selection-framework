@@ -99,9 +99,26 @@ public:
                                                             const std::string& conversation_id);
     std::vector<ConversationRecord> listConversations(const std::string& owner_id);
 
+    // Confirms that a conversation exists for the owner, creating it on first
+    // use. Idempotent for the same owner; returns false when the conversation
+    // id is already owned by another user (or on database failure).
+    bool ensureConversation(const std::string& owner_id, const std::string& conversation_id,
+                            const std::string& title);
+
     // Returns false only when the owner/conversation/sequence tuple already
     // exists. Other PostgreSQL failures propagate to the caller.
     bool appendMessage(const MessageRecord& message);
+
+    // Appends a message while assigning the next conversation sequence inside
+    // a single transaction that first locks the owner's conversation row. The
+    // sequence is never computed by callers (no MAX()+1 outside the
+    // transaction). Returns the stored message, or std::nullopt when the
+    // conversation does not belong to the owner.
+    std::optional<MessageRecord> appendMessageAutoSequence(const std::string& owner_id,
+                                                             const std::string& conversation_id,
+                                                             const std::string& role,
+                                                             const std::string& content);
+
     std::vector<MessageRecord> listMessages(const std::string& owner_id,
                                              const std::string& conversation_id);
 
@@ -111,7 +128,9 @@ public:
 
     // Owner-scoped terminal update of an existing query log. This is a plain
     // UPDATE and never inserts: it returns false when the row does not exist
-    // or belongs to another owner.
+    // or belongs to another owner. Only the persisted terminal fields are
+    // written (response_text, model, status, updated_at); every other record
+    // field is ignored.
     bool updateQueryLog(const QueryLogRecord& query_log);
 
     bool createTrace(const TraceRecord& trace);
@@ -120,6 +139,8 @@ public:
 
     // Owner-scoped terminal update of an existing trace. Same contract as
     // updateQueryLog: missing or cross-owner rows return false, no upsert.
+    // Only the persisted terminal fields are written (trace_payload, status,
+    // updated_at); every other record field is ignored.
     bool updateTrace(const TraceRecord& trace);
 
     bool appendTokenUsageLedger(const TokenUsageLedgerRecord& usage);
