@@ -4,6 +4,12 @@
  *
  * PostgreSQL is the durable source of truth (traces / token_usage_ledger);
  * Redis is no longer consulted for observability reads (PR-C3).
+ *
+ * Auth-disabled semantics (M1): the owner key is ALWAYS taken from the
+ * authenticated context. When auth is disabled there is no identity, so the
+ * owner is empty and every owner-scoped read returns NOT_FOUND / empty rows.
+ * This is intentional: observability data is owner-scoped by construction and
+ * there is no fallback to owner-less views.
  */
 
 #pragma once

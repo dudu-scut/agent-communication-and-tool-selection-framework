@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE (PR-C3): RegisterAgent is an ADMIN-only RPC. The login user below must
+# match NEXUSAI_ADMIN_USERNAME (see .env.example), otherwise every registration
+# in this script fails with PERMISSION_DENIED.
 GRPCURL="$HOME/.local/bin/grpcurl"
 SERVER="localhost:50051"
 

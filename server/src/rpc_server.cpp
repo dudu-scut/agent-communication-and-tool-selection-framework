@@ -208,8 +208,11 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
             service_impl_->setAgentRouter(router);
             // PR-C3: owner-aware routing quality. The provider runs on the
             // serving thread, so the authenticated owner comes from the
-            // thread-local auth context set by AuthInterceptor. A negative
-            // return means "no feedback for this owner" — the router then
+            // thread-local auth context set by AuthInterceptor. It reads the
+            // PRE-AGGREGATED agent_route_quality row (kept fresh by
+            // SubmitFeedback and the hourly aggregator) instead of scanning
+            // the raw feedback table on the routing hot path. A negative
+            // return means "no quality data for this owner" — the router then
             // uses its neutral default and never borrows another owner's
             // ratings.
             common::AgentRuntimeRepository* runtime_repo = runtime_repository_.get();
@@ -223,9 +226,17 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
                     if (owner.empty()) {
                         return -1.0;
                     }
-                    const auto rate = runtime_repo->feedbackApprovalRate(
-                        owner, agent_id, skill_name);
-                    return rate.value_or(-1.0);
+                    try {
+                        const auto quality = runtime_repo->getRouteQuality(
+                            owner, agent_id, skill_name);
+                        if (!quality.has_value()) {
+                            return -1.0;
+                        }
+                        const double weight = std::stod(quality->routing_weight);
+                        return weight > 0.0 ? weight : -1.0;
+                    } catch (const std::exception&) {
+                        return -1.0;
+                    }
                 });
         }
     }

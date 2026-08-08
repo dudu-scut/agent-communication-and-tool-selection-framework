@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <ctime>
 #include <fstream>
 #include <iterator>
@@ -375,6 +376,30 @@ TEST_F(AgentRuntimeRepositoryTest, DailyCostReportIsOwnerScopedAndFlaggedEstimat
     EXPECT_TRUE(context->runtime->dailyCostReport(owner_b, today, today).empty());
 }
 
+// I2: a heartbeat must heal a registry row that never got written because
+// PostgreSQL was down when RegisterAgent ran.
+TEST_F(AgentRuntimeRepositoryTest, HeartbeatUpsertHealsMissingRegistryRow) {
+    auto context = makeContext();
+    if (!context) {
+        GTEST_SKIP() << "PostgreSQL test DSN is unavailable";
+    }
+
+    const std::string agent_id = "c3-heal-" + uniqueSuffix();
+    EXPECT_FALSE(context->runtime->getAgent(agent_id).has_value());
+
+    // No row exists yet — the upsert heartbeat creates a minimal placeholder.
+    ASSERT_TRUE(context->runtime->updateAgentHeartbeat(agent_id));
+    EXPECT_EQ(countRows(*context->store, "agent_registry", "agent_id", agent_id), 1);
+    auto record = context->runtime->getAgent(agent_id);
+    ASSERT_TRUE(record.has_value());
+    EXPECT_EQ(record->owner_id, "system");
+    EXPECT_EQ(record->health_status, "healthy");
+
+    // A second heartbeat updates in place instead of duplicating the row.
+    ASSERT_TRUE(context->runtime->updateAgentHeartbeat(agent_id));
+    EXPECT_EQ(countRows(*context->store, "agent_registry", "agent_id", agent_id), 1);
+}
+
 // ============================================================================
 // 3. End-to-end gRPC (real RpcServer + PostgreSQL + Redis, mock A2A agent)
 // ============================================================================
@@ -507,8 +532,31 @@ protected:
         std::string role;
     };
 
+    static bool portFree(int port) {
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            return false;
+        }
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = htons(static_cast<std::uint16_t>(port));
+        const bool free =
+            ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+        ::close(fd);
+        return free;
+    }
+
     static int nextPort() {
         static std::atomic<int> port{52460};
+        // Skip ports that something else already holds (e.g. leftovers from a
+        // previous run) so consecutive e2e servers never collide on bind.
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            const int candidate = port.fetch_add(1);
+            if (portFree(candidate)) {
+                return candidate;
+            }
+        }
         return port.fetch_add(1);
     }
 
@@ -1060,6 +1108,48 @@ TEST_F(AgentRuntimeE2ETest, ObservabilitySurvivesRedisFlush) {
     const auto stored = handles_->runtime->getAgent(agent_id);
     ASSERT_TRUE(stored.has_value());
     EXPECT_EQ(stored->display_name, "Flush Agent");
+}
+
+// C1 regression: the pre-fix generateRowId emitted 16 copies of one nibble
+// (~8 bits of entropy), so the second SubmitFeedback already collided and the
+// unique_violation escaped the handler. 50 consecutive submissions through
+// the real RPC path must all succeed against real PostgreSQL.
+TEST_F(AgentRuntimeE2ETest, BulkFeedbackSubmissionsAllSucceed) {
+    startServer();
+    const auto owner = registerUser("c3-bulk-" + uniqueSuffix());
+    const std::string agent_id = "c3-bulk-agent";
+
+    // Five traces keep the per-submission aggregation scans small.
+    std::vector<std::string> request_ids;
+    request_ids.reserve(5);
+    for (int index = 0; index < 5; ++index) {
+        request_ids.push_back(seedTrace(owner.id));
+    }
+
+    for (int index = 0; index < 50; ++index) {
+        agent_communication::SubmitFeedbackRequest request;
+        request.set_trace_id(request_ids[index % request_ids.size()]);
+        request.set_agent_id(agent_id);
+        request.set_skill_name("skill-" + std::to_string(index % 5));
+        request.set_rating(4);
+        agent_communication::SubmitFeedbackResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, owner);
+        const auto status = lifecycle_stub_->SubmitFeedback(&context, request, &response);
+        ASSERT_TRUE(status.ok()) << "submission " << index << ": " << status.error_message();
+    }
+
+    EXPECT_EQ(countRows("feedback", "owner_id", owner.id), 50);
+    // Every owner/agent/skill triple got its aggregated quality row.
+    for (int skill = 0; skill < 5; ++skill) {
+        const auto quality = handles_->runtime->getRouteQuality(
+            owner.id, agent_id, "skill-" + std::to_string(skill));
+        ASSERT_TRUE(quality.has_value()) << "skill " << skill;
+        EXPECT_EQ(quality->sample_count, 10);
+        // Ten 4-star ratings: (10 positive + 2) / (10 total + 4).
+        EXPECT_NEAR(std::stod(quality->routing_weight),
+                    12.0 / 14.0, 1e-6);
+    }
 }
 
 }  // namespace

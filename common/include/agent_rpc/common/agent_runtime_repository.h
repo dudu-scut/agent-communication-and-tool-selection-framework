@@ -99,15 +99,13 @@ public:
     // --- agent registry (platform-scoped rows use owner_id "system") -------
 
     bool upsertAgentRegistry(const AgentRegistryRecord& record);
+    // Upsert semantics: refreshes last_heartbeat/health when the row exists and
+    // heals a missing row (minimal system-owned placeholder) when it does not,
+    // so a registration-time PostgreSQL outage self-heals on the next heartbeat.
     bool updateAgentHeartbeat(const std::string& agent_id);
     bool markAgentStatus(const std::string& agent_id, const std::string& health_status);
     std::optional<AgentRegistryRecord> getAgent(const std::string& agent_id);
     std::vector<AgentRegistryRecord> listAgents();
-
-    // --- owner verification helpers ----------------------------------------
-
-    bool ownsQueryLog(const std::string& owner_id, const std::string& query_log_id);
-    bool ownsTrace(const std::string& owner_id, const std::string& trace_id);
 
     // --- feedback & owner-scoped route quality ------------------------------
 
@@ -135,6 +133,10 @@ public:
 
     // --- invocation facts ----------------------------------------------------
 
+    // NOTE: agent_invocations currently has NO production writer — wiring the
+    // query pipeline as its producer belongs to the final wrap-up task, not to
+    // PR-C3. The hourly metrics aggregation therefore runs against an empty
+    // table until then (see main.cpp).
     bool recordInvocation(const AgentInvocationRecord& invocation);
     std::vector<AgentInvocationRecord> listInvocationsByOwner(const std::string& owner_id);
     std::vector<InvocationMetricsRecord> aggregateInvocationMetrics();

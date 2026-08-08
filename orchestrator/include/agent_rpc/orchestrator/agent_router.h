@@ -370,8 +370,11 @@ private:
     
     /**
      * @brief Select agent using current strategy
-     * @param candidates List of candidate agents
+     * @param candidates List of candidate agents (snapshot taken under lock)
      * @return Selected agent
+     *
+     * Must be called WITHOUT holding agents_mutex_: quality-based strategies
+     * consult the injected provider, which may hit PostgreSQL.
      */
     AgentInfo selectByStrategy(const std::vector<AgentInfo>& candidates);
     
@@ -430,7 +433,6 @@ private:
     std::unordered_map<std::string, AgentInfo> agents_;
     std::atomic<RoutingStrategy> strategy_{RoutingStrategy::SKILL_MATCH};
     std::atomic<size_t> round_robin_index_{0};
-    std::mt19937 random_generator_;  // 仅在持有 agents_mutex_ 的调用路径中使用，因此线程安全 (fix #24)
     bool initialized_ = false;
 
     // Inverted keyword index: keyword → list of (skill, IDF weight) entries.

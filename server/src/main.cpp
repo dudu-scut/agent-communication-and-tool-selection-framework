@@ -308,6 +308,10 @@ int main(int argc, char* argv[]) {
         "feedback_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculate(); },
         std::chrono::seconds(3600));
+    // NOTE: agent_invocations has no production writer yet (wiring the query
+    // pipeline is part of the final wrap-up task), so this hourly task
+    // currently aggregates over an empty table and only refreshes the Redis
+    // agent_metrics cache when rows exist.
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "agent_metrics_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculateMetrics(); },
@@ -342,8 +346,8 @@ int main(int argc, char* argv[]) {
         std::chrono::seconds(30));
 
     // PR-C3: the legacy CronScheduler and canary-evaluation background tasks
-    // were removed. Cron execution is re-introduced by PR-D (durable, PG-backed)
-    // and canary weighting was dropped together with the CANARY/DEPRECATED
+    // were removed per the local delivery boundary and are NOT planned to be
+    // rebuilt. Canary weighting was dropped together with the CANARY/DEPRECATED
     // router modifiers — routing quality is now owner-scoped PostgreSQL data.
 
     // ========================================================================

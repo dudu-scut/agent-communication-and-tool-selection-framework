@@ -111,12 +111,21 @@ bool AgentRuntimeRepository::upsertAgentRegistry(const AgentRegistryRecord& reco
 }
 
 bool AgentRuntimeRepository::updateAgentHeartbeat(const std::string& agent_id) {
+    // Upsert semantics: a heartbeat must heal a missing registry row (e.g. the
+    // original RegisterAgent persisted nothing because PostgreSQL was down at
+    // that moment). A pure UPDATE would silently succeed with 0 rows and the
+    // gap would never self-heal.
     bool ok = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
         const auto result = execParams(
             transaction,
-            "UPDATE agent_registry SET last_heartbeat = NOW(), health_status = 'healthy', "
-            "updated_at = NOW() WHERE agent_id = $1",
+            "INSERT INTO agent_registry (id, owner_id, agent_id, display_name, capabilities, "
+            "health_status, last_heartbeat, updated_at) "
+            "VALUES ('registry-' || $1, 'system', $1, $1, '{}'::jsonb, 'healthy', NOW(), NOW()) "
+            "ON CONFLICT (owner_id, agent_id) DO UPDATE SET "
+            "health_status = 'healthy', "
+            "last_heartbeat = NOW(), "
+            "updated_at = NOW()",
             agent_id);
         ok = result.affected_rows() > 0;
     });
@@ -169,36 +178,6 @@ std::vector<AgentRegistryRecord> AgentRuntimeRepository::listAgents() {
         }
     });
     return records;
-}
-
-// ============================================================================
-// owner verification helpers
-// ============================================================================
-
-bool AgentRuntimeRepository::ownsQueryLog(const std::string& owner_id,
-                                          const std::string& query_log_id) {
-    bool owned = false;
-    store_.executeTransaction([&](pqxx::work& transaction) {
-        const auto result = execParams(
-            transaction,
-            "SELECT 1 FROM query_logs WHERE id = $1 AND owner_id = $2",
-            query_log_id, owner_id);
-        owned = !result.empty();
-    });
-    return owned;
-}
-
-bool AgentRuntimeRepository::ownsTrace(const std::string& owner_id,
-                                       const std::string& trace_id) {
-    bool owned = false;
-    store_.executeTransaction([&](pqxx::work& transaction) {
-        const auto result = execParams(
-            transaction,
-            "SELECT 1 FROM traces WHERE id = $1 AND owner_id = $2",
-            trace_id, owner_id);
-        owned = !result.empty();
-    });
-    return owned;
 }
 
 // ============================================================================

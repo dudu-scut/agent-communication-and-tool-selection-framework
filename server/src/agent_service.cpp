@@ -324,6 +324,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     }
 
     std::string agent_id = info.service_name() + "-" + info.host() + "-" + std::to_string(info.port());
+    const int liveness_ttl = livenessTtlSeconds(request->heartbeat_interval());
 
     common::ServiceEndpoint endpoint;
     endpoint.host = info.host();
@@ -347,6 +348,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
         std::lock_guard<std::mutex> lock(agents_mutex_);
         agents_[agent_id] = endpoint;
         agent_message_queues_.try_emplace(agent_id);
+        agent_liveness_ttl_[agent_id] = liveness_ttl;
         addToIndexes(agent_id, endpoint);
     }
 
@@ -380,8 +382,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     }
     // Redis carries only the short-lived liveness cache.
     if (redis_) {
-        redis_->setex("agent:liveness:" + agent_id,
-                      livenessTtlSeconds(request->heartbeat_interval()), "1");
+        redis_->setex("agent:liveness:" + agent_id, liveness_ttl, "1");
     }
 
     // P0-2: Sync to AgentRouter for orchestrator routing
@@ -450,6 +451,7 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
         removeFromIndexes(agent_id);
         agents_.erase(agent_id);
         agent_message_queues_.erase(agent_id);
+        agent_liveness_ttl_.erase(agent_id);
     }
 
     common::Metrics::getInstance().recordDisconnection(agent_id);
@@ -493,7 +495,9 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
 
     updateAgentHeartbeat(request->agent_id());
 
-    // PR-C3: refresh the durable registry fact and the liveness cache.
+    // PR-C3: refresh the durable registry fact and the liveness cache. The
+    // repository call uses upsert semantics, so a heartbeat heals a registry
+    // row that was lost when PostgreSQL was down during RegisterAgent.
     if (runtime_repository_) {
         try {
             runtime_repository_->updateAgentHeartbeat(request->agent_id());
@@ -503,8 +507,18 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
         }
     }
     if (redis_) {
-        redis_->setex("agent:liveness:" + request->agent_id(),
-                      kDefaultLivenessTtlSeconds, "1");
+        // Align the liveness TTL with the interval negotiated at registration
+        // time (max(3*interval, 300s)); fall back to the 5-minute default when
+        // the agent never registered through this process.
+        int ttl = kDefaultLivenessTtlSeconds;
+        {
+            std::lock_guard<std::mutex> lock(agents_mutex_);
+            const auto ttl_it = agent_liveness_ttl_.find(request->agent_id());
+            if (ttl_it != agent_liveness_ttl_.end()) {
+                ttl = ttl_it->second;
+            }
+        }
+        redis_->setex("agent:liveness:" + request->agent_id(), ttl, "1");
     }
 
     // P0-2: Propagate heartbeat to AgentRouter

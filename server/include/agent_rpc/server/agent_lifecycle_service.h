@@ -12,6 +12,9 @@ namespace agent_rpc { namespace server {
 
 class AgentLifecycleServiceImpl final : public agent_communication::AgentLifecycleService::Service {
 public:
+    // Auth-disabled semantics (M1): SubmitFeedback requires an authenticated
+    // owner — when auth is disabled there is no identity, so the RPC returns
+    // UNAUTHENTICATED and no owner-less feedback is ever written.
     explicit AgentLifecycleServiceImpl(common::RedisClient* redis);
     ~AgentLifecycleServiceImpl() override = default;
 

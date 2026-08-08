@@ -5,6 +5,8 @@
 #include "agent_rpc/common/logger.h"
 #include <json/json.h>
 
+#include <pqxx/pqxx>
+
 #include <cstdint>
 #include <random>
 #include <string>
@@ -20,9 +22,10 @@ std::string generateRowId(const char* prefix) {
     std::string suffix;
     suffix.reserve(32);
     for (int round = 0; round < 2; ++round) {
-        const std::uint64_t value = generator();
+        std::uint64_t value = generator();
         for (int index = 0; index < 16; ++index) {
             suffix.push_back(kHex[value & 0xf]);
+            value >>= 4;
         }
     }
     return std::string{prefix} + "-" + suffix;
@@ -81,7 +84,6 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
     }
 
     common::RuntimeFeedbackRecord feedback;
-    feedback.id = generateRowId("feedback");
     feedback.owner_id = owner;
     feedback.query_log_id = trace->query_log_id;
     feedback.trace_id = trace->id;
@@ -90,7 +92,25 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
     feedback.rating = request->rating();
     feedback.comment = request->comment();
 
-    if (!runtime_repository_->insertFeedback(feedback)) {
+    // Persist with a unique_violation safety net: on the astronomically rare
+    // primary-key collision, retry once with a fresh id. Any database error
+    // is mapped to INTERNAL here — exceptions must never escape the handler.
+    bool inserted = false;
+    for (int attempt = 0; attempt < 2 && !inserted; ++attempt) {
+        feedback.id = generateRowId("feedback");
+        try {
+            inserted = runtime_repository_->insertFeedback(feedback);
+        } catch (const pqxx::unique_violation& error) {
+            LOG_WARN(std::string{"SubmitFeedback: primary-key collision, retrying with a new id: "} +
+                     error.what());
+        } catch (const std::exception& error) {
+            LOG_ERROR(std::string{"SubmitFeedback: feedback insert failed: "} + error.what());
+            response->mutable_status()->set_code(1);
+            response->mutable_status()->set_message("Failed to persist feedback");
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist feedback");
+        }
+    }
+    if (!inserted) {
         response->mutable_status()->set_code(1);
         response->mutable_status()->set_message("Failed to persist feedback");
         return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist feedback");

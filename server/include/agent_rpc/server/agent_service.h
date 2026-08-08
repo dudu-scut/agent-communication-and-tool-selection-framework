@@ -133,6 +133,9 @@ private:
     mutable std::mutex agents_mutex_;
     std::map<std::string, common::ServiceEndpoint> agents_;
     std::map<std::string, common::MessageQueue<agent_communication::Message>> agent_message_queues_;
+    // Redis liveness TTL negotiated at registration time (3x heartbeat interval,
+    // never below 5 minutes); Heartbeat reuses it so both paths stay aligned.
+    std::unordered_map<std::string, int> agent_liveness_ttl_;
 
     // 标签/技能倒排索引（agent_id 集合），加速 FindAgents 查询
     std::unordered_map<std::string, std::set<std::string>> tags_index_;

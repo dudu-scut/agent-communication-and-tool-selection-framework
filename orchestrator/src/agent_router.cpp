@@ -123,8 +123,7 @@ bool matchKeyword(const std::string& text, const std::string& keyword) {
 namespace agent_rpc {
 namespace orchestrator {
 
-AgentRouter::AgentRouter() 
-    : random_generator_(std::random_device{}()) {}
+AgentRouter::AgentRouter() {}
 
 AgentRouter::~AgentRouter() {
     shutdown();
@@ -196,49 +195,52 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
         }
     }
 
-    // Phase 2: Filter and select from candidate agents
-    std::lock_guard<std::mutex> lock(agents_mutex_);
-
-    if (agents_.empty()) {
-        return std::nullopt;
-    }
-
-    // Build candidate list.
-    // used_fallback=true: all four tiers failed to identify a skill, pick any healthy agent.
-    // skills_to_match.empty() without used_fallback: either required_skills was empty and
-    //   strategy_ != SKILL_MATCH (e.g. ROUND_ROBIN), or intent analysis produced no result
-    //   but we still want to serve the request with available agents.
+    // Phase 2: Filter candidates under the lock, then run strategy selection
+    // OUTSIDE the lock — quality lookups may hit PostgreSQL via the injected
+    // provider and must not hold agents_mutex_ while doing so.
     std::vector<AgentInfo> candidates;
+    {
+        std::lock_guard<std::mutex> lock(agents_mutex_);
 
-    if (used_fallback || skills_to_match.empty()) {
-        // Fallback or no skill requirements: use all healthy agents
-        for (const auto& [id, agent] : agents_) {
-            if (agent.is_healthy) {
-                candidates.push_back(agent);
-            }
-        }
-    } else {
-        // Filter agents by skill requirements
-        for (const auto& [id, agent] : agents_) {
-            if (!agent.is_healthy) continue;
-            if (!agent.hasAnySkill(skills_to_match)) continue;
-            candidates.push_back(agent);
+        if (agents_.empty()) {
+            return std::nullopt;
         }
 
-        // If no candidates found with required skills, fall back to all healthy agents
-        if (candidates.empty()) {
+        // Build candidate list.
+        // used_fallback=true: all four tiers failed to identify a skill, pick any healthy agent.
+        // skills_to_match.empty() without used_fallback: either required_skills was empty and
+        //   strategy_ != SKILL_MATCH (e.g. ROUND_ROBIN), or intent analysis produced no result
+        //   but we still want to serve the request with available agents.
+        if (used_fallback || skills_to_match.empty()) {
+            // Fallback or no skill requirements: use all healthy agents
             for (const auto& [id, agent] : agents_) {
                 if (agent.is_healthy) {
                     candidates.push_back(agent);
                 }
             }
+        } else {
+            // Filter agents by skill requirements
+            for (const auto& [id, agent] : agents_) {
+                if (!agent.is_healthy) continue;
+                if (!agent.hasAnySkill(skills_to_match)) continue;
+                candidates.push_back(agent);
+            }
+
+            // If no candidates found with required skills, fall back to all healthy agents
+            if (candidates.empty()) {
+                for (const auto& [id, agent] : agents_) {
+                    if (agent.is_healthy) {
+                        candidates.push_back(agent);
+                    }
+                }
+            }
         }
     }
-    
+
     if (candidates.empty()) {
         return std::nullopt;
     }
-    
+
     return selectByStrategy(candidates);
 }
 
@@ -631,8 +633,10 @@ AgentInfo AgentRouter::selectRoundRobin(const std::vector<AgentInfo>& candidates
 }
 
 AgentInfo AgentRouter::selectRandom(const std::vector<AgentInfo>& candidates) {
+    // thread_local generator: strategy selection runs outside agents_mutex_.
+    static thread_local std::mt19937 generator{std::random_device{}()};
     std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
-    return candidates[dist(random_generator_)];
+    return candidates[dist(generator)];
 }
 
 AgentInfo AgentRouter::selectLeastLoad(const std::vector<AgentInfo>& candidates) {
@@ -660,9 +664,11 @@ AgentInfo AgentRouter::selectWeightedByQuality(const std::vector<AgentInfo>& can
         total_weight += qc;
     }
 
-    // Weighted random selection
+    // Weighted random selection (thread_local generator: strategy selection
+    // runs outside agents_mutex_).
+    static thread_local std::mt19937 generator{std::random_device{}()};
     std::uniform_real_distribution<double> dist(0.0, total_weight);
-    double pick = dist(random_generator_);
+    double pick = dist(generator);
     double cumulative = 0.0;
     for (size_t i = 0; i < candidates.size(); ++i) {
         cumulative += weights[i];

@@ -42,8 +42,9 @@ services:
       NEXUSAI_POSTGRES_USER: ${POSTGRES_USER:-nexusai}
       NEXUSAI_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexusai-dev-password}
       NEXUSAI_MIGRATIONS_DIR: /usr/local/share/nexusai/migrations
-      # Compatibility bridge for the current FeedbackAggregator; new code must use NEXUSAI_POSTGRES_*.
-      PG_URL: postgresql://${POSTGRES_USER:-nexusai}:${POSTGRES_PASSWORD:-nexusai-dev-password}@postgres:5432/${POSTGRES_DB:-nexusai}
+      # Admin user for agent management RPCs (RegisterAgent/UnregisterAgent);
+      # empty means no user gets the ADMIN role. Pass through from .env.
+      NEXUSAI_ADMIN_USERNAME: ${NEXUSAI_ADMIN_USERNAME:-}
       RPC_SERVER_PORT: "50051"
     depends_on:
       postgres:
