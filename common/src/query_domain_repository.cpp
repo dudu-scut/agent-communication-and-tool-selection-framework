@@ -239,6 +239,20 @@ std::optional<QueryLogRecord> QueryDomainRepository::getQueryLogById(
     return query_log;
 }
 
+bool QueryDomainRepository::updateQueryLog(const QueryLogRecord& query_log) {
+    bool updated = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "UPDATE query_logs SET response_text = $3, model = $4, status = $5, "
+            "updated_at = NOW() WHERE owner_id = $1 AND id = $2 RETURNING id",
+            query_log.owner_id, query_log.id, query_log.response_text, query_log.model,
+            query_log.status);
+        updated = !result.empty();
+    });
+    return updated;
+}
+
 bool QueryDomainRepository::createTrace(const TraceRecord& trace) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
@@ -272,6 +286,21 @@ std::optional<TraceRecord> QueryDomainRepository::getTraceById(const std::string
         }
     });
     return trace;
+}
+
+bool QueryDomainRepository::updateTrace(const TraceRecord& trace) {
+    bool updated = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "UPDATE traces SET "
+            "trace_payload = COALESCE(NULLIF($3, '')::jsonb, trace_payload), "
+            "status = $4, updated_at = NOW() "
+            "WHERE owner_id = $1 AND id = $2 RETURNING id",
+            trace.owner_id, trace.id, trace.trace_payload, trace.status);
+        updated = !result.empty();
+    });
+    return updated;
 }
 
 bool QueryDomainRepository::appendTokenUsageLedger(const TokenUsageLedgerRecord& usage) {

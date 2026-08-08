@@ -109,9 +109,18 @@ public:
     std::optional<QueryLogRecord> getQueryLogById(const std::string& owner_id,
                                                   const std::string& query_log_id);
 
+    // Owner-scoped terminal update of an existing query log. This is a plain
+    // UPDATE and never inserts: it returns false when the row does not exist
+    // or belongs to another owner.
+    bool updateQueryLog(const QueryLogRecord& query_log);
+
     bool createTrace(const TraceRecord& trace);
     std::optional<TraceRecord> getTraceById(const std::string& owner_id,
                                             const std::string& trace_id);
+
+    // Owner-scoped terminal update of an existing trace. Same contract as
+    // updateQueryLog: missing or cross-owner rows return false, no upsert.
+    bool updateTrace(const TraceRecord& trace);
 
     bool appendTokenUsageLedger(const TokenUsageLedgerRecord& usage);
     std::vector<TokenUsageLedgerRecord> listTokenUsageLedgerByOwner(const std::string& owner_id);
