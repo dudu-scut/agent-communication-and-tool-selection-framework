@@ -31,6 +31,8 @@
 #include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/a2a_adapter/error_mapper.h"
 #include "agent_rpc/common/trace_context.h"
+#include "agent_rpc/orchestrator/export_service.h"
+#include "agent_rpc/orchestrator/replay_service.h"
 #include "agent_rpc/common/cost_tracker.h"
 #include <nlohmann/json.hpp>
 
@@ -1115,10 +1117,11 @@ grpc::Status AIQueryServiceImpl::ReplayQuery(
     if (orchestration_impl_) {
         return orchestration_impl_->replayQuery(context, request, response);
     }
-    auto* status = response->mutable_status();
-    status->set_code(-1);
-    status->set_message("Orchestration service not available");
-    return grpc::Status(grpc::StatusCode::UNAVAILABLE, "Orchestration service not available");
+    // PR-D: replay is durable (PostgreSQL + pipeline) and works even when
+    // the multi-agent orchestrator is disabled; owner comes from the
+    // authenticated session.
+    return orchestrator::ReplayService::handleReplayRequest(
+        AuthInterceptor::currentUserId(), request, response);
 }
 
 grpc::Status AIQueryServiceImpl::ExportConversation(
@@ -1132,10 +1135,10 @@ grpc::Status AIQueryServiceImpl::ExportConversation(
     if (orchestration_impl_) {
         return orchestration_impl_->exportConversation(context, request, response);
     }
-    auto* status = response->mutable_status();
-    status->set_code(-1);
-    status->set_message("Orchestration service not available");
-    return grpc::Status(grpc::StatusCode::UNAVAILABLE, "Orchestration service not available");
+    // PR-D: export reads PostgreSQL conversation messages directly and does
+    // not depend on the multi-agent orchestrator.
+    return orchestrator::ExportService::handleExportRequest(
+        AuthInterceptor::currentUserId(), request, response);
 }
 
 } // namespace server

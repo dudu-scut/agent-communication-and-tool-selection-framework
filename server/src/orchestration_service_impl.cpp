@@ -179,35 +179,13 @@ grpc::Status OrchestrationServiceImpl::replayQuery(
                            "Valid authentication token required");
     }
 
-    const std::string& trace_id = request->trace_id();
-    const std::string& mode = request->mode();
-
-    if (trace_id.empty()) {
-        auto* status = response->mutable_status();
-        status->set_code(-1);
-        status->set_message("trace_id is required");
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                           "trace_id is required");
-    }
-
-    LOG_INFO("ReplayQuery: trace=" + trace_id + " mode=" + mode);
-
-    auto* status = response->mutable_status();
-    status->set_code(0);
-    status->set_message("OK");
-
-    if (mode == "route") {
-        auto result = orchestrator::ReplayService::replayRoute(trace_id);
-        response->set_original(result.original_response);
-        response->set_replayed(result.replayed_response);
-    } else {
-        auto result = orchestrator::ReplayService::replayExact(trace_id);
-        response->set_original(result.original_response);
-        response->set_replayed(result.replayed_response);
-    }
-
-    LOG_INFO("ReplayQuery completed: trace=" + trace_id);
-    return grpc::Status::OK;
+    // PR-D: the owner always comes from the authenticated session. The
+    // durable ReplayService loads the original trace from PostgreSQL
+    // (owner-scoped; cross-owner or unknown traces are NOT_FOUND) and either
+    // compares routes (mode=route, no execution) or re-executes under a NEW
+    // request id (mode=exact) without ever modifying the original records.
+    return orchestrator::ReplayService::handleReplayRequest(
+        AuthInterceptor::currentUserId(), request, response);
 }
 
 // ============================================================================
@@ -226,46 +204,11 @@ grpc::Status OrchestrationServiceImpl::exportConversation(
                            "Valid authentication token required");
     }
 
-    const std::string& context_id = request->context_id();
-    if (context_id.empty()) {
-        auto* status = response->mutable_status();
-        status->set_code(-1);
-        status->set_message("context_id is required");
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                           "context_id is required");
-    }
-
-    LOG_INFO("ExportConversation: context=" + context_id +
-             " format=" + request->format());
-
-    std::string markdown = orchestrator::ExportService::toMarkdown(context_id);
-
-    std::string format = request->format();
-    if (format.empty()) {
-        format = "markdown";
-    }
-
-    std::string file_content;
-    std::string mime_type;
-
-    if (format == "html") {
-        file_content = orchestrator::ExportService::toHTML(markdown);
-        mime_type = "text/html; charset=utf-8";
-    } else {
-        file_content = markdown;
-        mime_type = "text/markdown; charset=utf-8";
-    }
-
-    response->set_file_data(file_content);
-    response->set_mime_type(mime_type);
-
-    auto* status = response->mutable_status();
-    status->set_code(0);
-    status->set_message("OK");
-
-    LOG_INFO("ExportConversation completed: context=" + context_id +
-             " size=" + std::to_string(file_content.size()) + " bytes");
-    return grpc::Status::OK;
+    // PR-D: owner-scoped export straight from PostgreSQL conversation
+    // messages; missing or foreign conversations are NOT_FOUND and HTML
+    // output is fully escaped.
+    return orchestrator::ExportService::handleExportRequest(
+        AuthInterceptor::currentUserId(), request, response);
 }
 
 } // namespace server

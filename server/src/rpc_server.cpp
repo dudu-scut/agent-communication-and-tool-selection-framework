@@ -13,6 +13,8 @@
 #include "agent_rpc/common/serializer.h"
 #include "agent_rpc/common/cost_tracker.h"
 #include "agent_rpc/orchestrator/feedback_aggregator.h"
+#include "agent_rpc/orchestrator/export_service.h"
+#include "agent_rpc/orchestrator/replay_service.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -200,6 +202,53 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
         LOG_ERROR("Failed to initialize AI Query Service; refusing to start without it");
         return false;
     }
+
+    // PR-D (minimal DI addition, declared in the task report): wire the
+    // durable Replay/Export/Share services to the PostgreSQL source of
+    // truth. SharingServiceImpl gets the store + domain repository; the
+    // ReplayService gets the repository, the current route provider and a
+    // pipeline executor that invokes the already-initialized durable Query
+    // pipeline (owner still comes from the thread-local auth context, never
+    // from the request body).
+    sharing_service_impl_->setStore(postgres_store_.get());
+    sharing_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
+
+    orchestrator::ExportService::instance().configure(query_domain_repository_.get());
+
+    std::shared_ptr<AIQueryServiceImpl> pipeline = ai_query_service_impl_;
+    orchestrator::ReplayService::instance().configure(
+        query_domain_repository_.get(),
+        [pipeline]() -> std::string {
+            return (pipeline && pipeline->getAgentRouter() != nullptr)
+                       ? "multi-agent"
+                       : "single-agent-a2a";
+        },
+        [pipeline](const std::string& request_id, const std::string& context_id,
+                   const std::string& question, std::string& answer,
+                   std::string& error) -> bool {
+            if (!pipeline) {
+                error = "AI Query pipeline unavailable";
+                return false;
+            }
+            agent_communication::AIQueryRequest replay_request;
+            replay_request.set_request_id(request_id);
+            replay_request.set_context_id(context_id);
+            replay_request.set_question(question);
+            agent_communication::AIQueryResponse replay_response;
+            grpc::ServerContext replay_context;
+            const auto replay_status =
+                pipeline->Query(&replay_context, &replay_request, &replay_response);
+            if (!replay_status.ok()) {
+                error = replay_status.error_message();
+                return false;
+            }
+            if (replay_response.status().code() != 0) {
+                error = replay_response.status().message();
+                return false;
+            }
+            answer = replay_response.answer();
+            return true;
+        });
 
     // P0-2: Wire AgentRouter to AgentCommunicationService for registration sync
     if (ai_query_service_impl_ && service_impl_) {

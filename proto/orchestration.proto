@@ -48,6 +48,11 @@ message ReplayQueryResponse {
     common.Status status = 1;
     string original = 2;
     string replayed = 3;
+    // PR-D: exact replay persists a NEW trace (the original is never
+    // overwritten). These fields identify the new records; empty in
+    // route mode, which performs no execution at all.
+    string new_trace_id = 4;
+    string new_request_id = 5;
 }
 
 // ============================================================================

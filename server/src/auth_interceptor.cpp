@@ -109,6 +109,10 @@ bool AuthInterceptor::isWhitelisted(const std::string& method) {
     return method == "/agent_communication.auth.UserService/Register" ||
            method == "/agent_communication.auth.UserService/Login" ||
            method == "/agent_communication.auth.UserService/ValidateToken" ||
+           // PR-D: restricted public read of a shared conversation. The raw
+           // share token is the only credential; the handler stays read-only
+           // and sanitized, and expired/revoked shares are refused.
+           method == "/agent_communication.SharingService/ReadSharedConversation" ||
            method == "/grpc.health.v1.Health/Check" ||
            method == "/grpc.health.v1.Health/Watch";
 }

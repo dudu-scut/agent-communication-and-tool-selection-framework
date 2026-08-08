@@ -11,14 +11,20 @@ import "ai_query.proto";
 
 message ShareSessionRequest {
     string context_id = 1;
-    string mode = 2;           // "view" or "interact"
+    string mode = 2;           // PR-D: only "view" is supported
     int32 expiry_days = 3;     // Share link TTL (0 = no expiry)
 }
 
 message ShareSessionResponse {
     common.Status status = 1;
     string share_id = 2;
-    string share_url = 3;
+    string share_url = 3;      // Relative path ("/share/<token>"); the
+                               // frontend assembles the absolute URL.
+    // PR-D: the high-entropy raw bearer token. PostgreSQL stores only its
+    // SHA-256 hash; this field is returned exactly once, at creation time.
+    string token = 4;
+    // ISO-8601 expiry timestamp; empty when the share never expires.
+    string expires_at = 5;
 }
 
 message ObserveSessionRequest {
@@ -45,6 +51,89 @@ message UseTemplateResponse {
     string context_id = 2;
 }
 
+// ============================================================================
+// PR-D: read-only public share access, owner share management, template
+// listing. Field numbers start at unused tags; existing fields are unchanged.
+// ============================================================================
+
+// Public (no auth) read of a shared conversation by its raw token.
+message ReadSharedConversationRequest {
+    string token = 1;
+}
+
+// One message of a shared conversation. Deliberately carries NO owner or
+// user identity fields — the public view is sanitized by construction.
+message SharedMessage {
+    string role = 1;
+    string content = 2;
+    int64 sequence_no = 3;
+    string created_at = 4;
+}
+
+message ReadSharedConversationResponse {
+    common.Status status = 1;
+    string title = 2;
+    repeated SharedMessage messages = 3;
+    string shared_at = 4;
+}
+
+// Owner-scoped share listing / revocation.
+message ShareEntry {
+    string share_id = 1;
+    string conversation_id = 2;
+    string permission = 3;
+    string created_at = 4;
+    string expires_at = 5;     // empty = never expires
+    bool revoked = 6;
+    string revoked_at = 7;
+}
+
+message ListSharesRequest {
+    // The owner is always taken from the authenticated session; no
+    // client-supplied user id is accepted.
+}
+
+message ListSharesResponse {
+    common.Status status = 1;
+    repeated ShareEntry shares = 2;
+}
+
+message RevokeShareRequest {
+    string share_id = 1;
+}
+
+message RevokeShareResponse {
+    common.Status status = 1;
+}
+
+// Template listing / detail.
+message TemplateEntry {
+    string template_id = 1;
+    string name = 2;
+    string description = 3;
+    string definition = 4;     // Validated JSON definition (stored as JSONB)
+    string created_at = 5;
+    int32 version = 6;
+}
+
+message ListTemplatesRequest {
+    // Owner comes from the authenticated session.
+}
+
+message ListTemplatesResponse {
+    common.Status status = 1;
+    repeated TemplateEntry templates = 2;
+}
+
+message GetTemplateRequest {
+    string template_id = 1;
+}
+
+message GetTemplateResponse {
+    common.Status status = 1;
+    TemplateEntry template = 2;
+}
+
 // Batch 7 U6: Session Sharing Service
 service SharingService {
     // Share a session (generate share link)
@@ -58,4 +147,16 @@ service SharingService {
 
     // Apply a saved template to create a new conversation
     rpc UseTemplate(UseTemplateRequest) returns (UseTemplateResponse);
+
+    // PR-D: restricted public read of a shared conversation (token bearer,
+    // read-only, sanitized, expiry/revocation enforced).
+    rpc ReadSharedConversation(ReadSharedConversationRequest) returns (ReadSharedConversationResponse);
+
+    // PR-D: owner-side share management.
+    rpc ListShares(ListSharesRequest) returns (ListSharesResponse);
+    rpc RevokeShare(RevokeShareRequest) returns (RevokeShareResponse);
+
+    // PR-D: template listing / detail.
+    rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
+    rpc GetTemplate(GetTemplateRequest) returns (GetTemplateResponse);
 }
