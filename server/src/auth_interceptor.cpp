@@ -121,6 +121,14 @@ const AuthInterceptor::AuthContext& AuthInterceptor::currentAuth() {
     return tls_auth_;
 }
 
+void AuthInterceptor::propagateAuth(const AuthContext& context) {
+    // [PR-E] Worker-thread propagation point: the caller passes a snapshot it
+    // copied from its own validated TLS context, so this never invents an
+    // identity. Assigning into this thread's TLS makes currentUserId() and
+    // isAuthenticated() behave identically to the originating RPC thread.
+    tls_auth_ = context;
+}
+
 bool AuthInterceptor::isAuthenticated() {
     // Disabled authentication intentionally bypasses enforcement; enabled calls
     // must have an authenticated owner context (unless whitelisted).

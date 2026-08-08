@@ -9,7 +9,11 @@
 
 #include <cstdint>
 #include <random>
+#include <set>
+#include <sstream>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace agent_rpc { namespace server {
 namespace {
@@ -43,6 +47,10 @@ void AgentLifecycleServiceImpl::setAgentRuntimeRepository(
 void AgentLifecycleServiceImpl::setQueryDomainRepository(
     common::QueryDomainRepository* repository) {
     query_repository_ = repository;
+}
+
+void AgentLifecycleServiceImpl::setExecutor(PipelineExecutor executor) {
+    executor_ = std::move(executor);
 }
 
 grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
@@ -136,44 +144,315 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
 grpc::Status AgentLifecycleServiceImpl::GetAgentCompare(
     grpc::ServerContext* ctx, const agent_communication::GetAgentCompareRequest* /*request*/,
     agent_communication::GetAgentCompareResponse* response) {
+    (void)ctx;
     if (!AuthInterceptor::isAuthenticated())
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
-    // Placeholder: returns empty comparison until agent metrics aggregation is wired up
-    response->mutable_status()->set_code(0);
-    response->mutable_status()->set_message("Not yet implemented — agent metrics aggregation pending");
-    return grpc::Status::OK;
+    const std::string owner = AuthInterceptor::currentUserId();
+    if (query_repository_ == nullptr) {
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                            "Compare persistence not available");
+    }
+
+    // [PR-E] Real summary of the owner's persisted compare_runs rows — the
+    // empty list is the true empty state, never fabricated metrics.
+    try {
+        const auto runs = query_repository_->listCompareRunsByOwner(owner);
+        for (const auto& run : runs) {
+            auto* summary = response->add_runs();
+            summary->set_run_id(run.id);
+            summary->set_request_text(run.request_text);
+            summary->set_status(run.status);
+            summary->set_results_json(run.results);
+            summary->set_created_at(run.created_at);
+        }
+        response->mutable_status()->set_code(0);
+        response->mutable_status()->set_message("OK");
+        return grpc::Status::OK;
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string{"GetAgentCompare failed: "} + error.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to load compare runs");
+    }
 }
 
 grpc::Status AgentLifecycleServiceImpl::SetAutonomyLevel(
     grpc::ServerContext* ctx, const agent_communication::SetAutonomyLevelRequest* request,
     agent_communication::SetAutonomyLevelResponse* response) {
+    (void)ctx;
     if (!AuthInterceptor::isAuthenticated())
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
-    // Store autonomy level in Redis
-    if (redis_) {
-        std::string key = "autonomy:" + request->user_id() + ":" + request->agent_id();
-        redis_->set(key, std::to_string(request->level()));
-        redis_->expire(key, 86400 * 365); // 1 year TTL
-        response->mutable_status()->set_code(0);
-        response->mutable_status()->set_message("OK");
-    } else {
-        response->mutable_status()->set_code(1);
-        response->mutable_status()->set_message("Redis not available");
+    // [PR-E] Owner comes exclusively from the auth context; any identity in
+    // the request body is ignored on purpose.
+    const std::string owner = AuthInterceptor::currentUserId();
+
+    if (request->agent_id().empty()) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "agent_id is required");
     }
-    LOG_INFO("SetAutonomyLevel: user=" + request->user_id() + " agent=" + request->agent_id() +
+    if (request->level() < 1 || request->level() > 4) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "autonomy level must be between 1 and 4");
+    }
+    if (query_repository_ == nullptr) {
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                            "Autonomy persistence not available");
+    }
+
+    // PostgreSQL autonomy_settings(owner, agent) is the source of truth; the
+    // upsert updates the same row in place on repeated sets.
+    try {
+        if (!query_repository_->upsertAutonomySetting(owner, request->agent_id(),
+                                                      request->level())) {
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist autonomy level");
+        }
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string{"SetAutonomyLevel failed: "} + error.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist autonomy level");
+    }
+
+    response->mutable_status()->set_code(0);
+    response->mutable_status()->set_message("OK");
+    LOG_INFO("SetAutonomyLevel: owner=" + owner + " agent=" + request->agent_id() +
              " level=" + std::to_string(request->level()));
     return grpc::Status::OK;
 }
 
 grpc::Status AgentLifecycleServiceImpl::UndoAction(
-    grpc::ServerContext* ctx, const agent_communication::UndoActionRequest* /*request*/,
+    grpc::ServerContext* ctx, const agent_communication::UndoActionRequest* request,
     agent_communication::UndoActionResponse* response) {
+    (void)ctx;
     if (!AuthInterceptor::isAuthenticated())
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
-    // Placeholder: undo requires action history persistence which is not yet implemented
-    response->mutable_status()->set_code(1);
-    response->mutable_status()->set_message("Undo not yet implemented — action history persistence pending");
-    return grpc::Status::OK;
+    const std::string owner = AuthInterceptor::currentUserId();
+
+    if (request->action_id().empty()) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "action_id is required");
+    }
+    if (query_repository_ == nullptr) {
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                            "Undo persistence not available");
+    }
+
+    try {
+        // Owner-scoped read first: unknown/foreign ids are NOT_FOUND (no
+        // existence leak), already-undone rows are a real conflict, expired
+        // rows are refused before any inverse payload runs.
+        const auto action = query_repository_->getUndoActionById(owner, request->action_id());
+        if (!action.has_value()) {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                                "Undo action not found for current user");
+        }
+        if (!action->undone_at.empty()) {
+            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS, "Action already undone");
+        }
+        if (action->expired) {
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                                "Undo action has expired");
+        }
+        // Atomic CAS: only the first caller marks undone_at, so the inverse
+        // payload below can never run twice.
+        if (!query_repository_->markUndoActionUndone(owner, request->action_id())) {
+            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS, "Action already undone");
+        }
+
+        // Execute the inverse payload. Currently the only registered inverse
+        // is restore_intervention (written by InterventionResponse).
+        Json::Value payload;
+        Json::CharReaderBuilder payload_reader_builder;
+        std::string payload_errors;
+        std::istringstream payload_stream{action->action_payload};
+        if (!Json::parseFromStream(payload_reader_builder, payload_stream, &payload,
+                                   &payload_errors) ||
+            !payload.isMember("operation")) {
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Malformed undo payload");
+        }
+        const std::string operation = payload["operation"].asString();
+        if (operation == "restore_intervention") {
+            const std::string intervention_id = payload["intervention_id"].asString();
+            if (intervention_id.empty() ||
+                !query_repository_->restoreInterventionToPending(owner, intervention_id)) {
+                return grpc::Status(grpc::StatusCode::INTERNAL,
+                                    "Inverse operation failed: intervention not restorable");
+            }
+        } else {
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                                "Unknown undo operation: " + operation);
+        }
+
+        response->set_success(true);
+        response->set_message("OK");
+        response->mutable_status()->set_code(0);
+        response->mutable_status()->set_message("OK");
+        LOG_INFO("UndoAction: owner=" + owner + " action=" + request->action_id() +
+                 " operation=" + operation);
+        return grpc::Status::OK;
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string{"UndoAction failed: "} + error.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL, "Undo failed");
+    }
+}
+
+grpc::Status AgentLifecycleServiceImpl::CompareAgents(
+    grpc::ServerContext* ctx, const agent_communication::CompareAgentsRequest* request,
+    agent_communication::CompareAgentsResponse* response) {
+    if (!AuthInterceptor::isAuthenticated())
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
+    const std::string owner = AuthInterceptor::currentUserId();
+
+    // Validation: 1..3 distinct agents and a non-empty question.
+    if (request->question().empty()) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "question is required");
+    }
+    if (request->agent_ids_size() < 1 || request->agent_ids_size() > 3) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "compare requires between 1 and 3 agents");
+    }
+    std::set<std::string> unique_agents;
+    for (const auto& agent_id : request->agent_ids()) {
+        if (agent_id.empty() || !unique_agents.insert(agent_id).second) {
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                                "agent_ids must be non-empty and unique");
+        }
+    }
+    if (runtime_repository_ == nullptr || query_repository_ == nullptr || !executor_) {
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                            "Compare execution not available");
+    }
+    // Overall cancellation: a client-cancelled call never starts new work.
+    if (ctx != nullptr && ctx->IsCancelled()) {
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Compare cancelled before start");
+    }
+
+    struct AgentOutcome {
+        std::string agent_id;
+        std::string request_id;
+        std::string status = "failed";  // completed | failed | cancelled
+        std::string answer;
+        std::string error;
+        bool executed = false;
+    };
+
+    try {
+        const std::string run_id = generateRowId("cmp");
+        common::CompareRunRecord run;
+        run.id = run_id;
+        run.owner_id = owner;
+        run.query_log_id = run_id;
+        run.request_text = request->question();
+        run.status = "running";
+        if (!query_repository_->createCompareRun(run)) {
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist compare run");
+        }
+
+        // Worker threads never see the AuthInterceptor, so propagate the
+        // already-validated owner context snapshot before spawning them.
+        const AuthInterceptor::AuthContext auth_snapshot = AuthInterceptor::currentAuth();
+
+        std::vector<AgentOutcome> outcomes(static_cast<std::size_t>(request->agent_ids_size()));
+        std::vector<std::thread> workers;
+        workers.reserve(outcomes.size());
+        for (std::size_t index = 0; index < outcomes.size(); ++index) {
+            AgentOutcome& outcome = outcomes[index];
+            outcome.agent_id = request->agent_ids(static_cast<int>(index));
+
+            // Health gate: only agents registered as healthy may execute;
+            // unhealthy/unknown agents fail independently without touching
+            // the pipeline (their failure stays visible per agent).
+            std::optional<common::AgentRegistryRecord> registry;
+            try {
+                registry = runtime_repository_->getAgent(outcome.agent_id);
+            } catch (const std::exception& error) {
+                LOG_WARN(std::string{"CompareAgents registry lookup failed: "} + error.what());
+            }
+            if (!registry.has_value() || registry->health_status != "healthy") {
+                outcome.error = !registry.has_value()
+                                    ? "agent is not registered"
+                                    : "agent is not healthy (status=" + registry->health_status + ")";
+                continue;
+            }
+
+            workers.emplace_back([this, &outcome, &auth_snapshot, &run_id,
+                                  question = request->question()] {
+                AuthInterceptor::propagateAuth(auth_snapshot);
+                outcome.request_id = generateRowId("req");
+                const std::string context_id =
+                    "compare-" + run_id + "-" + outcome.agent_id;
+                outcome.executed = true;
+                if (executor_(outcome.request_id, context_id, question, outcome.answer,
+                              outcome.error)) {
+                    outcome.status = "completed";
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+
+        // Aggregate: a single failed agent never masks the whole run.
+        int completed = 0;
+        int failed = 0;
+        for (const auto& outcome : outcomes) {
+            if (outcome.status == "completed") {
+                ++completed;
+            } else {
+                ++failed;
+            }
+        }
+        std::string run_status;
+        if (ctx != nullptr && ctx->IsCancelled()) {
+            run_status = "cancelled";
+        } else if (failed == 0) {
+            run_status = "completed";
+        } else if (completed == 0) {
+            run_status = "failed";
+        } else {
+            run_status = "partial";
+        }
+
+        Json::Value results_json(Json::arrayValue);
+        for (const auto& outcome : outcomes) {
+            auto* entry = response->add_results();
+            entry->set_agent_id(outcome.agent_id);
+            entry->set_status(outcome.status);
+            entry->set_answer(outcome.status == "completed" ? outcome.answer : "");
+            entry->set_error(outcome.status == "completed" ? "" : outcome.error);
+            entry->set_request_id(outcome.request_id);
+            if (!outcome.request_id.empty()) {
+                entry->set_trace_id("trace-" + outcome.request_id);
+            }
+
+            Json::Value item;
+            item["agent_id"] = outcome.agent_id;
+            item["status"] = outcome.status;
+            item["answer"] = entry->answer();
+            item["error"] = entry->error();
+            item["request_id"] = outcome.request_id;
+            results_json.append(item);
+        }
+        Json::StreamWriterBuilder json_builder;
+        json_builder["indentation"] = "";
+        const std::string results_text = Json::writeString(json_builder, results_json);
+
+        run.results = results_text;
+        run.status = run_status;
+        if (!query_repository_->updateCompareRun(run)) {
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                                "Failed to finalize compare run");
+        }
+
+        response->set_run_id(run_id);
+        response->set_run_status(run_status);
+        response->mutable_status()->set_code(0);
+        response->mutable_status()->set_message("OK");
+        LOG_INFO("CompareAgents: owner=" + owner + " run=" + run_id +
+                 " status=" + run_status +
+                 " completed=" + std::to_string(completed) +
+                 " failed=" + std::to_string(failed));
+        return grpc::Status::OK;
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string{"CompareAgents failed: "} + error.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL, "Compare execution failed");
+    }
 }
 
 }} // namespaces

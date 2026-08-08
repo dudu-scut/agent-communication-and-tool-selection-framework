@@ -252,6 +252,47 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
             return true;
         });
 
+    // PR-E (minimal DI addition, declared in the task report): wire the
+    // Sandbox / Compare / Intervention / Undo / Autonomy workflows to the
+    // PostgreSQL source of truth and to one shared pipeline executor. The
+    // executor invokes the already-initialized durable Query pipeline with
+    // the sandbox flag set (skips long-term memory writes); budget, owner,
+    // trace, cost, cancellation and finalization all stay inside the
+    // pipeline — nothing is duplicated here. The owner still comes from the
+    // thread-local auth context (compare worker threads propagate it via
+    // AuthInterceptor::propagateAuth before invoking the executor).
+    user_experience_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
+    auto sandbox_executor = [pipeline](const std::string& request_id,
+                                       const std::string& context_id,
+                                       const std::string& question, std::string& answer,
+                                       std::string& error) -> bool {
+        if (!pipeline) {
+            error = "AI Query pipeline unavailable";
+            return false;
+        }
+        agent_communication::AIQueryRequest sandbox_request;
+        sandbox_request.set_request_id(request_id);
+        sandbox_request.set_context_id(context_id);
+        sandbox_request.set_question(question);
+        sandbox_request.set_sandbox(true);
+        agent_communication::AIQueryResponse sandbox_response;
+        grpc::ServerContext sandbox_context;
+        const auto sandbox_status =
+            pipeline->Query(&sandbox_context, &sandbox_request, &sandbox_response);
+        if (!sandbox_status.ok()) {
+            error = sandbox_status.error_message();
+            return false;
+        }
+        if (sandbox_response.status().code() != 0) {
+            error = sandbox_response.status().message();
+            return false;
+        }
+        answer = sandbox_response.answer();
+        return true;
+    };
+    user_experience_service_impl_->setExecutor(sandbox_executor);
+    agent_lifecycle_service_impl_->setExecutor(sandbox_executor);
+
     // P0-2: Wire AgentRouter to AgentCommunicationService for registration sync
     if (ai_query_service_impl_ && service_impl_) {
         auto* router = ai_query_service_impl_->getAgentRouter();

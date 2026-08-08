@@ -624,7 +624,10 @@ grpc::Status AIQueryServiceImpl::Query(
     // Memory cache (Redis only; PostgreSQL remains the source of truth).
     // Cache-only: a Redis fault here must not convert a successful query
     // into an error response.
-    if (success && memory_service_) {
+    // [PR-E] Sandbox executions (SandboxQuery / CompareAgents / deferred
+    // intervention runs) never touch long-term memory: the sandbox flag
+    // guards the entire memory-hints / agent-switch summary path.
+    if (success && memory_service_ && !request->sandbox()) {
         runCacheOnly([&] {
             memory_service_->updateUserMemoryFromHints(
                 owner_id, {response->memory_hints().begin(), response->memory_hints().end()});

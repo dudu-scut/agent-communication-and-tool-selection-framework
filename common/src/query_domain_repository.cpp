@@ -1,11 +1,28 @@
 ﻿#include "agent_rpc/common/query_domain_repository.h"
 
+#include <pqxx/except>
 #include <pqxx/version>
 
 #include <cstdint>
+#include <cstdlib>
 #include <random>
 #include <string>
 #include <utility>
+
+// Compatibility shim: the prebuilt libpqxx in the dependency prefix was
+// compiled without <source_location> support, so it only exports the
+// single-argument exception constructors. The public headers detect
+// source_location support for the current compiler and declare two-argument
+// overloads; provide the missing definitions once here so error paths
+// (e.g. conversion failures surfaced from cold sections) link cleanly.
+#if pqxx_have_source_location
+namespace pqxx {
+conversion_error::conversion_error(const std::string& message, std::source_location loc)
+    : std::domain_error(message), location(loc) {}
+conversion_overrun::conversion_overrun(const std::string& message, std::source_location loc)
+    : conversion_error(message, loc) {}
+}  // namespace pqxx
+#endif
 
 namespace agent_rpc::common {
 namespace {
@@ -545,6 +562,374 @@ bool QueryDomainRepository::upsertRouteQuality(const RouteQualityRecord& quality
         written = !result.empty();
     });
     return written;
+}
+
+// ============================================================================
+// [PR-E] workflow control: sandbox / compare / intervention / undo / autonomy
+// ============================================================================
+
+namespace {
+
+template <typename Row>
+SandboxRunRecord sandboxRunFromRow(const Row& row) {
+    return SandboxRunRecord{
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .query_log_id = row["query_log_id"].template as<std::string>(),
+        .request_text = row["request_text"].template as<std::string>(),
+        .response_text = row["response_text"].template as<std::string>(),
+        .status = row["status"].template as<std::string>(),
+        .created_at = row["created_at"].template as<std::string>(),
+        .updated_at = row["updated_at"].template as<std::string>(),
+    };
+}
+
+template <typename Row>
+CompareRunRecord compareRunFromRow(const Row& row) {
+    return CompareRunRecord{
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .query_log_id = row["query_log_id"].template as<std::string>(),
+        .request_text = row["request_text"].template as<std::string>(),
+        .results = row["results"].template as<std::string>(),
+        .status = row["status"].template as<std::string>(),
+        .created_at = row["created_at"].template as<std::string>(),
+        .updated_at = row["updated_at"].template as<std::string>(),
+    };
+}
+
+template <typename Row>
+InterventionRecord interventionFromRow(const Row& row) {
+    return InterventionRecord{
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .query_log_id = row["query_log_id"].template as<std::string>(),
+        .state = row["state"].template as<std::string>(),
+        .original_request = row["original_request"].template as<std::string>(),
+        .edited_request = row["edited_request"].template as<std::string>(),
+        .decision = row["decision"].template as<std::string>(),
+        .created_at = row["created_at"].template as<std::string>(),
+        .updated_at = row["updated_at"].template as<std::string>(),
+    };
+}
+
+template <typename Row>
+UndoActionRecord undoActionFromRow(const Row& row) {
+    UndoActionRecord action{
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .resource_type = row["resource_type"].template as<std::string>(),
+        .resource_id = row["resource_id"].template as<std::string>(),
+        .action_payload = row["action_payload"].template as<std::string>(),
+        // version/expired are read as text and converted here on purpose:
+        // the prebuilt libpqxx in the dependency prefix does not export the
+        // source_location-flavored conversion_overrun constructor that
+        // as<bool>/as<int> instantiations can reference.
+        .version = [&row] {
+            const auto text = row["version"].template as<std::string>();
+            return text.empty() ? 1 : std::atoi(text.c_str());
+        }(),
+    };
+    if (!row["expires_at"].is_null()) {
+        action.expires_at = row["expires_at"].template as<std::string>();
+    }
+    if (!row["undone_at"].is_null()) {
+        action.undone_at = row["undone_at"].template as<std::string>();
+    }
+    const auto expired_text = row["expired"].template as<std::string>();
+    action.expired = expired_text == "t" || expired_text == "true";
+    action.created_at = row["created_at"].template as<std::string>();
+    action.updated_at = row["updated_at"].template as<std::string>();
+    return action;
+}
+
+template <typename Row>
+AutonomySettingRecord autonomySettingFromRow(const Row& row) {
+    return AutonomySettingRecord{
+        .id = row["id"].template as<std::string>(),
+        .owner_id = row["owner_id"].template as<std::string>(),
+        .agent_id = row["agent_id"].template as<std::string>(),
+        .level = row["level"].template as<int>(),
+        .created_at = row["created_at"].template as<std::string>(),
+        .updated_at = row["updated_at"].template as<std::string>(),
+    };
+}
+
+}  // namespace
+
+bool QueryDomainRepository::createSandboxRun(const SandboxRunRecord& run) {
+    bool inserted = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "INSERT INTO sandbox_runs "
+            "(id, owner_id, query_log_id, request_text, response_text, status, "
+            "created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING id",
+            run.id, run.owner_id, run.query_log_id, run.request_text, run.response_text,
+            run.status);
+        inserted = !result.empty();
+    });
+    return inserted;
+}
+
+bool QueryDomainRepository::updateSandboxRun(const SandboxRunRecord& run) {
+    bool updated = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "UPDATE sandbox_runs SET status = $3, response_text = $4, updated_at = NOW() "
+            "WHERE id = $1 AND owner_id = $2 RETURNING id",
+            run.id, run.owner_id, run.status, run.response_text);
+        updated = !result.empty();
+    });
+    return updated;
+}
+
+std::optional<SandboxRunRecord> QueryDomainRepository::getSandboxRunById(
+    const std::string& owner_id, const std::string& run_id) {
+    std::optional<SandboxRunRecord> run;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, query_log_id, request_text, response_text, status, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM sandbox_runs WHERE id = $2 AND owner_id = $1",
+            owner_id, run_id);
+        if (!result.empty()) {
+            run = sandboxRunFromRow(result.front());
+        }
+    });
+    return run;
+}
+
+bool QueryDomainRepository::createCompareRun(const CompareRunRecord& run) {
+    bool inserted = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "INSERT INTO compare_runs "
+            "(id, owner_id, query_log_id, request_text, results, status, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, '')::jsonb, '[]'::jsonb), $6, NOW(), NOW()) "
+            "RETURNING id",
+            run.id, run.owner_id, run.query_log_id, run.request_text, run.results, run.status);
+        inserted = !result.empty();
+    });
+    return inserted;
+}
+
+bool QueryDomainRepository::updateCompareRun(const CompareRunRecord& run) {
+    bool updated = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "UPDATE compare_runs SET results = COALESCE(NULLIF($3, '')::jsonb, '[]'::jsonb), "
+            "status = $4, updated_at = NOW() "
+            "WHERE id = $1 AND owner_id = $2 RETURNING id",
+            run.id, run.owner_id, run.results, run.status);
+        updated = !result.empty();
+    });
+    return updated;
+}
+
+std::optional<CompareRunRecord> QueryDomainRepository::getCompareRunById(
+    const std::string& owner_id, const std::string& run_id) {
+    std::optional<CompareRunRecord> run;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, query_log_id, request_text, results::text AS results, status, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM compare_runs WHERE id = $2 AND owner_id = $1",
+            owner_id, run_id);
+        if (!result.empty()) {
+            run = compareRunFromRow(result.front());
+        }
+    });
+    return run;
+}
+
+std::vector<CompareRunRecord> QueryDomainRepository::listCompareRunsByOwner(
+    const std::string& owner_id) {
+    std::vector<CompareRunRecord> runs;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, query_log_id, request_text, results::text AS results, status, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM compare_runs WHERE owner_id = $1 "
+            "ORDER BY created_at DESC, id DESC LIMIT 50",
+            owner_id);
+        runs.reserve(result.size());
+        for (const auto& row : result) {
+            runs.push_back(compareRunFromRow(row));
+        }
+    });
+    return runs;
+}
+
+bool QueryDomainRepository::createIntervention(const InterventionRecord& intervention) {
+    bool inserted = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "INSERT INTO interventions "
+            "(id, owner_id, query_log_id, state, original_request, edited_request, decision, "
+            "created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW()) RETURNING id",
+            intervention.id, intervention.owner_id, intervention.query_log_id,
+            intervention.state, intervention.original_request, intervention.edited_request,
+            intervention.decision);
+        inserted = !result.empty();
+    });
+    return inserted;
+}
+
+std::optional<InterventionRecord> QueryDomainRepository::getInterventionById(
+    const std::string& owner_id, const std::string& intervention_id) {
+    std::optional<InterventionRecord> intervention;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, query_log_id, state, original_request, edited_request, "
+            "decision, created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM interventions WHERE id = $2 AND owner_id = $1",
+            owner_id, intervention_id);
+        if (!result.empty()) {
+            intervention = interventionFromRow(result.front());
+        }
+    });
+    return intervention;
+}
+
+InterventionResolveOutcome QueryDomainRepository::resolveIntervention(
+    const std::string& owner_id, const std::string& intervention_id,
+    const std::string& decision, const std::string& edited_request) {
+    InterventionResolveOutcome outcome = InterventionResolveOutcome::kNotFound;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        // Single CAS statement: only a pending record owned by the caller can
+        // transition, so concurrent resolvers serialize on the affected-row
+        // count. edited_request is written only when a non-empty text arrives.
+        const auto transition = execParams(
+            transaction,
+            "UPDATE interventions SET state = $3, decision = $3, "
+            "edited_request = CASE WHEN $4 <> '' THEN $4 ELSE edited_request END, "
+            "updated_at = NOW() "
+            "WHERE id = $1 AND owner_id = $2 AND state = 'pending'",
+            intervention_id, owner_id, decision, edited_request);
+        if (transition.affected_rows() > 0) {
+            outcome = InterventionResolveOutcome::kResolved;
+            return;
+        }
+        const auto existing = execParams(
+            transaction, "SELECT id FROM interventions WHERE id = $2 AND owner_id = $1",
+            owner_id, intervention_id);
+        outcome = existing.empty() ? InterventionResolveOutcome::kNotFound
+                                   : InterventionResolveOutcome::kAlreadyResolved;
+    });
+    return outcome;
+}
+
+bool QueryDomainRepository::restoreInterventionToPending(const std::string& owner_id,
+                                                         const std::string& intervention_id) {
+    bool restored = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "UPDATE interventions SET state = 'pending', decision = '', updated_at = NOW() "
+            "WHERE id = $2 AND owner_id = $1 AND state <> 'pending' RETURNING id",
+            owner_id, intervention_id);
+        restored = !result.empty();
+    });
+    return restored;
+}
+
+bool QueryDomainRepository::createUndoAction(const UndoActionRecord& action) {
+    bool inserted = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "INSERT INTO undo_actions "
+            "(id, owner_id, resource_type, resource_id, action_payload, version, "
+            "expires_at, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, '')::jsonb, '{}'::jsonb), $6, "
+            "NOW() + INTERVAL '24 hours', NOW(), NOW()) RETURNING id",
+            action.id, action.owner_id, action.resource_type, action.resource_id,
+            action.action_payload, std::to_string(action.version));
+        inserted = !result.empty();
+    });
+    return inserted;
+}
+
+std::optional<UndoActionRecord> QueryDomainRepository::getUndoActionById(
+    const std::string& owner_id, const std::string& action_id) {
+    std::optional<UndoActionRecord> action;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, resource_type, resource_id, action_payload::text AS action_payload, "
+            "version::text AS version, expires_at::text AS expires_at, undone_at::text AS undone_at, "
+            "(expires_at IS NOT NULL AND expires_at <= NOW())::text AS expired, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM undo_actions WHERE id = $2 AND owner_id = $1",
+            owner_id, action_id);
+        if (!result.empty()) {
+            action = undoActionFromRow(result.front());
+        }
+    });
+    return action;
+}
+
+bool QueryDomainRepository::markUndoActionUndone(const std::string& owner_id,
+                                                 const std::string& action_id) {
+    bool marked = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        // CAS: only the first caller flips undone_at; every retry observes
+        // undone_at IS NOT NULL and gets zero rows back.
+        const auto result = execParams(
+            transaction,
+            "UPDATE undo_actions SET undone_at = NOW(), updated_at = NOW() "
+            "WHERE id = $2 AND owner_id = $1 AND undone_at IS NULL RETURNING id",
+            owner_id, action_id);
+        marked = !result.empty();
+    });
+    return marked;
+}
+
+bool QueryDomainRepository::upsertAutonomySetting(const std::string& owner_id,
+                                                  const std::string& agent_id, int level) {
+    bool written = false;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        // Upsert via conflict-update (never a conflict-skip): a repeated set
+        // must refresh the same row in place, and the level CHECK constraint
+        // (1..4) rejects anything out of range at the database level too.
+        const auto result = execParams(
+            transaction,
+            "INSERT INTO autonomy_settings (id, owner_id, agent_id, level, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, NOW(), NOW()) "
+            "ON CONFLICT (owner_id, agent_id) DO UPDATE SET "
+            "level = EXCLUDED.level, updated_at = NOW() RETURNING id",
+            generateRowId("autonomy"), owner_id, agent_id, level);
+        written = !result.empty();
+    });
+    return written;
+}
+
+std::optional<AutonomySettingRecord> QueryDomainRepository::getAutonomySetting(
+    const std::string& owner_id, const std::string& agent_id) {
+    std::optional<AutonomySettingRecord> setting;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, agent_id, level, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM autonomy_settings WHERE owner_id = $1 AND agent_id = $2",
+            owner_id, agent_id);
+        if (!result.empty()) {
+            setting = autonomySettingFromRow(result.front());
+        }
+    });
+    return setting;
 }
 
 }  // namespace agent_rpc::common

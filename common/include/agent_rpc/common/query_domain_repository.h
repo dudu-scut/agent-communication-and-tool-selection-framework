@@ -94,6 +94,74 @@ struct RouteQualityRecord {
     std::string updated_at;
 };
 
+// [PR-E] Workflow-control records mirroring the V011 durable-domain tables.
+struct SandboxRunRecord {
+    std::string id;
+    std::string owner_id;
+    std::string query_log_id;
+    std::string request_text;
+    std::string response_text;
+    std::string status;
+    std::string created_at;
+    std::string updated_at;
+};
+
+struct CompareRunRecord {
+    std::string id;
+    std::string owner_id;
+    std::string query_log_id;
+    std::string request_text;
+    std::string results;  // JSONB text: per-agent result array
+    std::string status;
+    std::string created_at;
+    std::string updated_at;
+};
+
+struct InterventionRecord {
+    std::string id;
+    std::string owner_id;
+    // For pending interventions created by the autonomy gate this carries the
+    // target agent id (the real query log id only exists once the deferred
+    // execution runs); after execution it still references the gate target.
+    std::string query_log_id;
+    std::string state;  // pending | PROCEED | MODIFY | SKIP | ABORT
+    std::string original_request;
+    std::string edited_request;
+    std::string decision;
+    std::string created_at;
+    std::string updated_at;
+};
+
+struct UndoActionRecord {
+    std::string id;
+    std::string owner_id;
+    std::string resource_type;
+    std::string resource_id;
+    std::string action_payload;  // JSONB text
+    int version = 1;
+    std::string expires_at;
+    std::string undone_at;
+    bool expired = false;  // computed server-side (expires_at <= NOW())
+    std::string created_at;
+    std::string updated_at;
+};
+
+struct AutonomySettingRecord {
+    std::string id;
+    std::string owner_id;
+    std::string agent_id;
+    int level = 1;
+    std::string created_at;
+    std::string updated_at;
+};
+
+// [PR-E] Outcome of the owner-scoped intervention CAS transition.
+enum class InterventionResolveOutcome {
+    kResolved,       // pending -> decision happened exactly once
+    kNotFound,       // unknown id or foreign owner (no existence leak)
+    kAlreadyResolved // the record exists for the owner but is not pending
+};
+
 // Names mirror the durable-domain tables while keeping all persistence behind
 // one synchronous, tenant-scoped PostgreSQL repository.
 class QueryDomainRepository final {
@@ -182,6 +250,55 @@ public:
         return listTokenUsageLedgerByOwner(owner_id);
     }
 
+    // ---- [PR-E] workflow control: sandbox / compare / intervention / undo --
+
+    bool createSandboxRun(const SandboxRunRecord& run);
+    // Owner-scoped terminal update (status + response_text). Returns false
+    // when the run does not exist or belongs to another owner.
+    bool updateSandboxRun(const SandboxRunRecord& run);
+    std::optional<SandboxRunRecord> getSandboxRunById(const std::string& owner_id,
+                                                      const std::string& run_id);
+
+    bool createCompareRun(const CompareRunRecord& run);
+    // Owner-scoped terminal update (results JSONB + status).
+    bool updateCompareRun(const CompareRunRecord& run);
+    std::optional<CompareRunRecord> getCompareRunById(const std::string& owner_id,
+                                                      const std::string& run_id);
+    std::vector<CompareRunRecord> listCompareRunsByOwner(const std::string& owner_id);
+
+    bool createIntervention(const InterventionRecord& intervention);
+    std::optional<InterventionRecord> getInterventionById(const std::string& owner_id,
+                                                          const std::string& intervention_id);
+    // Single-statement CAS: pending -> decision for the owner's record. The
+    // affected-row count decides success; a follow-up owner-scoped existence
+    // check distinguishes NOT_FOUND from ALREADY_EXISTS inside the same
+    // transaction.
+    InterventionResolveOutcome resolveIntervention(const std::string& owner_id,
+                                                   const std::string& intervention_id,
+                                                   const std::string& decision,
+                                                   const std::string& edited_request);
+    // Inverse operation used by undo: any resolved state back to pending.
+    // Returns false for unknown/foreign rows or rows already pending.
+    bool restoreInterventionToPending(const std::string& owner_id,
+                                      const std::string& intervention_id);
+
+    // The expiry window (24 hours) is assigned by SQL at insert time.
+    bool createUndoAction(const UndoActionRecord& action);
+    std::optional<UndoActionRecord> getUndoActionById(const std::string& owner_id,
+                                                      const std::string& action_id);
+    // Single-statement CAS: sets undone_at only while it is still NULL.
+    // Returns false when another caller already won the CAS.
+    bool markUndoActionUndone(const std::string& owner_id, const std::string& action_id);
+
+    // PostgreSQL upsert keyed on (owner_id, agent_id); a repeated set updates
+    // the same row in place and never duplicates it.
+    bool upsertAutonomySetting(const std::string& owner_id, const std::string& agent_id,
+                               int level);
+    // std::nullopt means "no setting"; callers apply their own conservative
+    // default (the autonomy gate treats it as level 1 = confirmation).
+    std::optional<AutonomySettingRecord> getAutonomySetting(const std::string& owner_id,
+                                                            const std::string& agent_id);
+
 private:
     PostgresStore& store_;
 };
@@ -193,5 +310,10 @@ using Trace = TraceRecord;
 using TokenUsageLedger = TokenUsageLedgerRecord;
 using Feedback = FeedbackRecord;
 using RouteQuality = RouteQualityRecord;
+using SandboxRun = SandboxRunRecord;
+using CompareRun = CompareRunRecord;
+using Intervention = InterventionRecord;
+using UndoAction = UndoActionRecord;
+using AutonomySetting = AutonomySettingRecord;
 
 }  // namespace agent_rpc::common

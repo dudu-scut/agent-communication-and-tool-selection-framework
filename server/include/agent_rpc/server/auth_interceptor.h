@@ -48,6 +48,14 @@ public:
     static std::string currentRole();
     static std::string currentTraceId();
 
+    // [PR-E] Copies an already-validated auth context onto the CALLING
+    // thread's TLS. Server-spawned worker threads (e.g. the parallel compare
+    // executors) never see the interceptor, so the serving thread propagates
+    // its own currentAuth() snapshot before spawning them. The context is
+    // never fabricated here — only a context the interceptor already
+    // validated can be propagated.
+    static void propagateAuth(const AuthContext& context);
+
     // Server-side admin gate for management RPCs. Returns UNAUTHENTICATED when
     // no valid owner context exists and PERMISSION_DENIED when the caller is
     // not ADMIN. When auth enforcement is disabled the call is treated as an
