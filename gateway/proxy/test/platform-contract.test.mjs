@@ -17,9 +17,10 @@ const serviceBlock = (compose, service) => {
 test('production compose uses the JSON proxy and service DNS', () => {
   const compose = read('docker-compose.yml');
 
-  for (const service of ['postgres', 'redis', 'migrate', 'rpc-server', 'proxy', 'frontend']) {
+  for (const service of ['postgres', 'redis', 'rpc-server', 'proxy', 'frontend']) {
     assert.match(compose, new RegExp(`^  ${service}:`, 'm'));
   }
+  assert.doesNotMatch(compose, /^  migrate:/m);
   assert.match(compose, /GRPC_TARGET:\s*rpc-server:50051/);
   assert.doesNotMatch(compose, /envoy:/i);
   assert.doesNotMatch(compose, /host\.docker\.internal|172\.\d+\.\d+\.\d+/);
@@ -323,19 +324,31 @@ test('Local Compose state and browser endpoint are documented', () => {
   assert.match(gitignore, /^\.nexusai-data\/$/m);
 });
 
-test('migration service uses the compiled migrator and canonical Compose DNS', () => {
+test('rpc-server runs startup migrations itself; no separate migrate service exists', () => {
   const compose = read('docker-compose.yml');
-  const migrate = serviceBlock(compose, 'migrate');
-  assert.match(migrate, /dockerfile:\s*docker\/Dockerfile\.rpc-server/);
-  assert.match(migrate, /entrypoint:\s*\["db_migrate"\]/);
-  assert.match(migrate, /--migrations/, 'migrate service must pass an explicit migration directory');
-  assert.match(migrate, /NEXUSAI_POSTGRES_HOST:\s*postgres/);
-  assert.match(migrate, /NEXUSAI_POSTGRES_PORT:\s*"5432"/);
-  assert.match(migrate, /NEXUSAI_POSTGRES_DATABASE:/);
-  assert.match(migrate, /NEXUSAI_POSTGRES_USER:/);
-  assert.match(migrate, /NEXUSAI_POSTGRES_PASSWORD:/);
-  assert.doesNotMatch(migrate, /postgres:16-alpine/);
-  assert.doesNotMatch(migrate, /\bpsql\b|\.\/sql|\/sql/);
+  const rpcServer = serviceBlock(compose, 'rpc-server');
+
+  // The standalone migrate service was removed; rpc-server owns its startup
+  // migrations and must see canonical Compose DNS for PostgreSQL.
+  assert.doesNotMatch(compose, /^  migrate:/m);
+  assert.match(rpcServer, /NEXUSAI_POSTGRES_HOST:\s*postgres/);
+  assert.match(rpcServer, /NEXUSAI_POSTGRES_PORT:\s*"5432"/);
+  assert.match(rpcServer, /NEXUSAI_POSTGRES_DATABASE:/);
+  assert.match(rpcServer, /NEXUSAI_POSTGRES_USER:/);
+  assert.match(rpcServer, /NEXUSAI_POSTGRES_PASSWORD:/);
+  assert.match(rpcServer, /NEXUSAI_MIGRATIONS_DIR:/);
+  assert.doesNotMatch(rpcServer, /\bpsql\b|\.\/sql|\/sql/);
+
+  // server/src/main.cpp must apply migrations before the server listens, and
+  // a failed migration must abort startup instead of serving unmigrated state.
+  const main = read('server/src/main.cpp');
+  assert.match(main, /agent_rpc::db::MigrationRunner migration_runner\{postgres_store\};/);
+  const migrateCall = main.indexOf('migration_runner.migrate(resolveMigrationDirectory())');
+  const serverStart = main.indexOf('server.start()');
+  assert.ok(migrateCall >= 0, 'main.cpp must invoke migration_runner.migrate');
+  assert.ok(serverStart >= 0, 'main.cpp must start the RPC server');
+  assert.ok(migrateCall < serverStart, 'migrations must run before the server listens');
+  assert.match(main, /RPC startup migration failed/);
 });
 
 test('migration packaging carries libpqxx, db_migrate, and exactly baseline migrations', () => {
@@ -347,8 +360,11 @@ test('migration packaging carries libpqxx, db_migrate, and exactly baseline migr
   assert.match(dockerfile, /COPY db\/migrations \/usr\/local\/share\/nexusai\/migrations/);
   assert.match(compose, /dockerfile:\s*docker\/Dockerfile\.rpc-server/);
   const migrations = fs.readdirSync(path.join(root, 'db/migrations')).filter((name) => /^V\d+__.*\.sql$/.test(name));
-  assert.equal(migrations.length, 9);
-  assert.equal(migrations.some((name) => /^V010__/.test(name)), false);
+  assert.equal(migrations.length, 12);
+  for (let version = 1; version <= 12; version += 1) {
+    const prefix = `V${String(version).padStart(3, '0')}__`;
+    assert.ok(migrations.some((name) => name.startsWith(prefix)), `missing migration ${prefix}`);
+  }
 });
 
 test('CMake resolves libpqxx through config targets or pkg-config fallback', () => {
