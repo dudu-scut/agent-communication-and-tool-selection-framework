@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Icon } from '@iconify/vue'
 import { useAuthStore } from '../../stores/auth'
@@ -27,16 +27,24 @@ function toggleCollapse() {
   collapsed.value = !collapsed.value
 }
 
-const navItems = [
-  { label: '对话', icon: 'mdi:chat-processing-outline', path: '/' },
-  { label: 'Agent拓扑', icon: 'mdi:graph-outline', path: '/topology' },
-  { label: '数据面板', icon: 'mdi:chart-box-outline', path: '/dashboard' },
-  { label: '系统监控', icon: 'mdi:monitor-dashboard', path: '/monitor' },
-  { label: 'Agent沙盒', icon: 'mdi:flask-outline', path: '/sandbox' },
-  { label: 'Agent对比', icon: 'mdi:compare-horizontal', path: '/compare' },
-  { label: '模板市场', icon: 'mdi:store-outline', path: '/templates' },
-  { label: '管理后台', icon: 'mdi:shield-crown-outline', path: '/admin' },
-]
+// PR-F (MF-1): admin entry is only listed for ADMIN roles. This is a UX
+// nicety — the router guard and the server's requireAdmin checks remain the
+// authoritative boundaries.
+const navItems = computed(() => {
+  const items = [
+    { label: '对话', icon: 'mdi:chat-processing-outline', path: '/' },
+    { label: 'Agent拓扑', icon: 'mdi:graph-outline', path: '/topology' },
+    { label: '数据面板', icon: 'mdi:chart-box-outline', path: '/dashboard' },
+    { label: '系统监控', icon: 'mdi:monitor-dashboard', path: '/monitor' },
+    { label: 'Agent沙盒', icon: 'mdi:flask-outline', path: '/sandbox' },
+    { label: 'Agent对比', icon: 'mdi:compare-horizontal', path: '/compare' },
+    { label: '模板市场', icon: 'mdi:store-outline', path: '/templates' },
+  ]
+  if (auth.isAdmin) {
+    items.push({ label: '管理后台', icon: 'mdi:shield-crown-outline', path: '/admin' })
+  }
+  return items
+})
 
 function isActive(path: string) {
   if (path === '/') return route.path === '/'

@@ -103,6 +103,24 @@ test('ChatView hides the Admin entry for non-admin roles', () => {
   assert.match(chat, /v-if="authStore\.isAdmin" to="\/admin"/);
 });
 
+test('SideNav admin nav item is gated behind isAdmin (MF-1)', () => {
+  const sidenav = read('frontend/src/components/layout/SideNav.vue');
+  // navItems must be reactive on the role, not a static literal.
+  assert.match(sidenav, /const navItems = computed\(/, 'navItems must be a computed');
+  // The admin entry is only pushed when the auth store says ADMIN.
+  assert.match(sidenav, /if \(auth\.isAdmin\)/);
+  assert.match(
+    sidenav,
+    /if \(auth\.isAdmin\) \{\s*items\.push\(\{ label: '管理后台'[\s\S]*?path: '\/admin'/,
+    'admin nav item must be added inside the isAdmin gate',
+  );
+  // No unconditional '/admin' nav literal may remain outside the gate.
+  assert.ok(
+    !/\{ label: '管理后台'[\s\S]*?\},?\s*\]/.test(sidenav),
+    'admin item must not sit in an unconditional array literal',
+  );
+});
+
 // ── 4. AgentSandbox: all four intervention decisions ─────────────────────
 
 test('AgentSandbox exposes PROCEED/MODIFY/SKIP/ABORT decisions', () => {
