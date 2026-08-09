@@ -417,7 +417,10 @@ void AIQueryServiceImpl::finalizeDurableQuery(DurableQueryRun& run, const std::s
     usage.estimated = true;
     usage.cost_usd = "0";
     if (!domain_repo_->appendTokenUsageLedger(usage)) {
-        LOG_WARN("finalize: token ledger append missed for request " + run.request_id);
+        // R3 (PR-C2): a false return here means the usage-<request_id> row
+        // already exists — the idempotent duplicate was skipped on purpose,
+        // not a missed write.
+        LOG_INFO("finalize: token ledger duplicate skipped for request " + run.request_id);
     }
 }
 

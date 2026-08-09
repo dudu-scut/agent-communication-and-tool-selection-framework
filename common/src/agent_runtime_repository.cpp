@@ -370,6 +370,10 @@ std::vector<DailyCostRecord> AgentRuntimeRepository::dailyCostReport(
     const std::string& owner_id, const std::string& start_date, const std::string& end_date) {
     std::vector<DailyCostRecord> records;
     store_.executeTransaction([&](pqxx::work& transaction) {
+        // M4 (PR-C3): bucket by (day, estimated), never by day alone. Mixing
+        // estimate-only rows with provider-exact rows into one bucket would
+        // lie about the flag and the totals; once provider usage back-fills
+        // exact values, those rows form their own exact bucket per day.
         const auto result = execParams(
             transaction,
             "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, "
@@ -377,11 +381,11 @@ std::vector<DailyCostRecord> AgentRuntimeRepository::dailyCostReport(
             "COALESCE(SUM(completion_tokens), 0) AS completion_tokens, "
             "COALESCE(SUM(cost_usd), 0)::text AS cost_usd, "
             "COUNT(*) AS request_count, "
-            "BOOL_OR(estimated) AS estimated "
+            "estimated "
             "FROM token_usage_ledger "
             "WHERE owner_id = $1 AND created_at >= ($2::date) "
             "AND created_at < ($3::date + INTERVAL '1 day') "
-            "GROUP BY day ORDER BY day",
+            "GROUP BY day, estimated ORDER BY day, estimated",
             owner_id, start_date, end_date);
         records.reserve(result.size());
         for (const auto& row : result) {

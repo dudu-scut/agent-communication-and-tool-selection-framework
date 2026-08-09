@@ -179,7 +179,21 @@ void PostgresStore::executeTransaction(const std::function<void(pqxx::work&)>& o
             transaction.commit();
         }
         lease_coordinator_.release(index);
+    } catch (const pqxx::sql_error&) {
+        // PR-C3 defense: concrete SQL errors (e.g. pqxx::unique_violation,
+        // carrying the SQLSTATE callers depend on) must always escape with
+        // their exact type. Catch and rethrow before any broader pqxx
+        // handler so a future libpqxx 8.x inheritance change can never let a
+        // wider catch swallow them.
+        lease_coordinator_.release(index);
+        throw;
     } catch (const pqxx::broken_connection& error) {
+        connections_[index].reset();
+        lease_coordinator_.release(index);
+        throw PostgresUnavailable(std::string{"PostgreSQL is unavailable: "} + error.what());
+    } catch (const pqxx::failure& error) {
+        // PR-C3 defense: remaining pqxx failures (non-SQL) map to the
+        // platform's unavailable contract, still after the sql_error guard.
         connections_[index].reset();
         lease_coordinator_.release(index);
         throw PostgresUnavailable(std::string{"PostgreSQL is unavailable: "} + error.what());

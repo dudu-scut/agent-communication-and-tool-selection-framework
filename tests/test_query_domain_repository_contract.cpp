@@ -1,13 +1,16 @@
 ﻿#include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <regex>
 #include <string>
+#include <thread>
 
 #include "agent_rpc/common/query_domain_repository.h"
 
@@ -107,10 +110,10 @@ protected:
                "/db/migrations/V011__durable_domain.sql";
     }
 
-    static std::unique_ptr<Context> makeContext() {
+    static std::unique_ptr<Context> makeContext(std::size_t pool_size = 1) {
         try {
             auto config = agent_rpc::common::PostgresConfig::fromEnvironment();
-            config.pool_size = 1;
+            config.pool_size = pool_size;
             auto context = std::make_unique<Context>();
             context->store = std::make_unique<PostgresStore>(std::move(config));
             const std::string migration_path = durableDomainMigrationPath();
@@ -225,6 +228,106 @@ TEST_F(QueryDomainRepositoryIntegrationTest, UpdateMissingRowsReturnsFalseWithou
     // A failed update must never insert the missing row.
     EXPECT_FALSE(context->repository->getQueryLogById(owner_id, missing_log.id).has_value());
     EXPECT_FALSE(context->repository->getTraceById(owner_id, missing_trace.id).has_value());
+}
+
+// R1 (PR-C2 deferred): the message_id overload is the idempotency point for
+// retry finalizes. When the same deterministic message id races across two
+// sessions (two conversations), the per-conversation FOR UPDATE lock does NOT
+// serialize the pair — the loser hits the primary key and must fall back
+// idempotently instead of propagating pqxx::unique_violation to the caller.
+TEST_F(QueryDomainRepositoryIntegrationTest,
+       AutoSequenceForeignOwnerMessageIdConflictFallsBackWithoutThrowing) {
+    auto context = makeContext(2);
+    if (!context) {
+        GTEST_SKIP() << "PostgreSQL test DSN is unavailable";
+    }
+
+    const std::string owner_a = owner();
+    const std::string owner_b = owner();
+    const std::string conversation_a = entityId("conversation");
+    const std::string conversation_b = entityId("conversation");
+    ASSERT_TRUE(context->repository->ensureConversation(owner_a, conversation_a, "a"));
+    ASSERT_TRUE(context->repository->ensureConversation(owner_b, conversation_b, "b"));
+
+    const std::string message_id = entityId("msg-conflict");
+    const auto first = context->repository->appendMessageAutoSequence(
+        message_id, owner_a, conversation_a, "user", "winner");
+    ASSERT_TRUE(first.has_value());
+
+    // The same message id can never belong to owner B: the conflict must be
+    // absorbed (no exception escapes) and no foreign row may be returned.
+    std::optional<agent_rpc::common::MessageRecord> second;
+    try {
+        second = context->repository->appendMessageAutoSequence(
+            message_id, owner_b, conversation_b, "user", "loser");
+    } catch (const std::exception& error) {
+        FAIL() << "unique_violation escaped appendMessageAutoSequence: " << error.what();
+    }
+    EXPECT_FALSE(second.has_value());
+    EXPECT_TRUE(context->repository->listMessages(owner_b, conversation_b).empty());
+}
+
+TEST_F(QueryDomainRepositoryIntegrationTest,
+       AutoSequenceConcurrentSameMessageIdAcrossConversationsInsertsExactlyOnce) {
+    auto context = makeContext(4);
+    if (!context) {
+        GTEST_SKIP() << "PostgreSQL test DSN is unavailable";
+    }
+
+    const std::string owner_id = owner();
+    const std::string conversation_a = entityId("conversation");
+    const std::string conversation_b = entityId("conversation");
+    ASSERT_TRUE(context->repository->ensureConversation(owner_id, conversation_a, "a"));
+    ASSERT_TRUE(context->repository->ensureConversation(owner_id, conversation_b, "b"));
+
+    // Two sessions finalize the same deterministic message id concurrently.
+    // Every round must end with exactly one durable row and no exception.
+    for (int round = 0; round < 32; ++round) {
+        const std::string message_id = entityId("msg-race");
+        std::atomic<bool> gate{false};
+        std::exception_ptr first_error;
+        std::exception_ptr second_error;
+        std::thread first([&] {
+            while (!gate.load(std::memory_order_acquire)) {
+            }
+            try {
+                context->repository->appendMessageAutoSequence(
+                    message_id, owner_id, conversation_a, "user", "race-a");
+            } catch (...) {
+                first_error = std::current_exception();
+            }
+        });
+        std::thread second([&] {
+            while (!gate.load(std::memory_order_acquire)) {
+            }
+            try {
+                context->repository->appendMessageAutoSequence(
+                    message_id, owner_id, conversation_b, "user", "race-b");
+            } catch (...) {
+                second_error = std::current_exception();
+            }
+        });
+        gate.store(true, std::memory_order_release);
+        first.join();
+        second.join();
+        ASSERT_FALSE(first_error) << "round " << round << " threw";
+        ASSERT_FALSE(second_error) << "round " << round << " threw";
+
+        std::size_t rows = 0;
+        for (const auto& message :
+             context->repository->listMessages(owner_id, conversation_a)) {
+            if (message.id == message_id) {
+                ++rows;
+            }
+        }
+        for (const auto& message :
+             context->repository->listMessages(owner_id, conversation_b)) {
+            if (message.id == message_id) {
+                ++rows;
+            }
+        }
+        EXPECT_EQ(rows, 1u) << "round " << round;
+    }
 }
 
 TEST_F(QueryDomainRepositoryIntegrationTest, CrossOwnerUpdateReturnsFalseAndLeavesRowUntouched) {

@@ -464,8 +464,10 @@ private:
     // owner-aware via quality_provider_ since PR-C3).
     agent_rpc::common::RedisClient* redis_ = nullptr;
 
-    // Owner-aware quality provider (PR-C3). Guarded by its own mutex because
-    // getQualityCoefficient() runs while agents_mutex_ is held.
+    // Owner-aware quality provider (PR-C3). Guarded by its own mutex: the
+    // provider callable is copied under this lock, then invoked OUTSIDE the
+    // lock (it may hit PostgreSQL), and neither step runs under
+    // agents_mutex_.
     mutable std::mutex quality_provider_mutex_;
     QualityProvider quality_provider_;
 };

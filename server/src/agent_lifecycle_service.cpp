@@ -35,6 +35,32 @@ std::string generateRowId(const char* prefix) {
     return std::string{prefix} + "-" + suffix;
 }
 
+// M3 (PR-C3): feedback dimensions form a closed key space. agent_id and
+// skill_name must either be empty (dimension omitted) or a bounded
+// identifier from the known charset — unknown/arbitrary keys are refused
+// before any write so the feedback/quality tables never accumulate garbage
+// dimensions.
+bool validFeedbackKey(const std::string& value) {
+    constexpr std::size_t kMaxLength = 128;
+    if (value.empty()) {
+        return true;
+    }
+    if (value.size() > kMaxLength) {
+        return false;
+    }
+    for (const char character : value) {
+        const bool allowed = (character >= 'a' && character <= 'z') ||
+                             (character >= 'A' && character <= 'Z') ||
+                             (character >= '0' && character <= '9') ||
+                             character == '-' || character == '_' ||
+                             character == '.' || character == ':';
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 AgentLifecycleServiceImpl::AgentLifecycleServiceImpl(common::RedisClient* redis) : redis_(redis) {}
@@ -67,6 +93,15 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
         response->mutable_status()->set_code(1);
         response->mutable_status()->set_message("rating must be between 1 and 5");
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "rating must be between 1 and 5");
+    }
+
+    // M3 (PR-C3): closed key space — refuse oversized or arbitrary keys.
+    if (!validFeedbackKey(request->agent_id()) || !validFeedbackKey(request->skill_name())) {
+        response->mutable_status()->set_code(1);
+        response->mutable_status()->set_message(
+            "agent_id/skill_name must match [A-Za-z0-9._:-]{1,128}");
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "agent_id/skill_name must match [A-Za-z0-9._:-]{1,128}");
     }
 
     if (runtime_repository_ == nullptr || query_repository_ == nullptr) {

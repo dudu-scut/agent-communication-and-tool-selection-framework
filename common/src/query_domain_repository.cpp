@@ -312,18 +312,45 @@ std::optional<MessageRecord> QueryDomainRepository::appendMessageAutoSequence(
             stored = messageFromRow(existing.front());
             return;
         }
-        const auto result = execParams(
+        // R1 (PR-C2): the FOR UPDATE above serializes appends within one
+        // conversation only. When two sessions race the same deterministic
+        // message id across different conversations, both pass the existence
+        // check and the loser hits the primary key. Absorb the collision in a
+        // subtransaction (a bare catch would leave the outer transaction
+        // aborted) and fall through to the idempotent re-read below.
+        try {
+            pqxx::subtransaction insert_guard(transaction);
+            const auto result = execParams(
+                insert_guard,
+                "INSERT INTO conversation_messages "
+                "(id, owner_id, conversation_id, role, content, sequence_no, created_at, updated_at) "
+                "VALUES ($1, $2, $3, $4, $5, "
+                "(SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM conversation_messages "
+                "WHERE owner_id = $2 AND conversation_id = $3), NOW(), NOW()) "
+                "RETURNING id, owner_id, conversation_id, role, content, sequence_no, "
+                "created_at::text AS created_at, updated_at::text AS updated_at",
+                message_id, owner_id, conversation_id, role, content);
+            if (!result.empty()) {
+                stored = messageFromRow(result.front());
+            }
+            insert_guard.commit();
+        } catch (const pqxx::unique_violation&) {
+            // A concurrent finalize won the race for this message id.
+        }
+        if (stored.has_value()) {
+            return;
+        }
+        // Idempotent fallback: return the winner's row when it belongs to the
+        // same owner; otherwise the caller gets no row (a foreign message id
+        // is never echoed across owners).
+        const auto winner = execParams(
             transaction,
-            "INSERT INTO conversation_messages "
-            "(id, owner_id, conversation_id, role, content, sequence_no, created_at, updated_at) "
-            "VALUES ($1, $2, $3, $4, $5, "
-            "(SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM conversation_messages "
-            "WHERE owner_id = $2 AND conversation_id = $3), NOW(), NOW()) "
-            "RETURNING id, owner_id, conversation_id, role, content, sequence_no, "
-            "created_at::text AS created_at, updated_at::text AS updated_at",
-            message_id, owner_id, conversation_id, role, content);
-        if (!result.empty()) {
-            stored = messageFromRow(result.front());
+            "SELECT id, owner_id, conversation_id, role, content, sequence_no, "
+            "created_at::text AS created_at, updated_at::text AS updated_at "
+            "FROM conversation_messages WHERE id = $1 AND owner_id = $2",
+            message_id, owner_id);
+        if (!winner.empty()) {
+            stored = messageFromRow(winner.front());
         }
     });
     return stored;

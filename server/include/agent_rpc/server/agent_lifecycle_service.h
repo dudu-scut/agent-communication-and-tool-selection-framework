@@ -24,9 +24,12 @@ public:
                            const std::string& question, std::string& answer,
                            std::string& error)>;
 
-    // Auth-disabled semantics (M1): SubmitFeedback requires an authenticated
-    // owner — when auth is disabled there is no identity, so the RPC returns
-    // UNAUTHENTICATED and no owner-less feedback is ever written.
+    // Auth-disabled semantics (M1): AuthInterceptor::isAuthenticated()
+    // returns true when auth enforcement is disabled, so SubmitFeedback
+    // proceeds with the (empty) thread-local owner from currentUserId() and
+    // writes a feedback row under that empty owner — the dev/test identity.
+    // UNAUTHENTICATED is only returned when auth is ENABLED and the call
+    // lacks a valid session.
     explicit AgentLifecycleServiceImpl(common::RedisClient* redis);
     ~AgentLifecycleServiceImpl() override = default;
 

@@ -265,12 +265,14 @@ grpc::Status ExportService::handleExportRequest(
     } catch (const std::exception& error) {
         const bool persistence_fault = common::isPostgresError(error);
         LOG_ERROR(std::string("ExportConversation failed: ") + error.what());
+        // M1 (PR-D): the client-facing status message is a fixed, sanitized
+        // text. Internal exception detail stays in the server log only and
+        // never rides the response (no cross-tenant information leak).
         return grpc::Status(
             persistence_fault ? grpc::StatusCode::UNAVAILABLE
                               : grpc::StatusCode::INTERNAL,
-            std::string(persistence_fault ? "PostgreSQL persistence error: "
-                                          : "Unexpected export error: ") +
-                error.what());
+            persistence_fault ? "Export unavailable: persistence layer error"
+                              : "Export failed unexpectedly");
     }
 }
 

@@ -47,6 +47,7 @@
 #include "agent_lifecycle.grpc.pb.h"
 #include "observability.grpc.pb.h"
 #include "user.grpc.pb.h"
+#include "ai_query.grpc.pb.h"
 
 #ifndef NEXUSAI_RUNTIME_ROOT
 #error "NEXUSAI_RUNTIME_ROOT must point at the repository checkout root"
@@ -374,6 +375,64 @@ TEST_F(AgentRuntimeRepositoryTest, DailyCostReportIsOwnerScopedAndFlaggedEstimat
 
     // Another owner sees nothing.
     EXPECT_TRUE(context->runtime->dailyCostReport(owner_b, today, today).empty());
+}
+
+// M4 (PR-C3 deferred): estimated and provider-exact ledger rows must never
+// be summed into one mixed bucket — the daily report groups by (day,
+// estimated) so each row keeps a truthful flag and token totals.
+TEST_F(AgentRuntimeRepositoryTest, DailyCostReportSeparatesEstimatedFromExactBuckets) {
+    auto context = makeContext();
+    if (!context) {
+        GTEST_SKIP() << "PostgreSQL test DSN is unavailable";
+    }
+
+    const std::string owner_id = "c3-bucket-" + uniqueSuffix();
+
+    common_ns::TokenUsageLedgerRecord estimated_entry;
+    estimated_entry.id = "c3-bucket-est-" + uniqueSuffix();
+    estimated_entry.owner_id = owner_id;
+    estimated_entry.query_log_id = "c3-bucket-req-est-" + uniqueSuffix();
+    estimated_entry.model = "test-model";
+    estimated_entry.prompt_tokens = 100;
+    estimated_entry.completion_tokens = 50;
+    estimated_entry.estimated = true;
+    estimated_entry.cost_usd = "0";
+    ASSERT_TRUE(context->domain->appendTokenUsageLedger(estimated_entry));
+
+    common_ns::TokenUsageLedgerRecord exact_entry;
+    exact_entry.id = "c3-bucket-exact-" + uniqueSuffix();
+    exact_entry.owner_id = owner_id;
+    exact_entry.query_log_id = "c3-bucket-req-exact-" + uniqueSuffix();
+    exact_entry.model = "test-model";
+    exact_entry.prompt_tokens = 30;
+    exact_entry.completion_tokens = 20;
+    exact_entry.estimated = false;  // provider usage back-filled exact value
+    exact_entry.cost_usd = "0.5";
+    ASSERT_TRUE(context->domain->appendTokenUsageLedger(exact_entry));
+
+    const std::string today = utcToday();
+    const auto days = context->runtime->dailyCostReport(owner_id, today, today);
+    ASSERT_EQ(days.size(), 2u) << "estimated and exact rows must form separate buckets";
+
+    bool saw_estimated = false;
+    bool saw_exact = false;
+    for (const auto& day : days) {
+        EXPECT_EQ(day.date, today);
+        if (day.estimated) {
+            saw_estimated = true;
+            EXPECT_EQ(day.prompt_tokens, 100);
+            EXPECT_EQ(day.completion_tokens, 50);
+            EXPECT_EQ(day.request_count, 1);
+        } else {
+            saw_exact = true;
+            EXPECT_EQ(day.prompt_tokens, 30);
+            EXPECT_EQ(day.completion_tokens, 20);
+            EXPECT_EQ(day.request_count, 1);
+            EXPECT_NEAR(std::stod(day.cost_usd), 0.5, 1e-9);
+        }
+    }
+    EXPECT_TRUE(saw_estimated);
+    EXPECT_TRUE(saw_exact);
 }
 
 // I2: a heartbeat must heal a registry row that never got written because

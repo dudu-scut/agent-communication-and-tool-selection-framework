@@ -128,6 +128,25 @@ TEST(DurableWorkflowsContractTest, NoPlaceholderStringsInWorkflowServices) {
     EXPECT_EQ(sharing.find("nexusai.local"), std::string::npos);
 }
 
+TEST(DurableWorkflowsContractTest, ReplayAndExportStatusMessagesNeverEchoExceptionText) {
+    // M1 (PR-D deferred): gRPC status messages returned to callers are fixed,
+    // sanitized texts. Raw exception detail may appear in the server log
+    // (exactly one error.what() per file) but never in the returned status,
+    // which would leak internal information to other tenants.
+    for (const char* path : {"/orchestrator/src/replay_service.cpp",
+                             "/orchestrator/src/export_service.cpp"}) {
+        const std::string source = readFileOrEmpty(rootPath() + path);
+        ASSERT_FALSE(source.empty()) << path;
+        std::size_t occurrences = 0;
+        std::size_t position = source.find("error.what()");
+        while (position != std::string::npos) {
+            ++occurrences;
+            position = source.find("error.what()", position + 1);
+        }
+        EXPECT_EQ(occurrences, 1u) << path << ": error.what() must stay in LOG_ERROR only";
+    }
+}
+
 TEST(DurableWorkflowsContractTest, NoHardcodedShareHostAnywhere) {
     for (const char* path : {"/server/src/sharing_service.cpp",
                              "/frontend/src/views/ShareView.vue",
