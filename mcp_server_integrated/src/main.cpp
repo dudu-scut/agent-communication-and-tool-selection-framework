@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
                                 response["result"]["content"] = json::array();
                                 response["result"]["content"].push_back({{"type", "text"}, {"text", "Plugin returned malformed data."}});
                             }
-                            // --- Free the allocated memory ---
+                            // Free the allocated memory
                             delete[] res_ptr;
                         } else {
                             LOG(ERROR) << "Plugin " << pluginTool->name << " returned nullptr." << std::endl;
@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        // 未找到匹配的工具，返回错误
+        // Tool not found; return an error response
         response["result"]["isError"] = true;
         response["result"]["content"] = json::array();
         response["result"]["content"].push_back({
@@ -264,7 +264,7 @@ int main(int argc, char **argv) {
                                 LOG(ERROR) << "Plugin " << pluginPrompt->name << " returned malformed data." << std::endl;
                                 // TODO: how can we handle error here ?
                             }
-                            // --- Free the allocated memory ---
+                            // Free the allocated memory
                             delete[] res_ptr;
                         }
                         return response;  // Return immediately when matching prompt is found
@@ -313,7 +313,7 @@ int main(int argc, char **argv) {
                                 LOG(ERROR) << "Plugin " << pluginResource->name << " returned malformed data." << std::endl;
                                 // TODO: how can we handle error here ?
                             }
-                            // --- Free the allocated memory ---
+                            // Free the allocated memory
                             delete[] res_ptr;
                         }
                     }
@@ -326,7 +326,7 @@ int main(int argc, char **argv) {
 
     server->Connect(transport);
 
-    // Fix #14: Clean up notification systems to prevent memory leak
+    // Clean up notification systems to prevent memory leaks
     for (auto* ns : notifications) {
         delete ns;
     }

@@ -3,9 +3,8 @@
  * @brief AI Query Service — core query methods (Query, QueryStream, GetQueryStatus, GetAgentMetrics)
  *
  * Requirements: 2.1, 2.2, 2.5
- * Task 13: RPC服务扩展
  *
- * Durable pipeline (PR-C2): every Query/QueryStream executes the same six
+ * Durable pipeline: every Query/QueryStream executes the same six
  * ordered steps:
  *   1. Resolve the owner exclusively from AuthInterceptor::currentUserId();
  *      the request body user_id is ignored. No rows are created without auth.
@@ -41,10 +40,6 @@
 
 namespace agent_rpc {
 namespace server {
-
-// ============================================================================
-// Lifecycle
-// ============================================================================
 
 AIQueryServiceImpl::AIQueryServiceImpl()
     : a2a_adapter_(std::make_unique<a2a_adapter::A2AAdapter>()) {
@@ -90,11 +85,11 @@ bool AIQueryServiceImpl::initialize(
             std::shared_ptr<common::RedisClient>(redis, [](common::RedisClient*){}));
     }
 
-    // Initialize circuit breaker for A2A backend
+    // Circuit breaker for the A2A backend
     circuit_breaker_ = common::CircuitBreakerManager::getInstance()
         .getCircuitBreaker("a2a_backend");
 
-    // P4-4: Initialize multi-agent orchestrator if LLM_API_KEY is set
+    // Initialize multi-agent orchestrator if LLM_API_KEY is set
     const char* api_key_env = std::getenv("LLM_API_KEY");
     if (api_key_env && api_key_env[0] != '\0') {
         std::string api_key(api_key_env);
@@ -109,7 +104,6 @@ bool AIQueryServiceImpl::initialize(
 
             orchestrator_enabled_ = true;
 
-            // Create composed modules
             multi_agent_handler_ = std::make_unique<MultiAgentHandler>(
                 task_planner_.get(), agent_router_.get(),
                 task_executor_.get(), result_aggregator_.get(),
@@ -153,18 +147,12 @@ bool AIQueryServiceImpl::isAvailable() const {
     return initialized_ && a2a_adapter_ && a2a_adapter_->isAvailable();
 }
 
-// ============================================================================
-// Local helper — sanitize CURL errors (B-03)
-// ============================================================================
-
+// Local helper — sanitize CURL errors
 static std::string sanitizeErrorMessage(const std::string& msg) {
     return QueryHelpers::sanitizeErrorMessage(msg);
 }
 
-// ============================================================================
 // Durable pipeline helpers (steps 2-6)
-// ============================================================================
-
 // Stable deterministic estimate: V012 reservations are estimated tokens, not
 // provider-measured usage. The same value is recorded in token_usage_ledger
 // with estimated=true so accounting never pretends to be exact.
@@ -172,8 +160,8 @@ std::int64_t AIQueryServiceImpl::estimateTokens(const std::string& question) {
     return 64 + static_cast<std::int64_t>(question.size()) / 4;
 }
 
-// Estimated-token budget quotas. Defaults (documented here; .env.example is
-// updated centrally in PR-G):
+// Estimated-token budget quotas. Defaults (documented here and in
+// .env.example):
 //   NEXUSAI_BUDGET_GLOBAL_TOKENS        default 0 (unlimited)
 //   NEXUSAI_BUDGET_USER_DAILY_TOKENS    default 200000
 //   NEXUSAI_BUDGET_USER_MONTHLY_TOKENS  default 4000000
@@ -259,11 +247,11 @@ grpc::Status AIQueryServiceImpl::reserveBudgetOrReject(DurableQueryRun& run) {
 
     // Step 4: estimated-token reservation keyed by request_id (idempotent on
     // same-owner retries; cross-owner reuse is refused).
-    // Semantic note (PR-C2/PR-E): sandbox and compare traffic (context_id
+    // Semantic note: sandbox and compare traffic (context_id
     // with a "sandbox-" or "compare-" prefix) intentionally counts against
     // the same PostgreSQL budget. There is NO exemption branch here: the old
     // Redis micro-dollar sandbox exemption was removed on purpose because the
-    // PG budget is the source of truth and PR-E's sandbox/compare paths
+    // PG budget is the source of truth and the sandbox/compare paths
     // reuse this exact pipeline.
     run.estimated_tokens = estimateTokens(run.question);
     auto result = budget_repo_->reserve(run.owner_id, run.conversation_id,
@@ -417,7 +405,7 @@ void AIQueryServiceImpl::finalizeDurableQuery(DurableQueryRun& run, const std::s
     usage.estimated = true;
     usage.cost_usd = "0";
     if (!domain_repo_->appendTokenUsageLedger(usage)) {
-        // R3 (PR-C2): a false return here means the usage-<request_id> row
+        // A false return here means the usage-<request_id> row
         // already exists — the idempotent duplicate was skipped on purpose,
         // not a missed write.
         LOG_INFO("finalize: token ledger duplicate skipped for request " + run.request_id);
@@ -487,10 +475,7 @@ static void persistTraceSpansToRedis(common::RedisClient* redis_client) {
     redis_client->expire(redis_key, 604800);  // TTL 7 days
 }
 
-// ============================================================================
 // agent_invocations producer (final wrap-up wiring)
-// ============================================================================
-
 void AIQueryServiceImpl::setInvocationRepository(
     common::AgentRuntimeRepository* repository) {
     invocation_repository_ = repository;
@@ -528,10 +513,6 @@ void AIQueryServiceImpl::recordInvocationFact(
         LOG_WARN("agent_invocations write failed for query " + query_log_id);
     }
 }
-
-// ============================================================================
-// Query — synchronous AI query
-// ============================================================================
 
 grpc::Status AIQueryServiceImpl::Query(
     grpc::ServerContext* context,
@@ -617,7 +598,7 @@ grpc::Status AIQueryServiceImpl::Query(
     std::string error_message;
 
     if (orchestrator_enabled_) {
-        // P4-4: Multi-agent orchestrator path
+        // Multi-agent orchestrator path
         auto status = multi_agent_handler_->handleQuery(
             context, &enriched_req, response, request_id);
         success = status.ok();
@@ -626,7 +607,6 @@ grpc::Status AIQueryServiceImpl::Query(
         response->set_request_id(request_id);
         response->set_task_id(request_id);
     } else {
-        // Circuit breaker check
         if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
             LOG_WARN("A2A backend circuit breaker open, rejecting query: " + request_id);
             auto* status = response->mutable_status();
@@ -645,6 +625,7 @@ grpc::Status AIQueryServiceImpl::Query(
             a2a_adapter_->setRequestTimeout(timeout_sec);
         }
 
+        // Process query via A2A adapter
         // Process query via A2A adapter
         common::TraceContext::current()->startSpan("process_query", "server");
         success = a2a_adapter_->processQuery(enriched_req, response);
@@ -678,10 +659,9 @@ grpc::Status AIQueryServiceImpl::Query(
 
     // Memory cache (Redis only; PostgreSQL remains the source of truth).
     // Cache-only: a Redis fault here must not convert a successful query
-    // into an error response.
-    // [PR-E] Sandbox executions (SandboxQuery / CompareAgents / deferred
-    // intervention runs) never touch long-term memory: the sandbox flag
-    // guards the entire memory-hints / agent-switch summary path.
+    // into an error response. Sandbox executions (SandboxQuery /
+    // CompareAgents / deferred intervention runs) never touch long-term
+    // memory: the sandbox flag guards the memory-hints / agent-switch path.
     if (success && memory_service_ && !request->sandbox()) {
         runCacheOnly([&] {
             memory_service_->updateUserMemoryFromHints(
@@ -727,10 +707,10 @@ grpc::Status AIQueryServiceImpl::Query(
     } catch (const std::exception& error) {
         abortDurableRun(run, error.what());
         const bool persistence_fault = common::isPostgresError(error);
-        // Final review M-2 (aligned with PR-D M1): the client-facing status
-        // message is fixed, sanitized text. pqxx::sql_error::what() embeds
-        // the failing SQL statement, so raw exception detail stays in the
-        // server log only and never rides the response.
+        // The client-facing status message is fixed, sanitized text.
+        // pqxx::sql_error::what() embeds the failing SQL statement, so raw
+        // exception detail stays in the server log only and never rides the
+        // response.
         LOG_ERROR(std::string("Query pipeline crashed: ") + error.what());
         return grpc::Status(
             persistence_fault ? grpc::StatusCode::UNAVAILABLE
@@ -739,10 +719,6 @@ grpc::Status AIQueryServiceImpl::Query(
                               : "Query failed unexpectedly");
     }
 }
-
-// ============================================================================
-// QueryStream — streaming AI query
-// ============================================================================
 
 grpc::Status AIQueryServiceImpl::QueryStream(
     grpc::ServerContext* context,
@@ -836,7 +812,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         writer->Write(terminal);
     };
 
-    // P4-4: Multi-agent orchestrator path
+    // Multi-agent orchestrator path
     if (orchestrator_enabled_) {
         auto status = multi_agent_handler_->handleQueryStream(
             context, &enriched_req, writer, request_id);
@@ -871,6 +847,7 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         return status;
     }
 
+    // Circuit breaker check
     // Circuit breaker check
     if (circuit_breaker_ && !circuit_breaker_->isRequestAllowed()) {
         LOG_WARN("A2A backend circuit breaker open, rejecting streaming query: " + request_id);
@@ -997,10 +974,10 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     } catch (const std::exception& error) {
         abortDurableRun(run, error.what());
         const bool persistence_fault = common::isPostgresError(error);
-        // Final review M-2 (aligned with PR-D M1): the client-facing status
-        // message is fixed, sanitized text. pqxx::sql_error::what() embeds
-        // the failing SQL statement, so raw exception detail stays in the
-        // server log only and never rides the response.
+        // The client-facing status message is fixed, sanitized text.
+        // pqxx::sql_error::what() embeds the failing SQL statement, so raw
+        // exception detail stays in the server log only and never rides the
+        // response.
         LOG_ERROR(std::string("Query pipeline crashed: ") + error.what());
         return grpc::Status(
             persistence_fault ? grpc::StatusCode::UNAVAILABLE
@@ -1009,10 +986,6 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                               : "Query failed unexpectedly");
     }
 }
-
-// ============================================================================
-// GetQueryStatus
-// ============================================================================
 
 grpc::Status AIQueryServiceImpl::GetQueryStatus(
     grpc::ServerContext* context,
@@ -1039,7 +1012,7 @@ grpc::Status AIQueryServiceImpl::GetQueryStatus(
                            "task_id or context_id is required");
     }
 
-    // [PR-G] Durable status lookup: PostgreSQL query_logs is the source of
+    // Durable status lookup: PostgreSQL query_logs is the source of
     // truth (the old in-memory task cache was process-local and returned
     // success/unknown placeholders). Owner always comes from the
     // authenticated context; missing or foreign rows are NOT_FOUND.
@@ -1095,10 +1068,6 @@ grpc::Status AIQueryServiceImpl::GetQueryStatus(
                            "Failed to read query status");
     }
 }
-
-// ============================================================================
-// GetAgentMetrics (Batch 2)
-// ============================================================================
 
 grpc::Status AIQueryServiceImpl::GetAgentMetrics(
     grpc::ServerContext* context,
@@ -1169,10 +1138,7 @@ grpc::Status AIQueryServiceImpl::GetAgentMetrics(
     return grpc::Status::OK;
 }
 
-// ============================================================================
 // OrchestrationService delegation
-// ============================================================================
-
 grpc::Status AIQueryServiceImpl::ExecutePlan(
     grpc::ServerContext* context,
     const agent_communication::ExecutePlanRequest* request,
@@ -1205,7 +1171,7 @@ grpc::Status AIQueryServiceImpl::ReplayQuery(
     if (orchestration_impl_) {
         return orchestration_impl_->replayQuery(context, request, response);
     }
-    // PR-D: replay is durable (PostgreSQL + pipeline) and works even when
+    // Replay is durable (PostgreSQL + pipeline) and works even when
     // the multi-agent orchestrator is disabled; owner comes from the
     // authenticated session.
     return orchestrator::ReplayService::handleReplayRequest(
@@ -1223,7 +1189,7 @@ grpc::Status AIQueryServiceImpl::ExportConversation(
     if (orchestration_impl_) {
         return orchestration_impl_->exportConversation(context, request, response);
     }
-    // PR-D: export reads PostgreSQL conversation messages directly and does
+    // Export reads PostgreSQL conversation messages directly and does
     // not depend on the multi-agent orchestrator.
     return orchestrator::ExportService::handleExportRequest(
         AuthInterceptor::currentUserId(), request, response);

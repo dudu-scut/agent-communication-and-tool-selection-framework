@@ -19,7 +19,7 @@ class QueryDomainRepository;
 namespace orchestrator {
 
 /**
- * @brief Query Replay Service (PR-D: durable, PostgreSQL-backed)
+ * @brief Query Replay Service (durable, PostgreSQL-backed)
  *
  * Replays a previous query identified by its trace id. The original trace is
  * always loaded from PostgreSQL scoped by the AUTHENTICATED owner (a

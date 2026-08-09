@@ -1,4 +1,4 @@
--- Batch 5: Query Replay System — query_log table
+-- Query Replay System — query_log table
 -- Run: psql -U <user> -d <dbname> -f sql/006_query_log.sql
 
 CREATE TABLE IF NOT EXISTS query_log (

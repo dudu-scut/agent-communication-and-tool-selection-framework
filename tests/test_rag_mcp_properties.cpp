@@ -1,6 +1,6 @@
 /**
  * @file test_rag_mcp_properties.cpp
- * @brief RAG-MCP 框架属性测试
+ * @brief RAG-MCP framework property tests
  * 
  * Tests for:
  * - Property 1: Search Results Ordering
@@ -35,17 +35,15 @@ using namespace agent_rpc::mcp::rag;
 using agent_rpc::mcp::ToolCallResult;
 using agent_rpc::mcp::ToolInfo;
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
+// Helpers
 
-// 生成随机向量
+// Generate a random vector
 std::vector<float> generateRandomVector(int dimension) {
     std::vector<float> vec(dimension);
     for (int i = 0; i < dimension; ++i) {
         vec[i] = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;
     }
-    // 归一化
+    // Normalize
     float norm = 0.0f;
     for (float v : vec) norm += v * v;
     norm = std::sqrt(norm);
@@ -55,23 +53,19 @@ std::vector<float> generateRandomVector(int dimension) {
     return vec;
 }
 
-// 生成随机工具名称
+// Generate a random tool name
 std::string generateToolName(int index) {
     return "tool_" + std::to_string(index);
 }
 
-// ============================================================================
 // Property 1: Search Results Ordering
-// **Feature: rag-mcp, Property 1: Search Results Ordering**
-// **Validates: Requirements 1.3**
-// ============================================================================
 
 RC_GTEST_PROP(VectorIndexProperties, SearchResultsOrdering, ()) {
     VectorIndex index;
     
-    // 生成随机数量的工具 (3-20)
+    // Generate a random number of tools (3-20)
     int num_tools = *rc::gen::inRange(3, 20);
-    int dimension = 128;  // 使用较小维度加速测试
+    int dimension = 128;  // Use a smaller dimension to speed up tests
     
     for (int i = 0; i < num_tools; ++i) {
         IndexedTool tool;
@@ -82,29 +76,25 @@ RC_GTEST_PROP(VectorIndexProperties, SearchResultsOrdering, ()) {
         index.addTool(tool);
     }
     
-    // 生成随机查询向量
+    // Generate a random query vector
     auto query = generateRandomVector(dimension);
     
-    // 搜索
+    // Search
     int top_k = *rc::gen::inRange(1, num_tools + 1);
     auto results = index.search(query, top_k);
     
-    // 验证结果按相似度降序排列
+    // Verify results are sorted by similarity in descending order
     for (size_t i = 1; i < results.size(); ++i) {
         RC_ASSERT(results[i-1].similarity >= results[i].similarity);
     }
 }
 
-// ============================================================================
 // Property 2: Top-K Result Count
-// **Feature: rag-mcp, Property 2: Top-K Result Count**
-// **Validates: Requirements 4.1**
-// ============================================================================
 
 RC_GTEST_PROP(VectorIndexProperties, TopKResultCount, ()) {
     VectorIndex index;
     
-    // 生成随机数量的工具 (1-30)
+    // Generate a random number of tools (1-30)
     int num_tools = *rc::gen::inRange(1, 30);
     int dimension = 64;
     
@@ -117,23 +107,19 @@ RC_GTEST_PROP(VectorIndexProperties, TopKResultCount, ()) {
         index.addTool(tool);
     }
     
-    // 生成随机 top_k
+    // Generate a random top_k
     int top_k = *rc::gen::inRange(1, 50);
     
     auto query = generateRandomVector(dimension);
-    // 使用 -1.0f 作为阈值，确保不过滤任何结果（包括负相似度）
+    // Use -1.0f as threshold so nothing is filtered out (including negative similarities)
     auto results = index.search(query, top_k, -1.0f);
     
-    // 验证返回数量 = min(top_k, num_tools)
+    // Verify result count = min(top_k, num_tools)
     int expected = std::min(top_k, num_tools);
     RC_ASSERT(static_cast<int>(results.size()) == expected);
 }
 
-// ============================================================================
 // Property 3: Similarity Threshold Filtering
-// **Feature: rag-mcp, Property 3: Similarity Threshold Filtering**
-// **Validates: Requirements 4.3**
-// ============================================================================
 
 RC_GTEST_PROP(VectorIndexProperties, SimilarityThresholdFiltering, ()) {
     VectorIndex index;
@@ -155,22 +141,18 @@ RC_GTEST_PROP(VectorIndexProperties, SimilarityThresholdFiltering, ()) {
     
     auto results = index.search(query, num_tools, threshold);
     
-    // 验证所有结果的相似度 >= threshold（除非没有满足条件的，则返回最佳匹配）
+    // Verify all results have similarity >= threshold (best match is returned if none qualify)
     if (results.size() > 1) {
         for (const auto& result : results) {
             RC_ASSERT(result.similarity >= threshold);
         }
     } else if (results.size() == 1) {
-        // 如果只有一个结果，它应该是最佳匹配
-        // 不需要满足阈值
+        // If there is only one result, it should be the best match
+        // No threshold requirement
     }
 }
 
-// ============================================================================
 // Property 4: Index Persistence Round-Trip
-// **Feature: rag-mcp, Property 4: Index Persistence Round-Trip**
-// **Validates: Requirements 3.2**
-// ============================================================================
 
 RC_GTEST_PROP(VectorIndexProperties, IndexPersistenceRoundTrip, ()) {
     VectorIndex original_index;
@@ -187,18 +169,18 @@ RC_GTEST_PROP(VectorIndexProperties, IndexPersistenceRoundTrip, ()) {
         original_index.addTool(tool);
     }
     
-    // 保存到临时文件
+    // Save to a temporary file
     std::string temp_path = "/tmp/test_index_" + std::to_string(rand()) + ".json";
     RC_ASSERT(original_index.saveToFile(temp_path));
     
-    // 加载到新索引
+    // Load into a new index
     VectorIndex loaded_index;
     RC_ASSERT(loaded_index.loadFromFile(temp_path));
     
-    // 验证大小相同
+    // Verify sizes match
     RC_ASSERT(original_index.size() == loaded_index.size());
     
-    // 验证所有工具都存在
+    // Verify all tools exist
     auto original_tools = original_index.getAllTools();
     for (const auto& tool : original_tools) {
         RC_ASSERT(loaded_index.hasTool(tool.name));
@@ -209,15 +191,11 @@ RC_GTEST_PROP(VectorIndexProperties, IndexPersistenceRoundTrip, ()) {
         RC_ASSERT(loaded_tool->embedding.size() == tool.embedding.size());
     }
     
-    // 清理
+    // Clean up
     std::filesystem::remove(temp_path);
 }
 
-// ============================================================================
 // Property 5: Incremental Index Update
-// **Feature: rag-mcp, Property 5: Incremental Index Update**
-// **Validates: Requirements 3.3**
-// ============================================================================
 
 RC_GTEST_PROP(VectorIndexProperties, IncrementalIndexUpdate, ()) {
     VectorIndex index;
@@ -225,7 +203,7 @@ RC_GTEST_PROP(VectorIndexProperties, IncrementalIndexUpdate, ()) {
     int initial_count = *rc::gen::inRange(0, 10);
     int dimension = 32;
     
-    // 添加初始工具
+    // Add initial tools
     for (int i = 0; i < initial_count; ++i) {
         IndexedTool tool;
         tool.name = generateToolName(i);
@@ -237,7 +215,7 @@ RC_GTEST_PROP(VectorIndexProperties, IncrementalIndexUpdate, ()) {
     
     RC_ASSERT(index.size() == static_cast<size_t>(initial_count));
     
-    // 添加新工具
+    // Add a new tool
     IndexedTool new_tool;
     new_tool.name = "new_tool";
     new_tool.description = "New tool";
@@ -246,16 +224,12 @@ RC_GTEST_PROP(VectorIndexProperties, IncrementalIndexUpdate, ()) {
     
     index.addTool(new_tool);
     
-    // 验证大小增加 1
+    // Verify size increased by 1
     RC_ASSERT(index.size() == static_cast<size_t>(initial_count + 1));
     RC_ASSERT(index.hasTool("new_tool"));
 }
 
-// ============================================================================
 // Property 6: Tool Removal Consistency
-// **Feature: rag-mcp, Property 6: Tool Removal Consistency**
-// **Validates: Requirements 3.4**
-// ============================================================================
 
 RC_GTEST_PROP(VectorIndexProperties, ToolRemovalConsistency, ()) {
     VectorIndex index;
@@ -272,21 +246,21 @@ RC_GTEST_PROP(VectorIndexProperties, ToolRemovalConsistency, ()) {
         index.addTool(tool);
     }
     
-    // 选择要移除的工具
+    // Pick a tool to remove
     int remove_index = *rc::gen::inRange(0, num_tools);
     std::string tool_to_remove = generateToolName(remove_index);
     
     size_t size_before = index.size();
     RC_ASSERT(index.hasTool(tool_to_remove));
     
-    // 移除工具
+    // Remove the tool
     bool removed = index.removeTool(tool_to_remove);
     
     RC_ASSERT(removed);
     RC_ASSERT(index.size() == size_before - 1);
     RC_ASSERT(!index.hasTool(tool_to_remove));
     
-    // 验证搜索结果不包含已移除的工具
+    // Verify search results do not contain the removed tool
     auto query = generateRandomVector(dimension);
     auto results = index.search(query, num_tools);
     
@@ -295,11 +269,7 @@ RC_GTEST_PROP(VectorIndexProperties, ToolRemovalConsistency, ()) {
     }
 }
 
-// ============================================================================
 // Property 7: Cache Hit Behavior
-// **Feature: rag-mcp, Property 7: Cache Hit Behavior**
-// **Validates: Requirements 7.2**
-// ============================================================================
 
 RC_GTEST_PROP(EmbeddingCacheProperties, CacheHitBehavior, ()) {
     CacheConfig config;
@@ -309,33 +279,29 @@ RC_GTEST_PROP(EmbeddingCacheProperties, CacheHitBehavior, ()) {
     
     EmbeddingCache cache(config);
     
-    // 生成随机文本和向量
+    // Generate random text and embedding
     std::string text = "test_text_" + std::to_string(*rc::gen::inRange(0, 10000));
     std::vector<float> embedding = generateRandomVector(64);
     
-    // 第一次获取应该是 miss
+    // First lookup should be a miss
     auto result1 = cache.get(text);
     RC_ASSERT(!result1.has_value());
     
-    // 存入缓存
+    // Put into cache
     cache.put(text, embedding);
     
-    // 第二次获取应该是 hit
+    // Second lookup should be a hit
     auto result2 = cache.get(text);
     RC_ASSERT(result2.has_value());
     RC_ASSERT(result2.value().size() == embedding.size());
     
-    // 验证值相同
+    // Verify values are identical
     for (size_t i = 0; i < embedding.size(); ++i) {
         RC_ASSERT(std::abs(result2.value()[i] - embedding[i]) < 1e-6f);
     }
 }
 
-// ============================================================================
 // Property 8: LRU Eviction Order
-// **Feature: rag-mcp, Property 8: LRU Eviction Order**
-// **Validates: Requirements 7.3**
-// ============================================================================
 
 RC_GTEST_PROP(EmbeddingCacheProperties, LRUEvictionOrder, ()) {
     int cache_size = *rc::gen::inRange(3, 10);
@@ -347,7 +313,7 @@ RC_GTEST_PROP(EmbeddingCacheProperties, LRUEvictionOrder, ()) {
     
     EmbeddingCache cache(config);
     
-    // 填满缓存
+    // Fill the cache
     for (int i = 0; i < cache_size; ++i) {
         std::string text = "text_" + std::to_string(i);
         cache.put(text, generateRandomVector(32));
@@ -355,38 +321,34 @@ RC_GTEST_PROP(EmbeddingCacheProperties, LRUEvictionOrder, ()) {
     
     RC_ASSERT(cache.size() == static_cast<size_t>(cache_size));
     
-    // 访问第一个元素（使其成为最近使用）
+    // Access the first element (making it most recently used)
     cache.get("text_0");
     
-    // 添加新元素，应该驱逐 text_1（最久未使用）
+    // Add a new element; text_1 (least recently used) should be evicted
     cache.put("new_text", generateRandomVector(32));
     
-    // text_0 应该还在（因为刚访问过）
+    // text_0 should still be present (just accessed)
     RC_ASSERT(cache.contains("text_0"));
     
-    // text_1 应该被驱逐
+    // text_1 should be evicted
     RC_ASSERT(!cache.contains("text_1"));
     
-    // 新元素应该在
+    // The new element should be present
     RC_ASSERT(cache.contains("new_text"));
 }
 
-// ============================================================================
 // Property 9: Retry Exponential Backoff
-// **Feature: rag-mcp, Property 9: Retry Exponential Backoff**
-// **Validates: Requirements 2.3**
-// ============================================================================
 
 TEST(EmbeddingServiceProperties, RetryExponentialBackoff) {
-    // 测试指数退避延迟计算
-    // 由于实际 API 调用需要网络，我们测试延迟计算逻辑
+    // Test exponential backoff delay calculation
+    // Since real API calls need the network, only test the delay calculation logic
     
     EmbeddingConfig config;
     config.api_key = "test_key";
     config.initial_retry_delay_ms = 1000;
     config.max_retries = 5;
     
-    // 验证指数退避模式: delay = initial_delay * 2^(attempt-1)
+    // Verify exponential backoff pattern: delay = initial_delay * 2^(attempt-1)
     // attempt 1: 1000ms
     // attempt 2: 2000ms
     // attempt 3: 4000ms
@@ -399,7 +361,7 @@ TEST(EmbeddingServiceProperties, RetryExponentialBackoff) {
         int expected_base = config.initial_retry_delay_ms * (1 << (attempt - 1));
         EXPECT_EQ(expected_base, expected_base_delays[attempt - 1]);
         
-        // 验证指数增长
+        // Verify exponential growth
         if (attempt > 1) {
             EXPECT_EQ(expected_base, expected_base_delays[attempt - 2] * 2);
         }
@@ -407,7 +369,7 @@ TEST(EmbeddingServiceProperties, RetryExponentialBackoff) {
 }
 
 RC_GTEST_PROP(EmbeddingServiceProperties, RetryDelaysAreExponential, ()) {
-    // 生成随机初始延迟和重试次数
+    // Generate random initial delay and retry count
     int initial_delay = *rc::gen::inRange(100, 2000);
     int max_retries = *rc::gen::inRange(2, 6);
     
@@ -417,20 +379,16 @@ RC_GTEST_PROP(EmbeddingServiceProperties, RetryDelaysAreExponential, ()) {
         delays.push_back(base_delay);
     }
     
-    // 验证每次延迟是前一次的 2 倍
+    // Verify each delay is twice the previous one
     for (size_t i = 1; i < delays.size(); ++i) {
         RC_ASSERT(delays[i] == delays[i-1] * 2);
     }
     
-    // 验证第一次延迟等于初始延迟
+    // Verify the first delay equals the initial delay
     RC_ASSERT(delays[0] == initial_delay);
 }
 
-// ============================================================================
 // Property 10: Retrieved Tool Completeness
-// **Feature: rag-mcp, Property 10: Retrieved Tool Completeness**
-// **Validates: Requirements 1.4**
-// ============================================================================
 
 RC_GTEST_PROP(ToolRetrieverProperties, RetrievedToolCompleteness, ()) {
     VectorIndex index;
@@ -438,7 +396,7 @@ RC_GTEST_PROP(ToolRetrieverProperties, RetrievedToolCompleteness, ()) {
     int num_tools = *rc::gen::inRange(1, 10);
     int dimension = 64;
     
-    // 添加工具，确保每个工具都有完整的字段
+    // Add tools, ensuring each tool has complete fields
     for (int i = 0; i < num_tools; ++i) {
         IndexedTool tool;
         tool.name = "tool_" + std::to_string(i);
@@ -451,27 +409,23 @@ RC_GTEST_PROP(ToolRetrieverProperties, RetrievedToolCompleteness, ()) {
     auto query = generateRandomVector(dimension);
     auto results = index.search(query, num_tools);
     
-    // 验证每个检索结果都包含完整字段
+    // Verify each retrieved result has complete fields
     for (const auto& result : results) {
-        // 名称不为空
+        // Name is not empty
         RC_ASSERT(!result.tool.name.empty());
         
-        // 描述不为空
+        // Description is not empty
         RC_ASSERT(!result.tool.description.empty());
         
-        // input_schema 不为空
+        // input_schema is not empty
         RC_ASSERT(!result.tool.input_schema.empty());
         
-        // 相似度分数在有效范围内
+        // Similarity score is within the valid range
         RC_ASSERT(result.similarity >= -1.0f && result.similarity <= 1.0f);
     }
 }
 
-// ============================================================================
 // Property 11: Validation Exclusion
-// **Feature: rag-mcp, Property 11: Validation Exclusion**
-// **Validates: Requirements 5.2**
-// ============================================================================
 
 TEST(ToolValidatorProperties, ValidationExclusion) {
     ValidatorConfig config;
@@ -480,17 +434,17 @@ TEST(ToolValidatorProperties, ValidationExclusion) {
     
     ToolValidator validator(config);
     
-    // 跟踪工具调用
+    // Track tool calls
     std::vector<std::string> called_tools;
     
-    // 设置一个根据工具名称决定成功/失败的工具调用函数
+    // Set a tool call function that succeeds or fails based on the tool name
     validator.setToolCallFunc([&called_tools](const std::string& tool_name, 
                                               const std::string& /*arguments*/) -> ToolCallResult {
         called_tools.push_back(tool_name);
         ToolCallResult result;
         if (tool_name == "failing_tool") {
             result.success = false;
-            // 使用不包含 "parameter" 或 "argument" 的错误消息
+            // Use an error message that does not contain "parameter" or "argument"
             result.error = "Tool execution failed completely";
         } else {
             result.success = true;
@@ -499,7 +453,7 @@ TEST(ToolValidatorProperties, ValidationExclusion) {
         return result;
     });
     
-    // 创建测试工具 - 使用带 properties 的 schema 以确保生成测试查询
+    // Create test tools - use schemas with properties so test queries are generated
     std::vector<RetrievedTool> tools;
     
     RetrievedTool valid_tool;
@@ -516,7 +470,7 @@ TEST(ToolValidatorProperties, ValidationExclusion) {
     failing_tool.relevance_score = 0.8f;
     tools.push_back(failing_tool);
     
-    // 先单独验证每个工具
+    // Validate each tool individually first
     called_tools.clear();
     auto valid_result = validator.validate(valid_tool);
     EXPECT_TRUE(valid_result.is_valid) << "valid_tool should be valid";
@@ -527,16 +481,16 @@ TEST(ToolValidatorProperties, ValidationExclusion) {
     EXPECT_FALSE(failing_result.is_valid) << "failing_tool should be invalid, error: " << failing_result.error_message;
     EXPECT_FALSE(called_tools.empty()) << "Tool call function should have been called for failing_tool";
     
-    // 过滤无效工具
+    // Filter out invalid tools
     auto filtered = validator.filterInvalid(tools);
     
-    // 验证失败的工具被排除
+    // Verify the failing tool is excluded
     EXPECT_EQ(filtered.size(), 1u) << "Should have 1 tool after filtering";
     if (!filtered.empty()) {
         EXPECT_EQ(filtered[0].name, "valid_tool");
     }
     
-    // 验证 failing_tool 不在结果中
+    // Verify failing_tool is not in the results
     for (const auto& tool : filtered) {
         EXPECT_NE(tool.name, "failing_tool");
     }
@@ -549,23 +503,23 @@ RC_GTEST_PROP(ToolValidatorProperties, InvalidToolsAreExcluded, ()) {
     
     ToolValidator validator(config);
     
-    // 生成随机数量的工具
+    // Generate a random number of tools
     int num_valid = *rc::gen::inRange(1, 5);
     int num_invalid = *rc::gen::inRange(1, 5);
     
-    // 先构建无效工具名称集合
+    // Build the set of invalid tool names first
     std::set<std::string> invalid_names;
     for (int i = 0; i < num_invalid; ++i) {
         invalid_names.insert("invalid_" + std::to_string(i));
     }
     
-    // 设置工具调用函数 - 使用值捕获避免引用问题
+    // Set tool call function - capture by value to avoid dangling references
     validator.setToolCallFunc([invalid_names](const std::string& tool_name, 
                                               const std::string& /*arguments*/) -> ToolCallResult {
         ToolCallResult result;
         if (invalid_names.count(tool_name) > 0) {
             result.success = false;
-            // 使用不包含 "parameter" 或 "argument" 的错误消息
+            // Use an error message that does not contain "parameter" or "argument"
             result.error = "Tool execution failed completely";
         } else {
             result.success = true;
@@ -576,10 +530,10 @@ RC_GTEST_PROP(ToolValidatorProperties, InvalidToolsAreExcluded, ()) {
     
     std::vector<RetrievedTool> tools;
     
-    // 使用带 properties 的 schema 以确保生成测试查询
+    // Use a schema with properties so test queries are generated
     std::string schema = R"({"type": "object", "properties": {"input": {"type": "string"}}})";
     
-    // 添加有效工具
+    // Add valid tools
     for (int i = 0; i < num_valid; ++i) {
         RetrievedTool tool;
         tool.name = "valid_" + std::to_string(i);
@@ -589,7 +543,7 @@ RC_GTEST_PROP(ToolValidatorProperties, InvalidToolsAreExcluded, ()) {
         tools.push_back(tool);
     }
     
-    // 添加无效工具
+    // Add invalid tools
     for (int i = 0; i < num_invalid; ++i) {
         RetrievedTool tool;
         tool.name = "invalid_" + std::to_string(i);
@@ -599,21 +553,19 @@ RC_GTEST_PROP(ToolValidatorProperties, InvalidToolsAreExcluded, ()) {
         tools.push_back(tool);
     }
     
-    // 过滤
+    // Filter
     auto filtered = validator.filterInvalid(tools);
     
-    // 验证结果数量等于有效工具数量
+    // Verify the result count equals the number of valid tools
     RC_ASSERT(static_cast<int>(filtered.size()) == num_valid);
     
-    // 验证所有无效工具都被排除
+    // Verify all invalid tools are excluded
     for (const auto& tool : filtered) {
         RC_ASSERT(invalid_names.count(tool.name) == 0);
     }
 }
 
-// ============================================================================
-// 余弦相似度测试
-// ============================================================================
+// Cosine similarity tests
 
 TEST(VectorIndexTest, CosineSimilarity_IdenticalVectors) {
     std::vector<float> v = {1.0f, 2.0f, 3.0f};
@@ -635,9 +587,7 @@ TEST(VectorIndexTest, CosineSimilarity_OppositeVectors) {
     EXPECT_NEAR(sim, -1.0f, 1e-5f);
 }
 
-// ============================================================================
-// 缓存禁用测试
-// ============================================================================
+// Cache disabled tests
 
 TEST(EmbeddingCacheTest, DisabledCache) {
     CacheConfig config;
@@ -651,9 +601,7 @@ TEST(EmbeddingCacheTest, DisabledCache) {
     EXPECT_FALSE(result.has_value());
 }
 
-// ============================================================================
-// 索引空搜索测试
-// ============================================================================
+// Empty index search tests
 
 TEST(VectorIndexTest, EmptyIndexSearch) {
     VectorIndex index;
@@ -664,11 +612,7 @@ TEST(VectorIndexTest, EmptyIndexSearch) {
     EXPECT_TRUE(results.empty());
 }
 
-// ============================================================================
-// RAG-MCP 集成测试
-// Task 10.4: 编写集成测试
-// **Validates: Requirements 6.1, 6.2, 6.4**
-// ============================================================================
+// RAG-MCP integration tests
 
 using agent_rpc::mcp::MCPAgentIntegration;
 using agent_rpc::mcp::MCPAgentConfig;
@@ -677,8 +621,8 @@ using agent_rpc::mcp::RAGConfig;
 class RAGMCPIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 创建基础配置
-        config_.enable_mcp = false;  // 不实际连接 MCP Server
+        // Create base configuration
+        config_.enable_mcp = false;  // Do not connect to a real MCP server
         config_.mcp_server_path = "";
     }
     
@@ -690,44 +634,41 @@ protected:
     MCPAgentIntegration integration_;
 };
 
-// 测试 RAG-MCP 禁用场景
-// **Validates: Requirements 6.2**
+// Test RAG-MCP disabled scenario
 TEST_F(RAGMCPIntegrationTest, RAGDisabled_ReturnsAllTools) {
-    // 配置 RAG 禁用
+    // Configure RAG as disabled
     config_.rag_config.enabled = false;
     
-    // 初始化
+    // Initialize
     ASSERT_TRUE(integration_.initialize(config_));
     
-    // 验证 RAG 未启用
+    // Verify RAG is not enabled
     EXPECT_FALSE(integration_.isRAGEnabled());
     
-    // 当 RAG 禁用时，getRelevantTools 应返回所有工具
-    // 由于没有连接 MCP Server，工具列表为空
+    // When RAG is disabled, getRelevantTools should return all tools
+    // With no MCP server connected, the tool list is empty
     auto tools = integration_.getRelevantTools("any query");
-    // 空工具列表是预期的，因为没有 MCP Server
+    // An empty tool list is expected since there is no MCP server
     EXPECT_TRUE(tools.empty());
 }
 
-// 测试 RAG-MCP 启用但无 API Key 场景
-// **Validates: Requirements 6.4**
+// Test RAG-MCP enabled without an API key
 TEST_F(RAGMCPIntegrationTest, RAGEnabled_NoApiKey_FallbackToAllTools) {
-    // 配置 RAG 启用但不提供 API Key
+    // Enable RAG but provide no API key
     config_.rag_config.enabled = true;
-    config_.rag_config.api_key = "";  // 空 API Key
+    config_.rag_config.api_key = "";  // Empty API key
     
-    // 初始化应该成功（降级模式）
+    // Initialization should succeed (degraded mode)
     ASSERT_TRUE(integration_.initialize(config_));
     
-    // RAG 可能未初始化成功，但不应崩溃
-    // 应该降级到返回所有工具
+    // RAG may not initialize successfully, but must not crash
+    // Should degrade to returning all tools
     auto tools = integration_.getRelevantTools("test query");
-    // 由于没有 MCP Server，工具列表为空
+    // With no MCP server connected, the tool list is empty
     EXPECT_TRUE(tools.empty());
 }
 
-// 测试 RAG 配置参数
-// **Validates: Requirements 6.1**
+// Test RAG config parameters
 TEST_F(RAGMCPIntegrationTest, RAGConfig_Parameters) {
     config_.rag_config.enabled = true;
     config_.rag_config.api_key = "test_key";
@@ -738,7 +679,7 @@ TEST_F(RAGMCPIntegrationTest, RAGConfig_Parameters) {
     config_.rag_config.cache_max_size = 500;
     config_.rag_config.cache_ttl_seconds = 1800;
     
-    // 验证配置被正确存储
+    // Verify the config is stored correctly
     EXPECT_TRUE(config_.rag_config.enabled);
     EXPECT_EQ(config_.rag_config.api_key, "test_key");
     EXPECT_EQ(config_.rag_config.model, "text-embedding-v2");
@@ -749,8 +690,7 @@ TEST_F(RAGMCPIntegrationTest, RAGConfig_Parameters) {
     EXPECT_EQ(config_.rag_config.cache_ttl_seconds, 1800);
 }
 
-// 测试 LLM 函数调用格式转换
-// **Validates: Requirements 6.3**
+// Test LLM function calling format conversion
 TEST(FunctionCallingFormatTest, ToFunctionCallingFormat) {
     std::vector<ToolInfo> tools;
     
@@ -768,7 +708,7 @@ TEST(FunctionCallingFormatTest, ToFunctionCallingFormat) {
     
     std::string json = MCPAgentIntegration::toFunctionCallingFormat(tools);
     
-    // 验证 JSON 格式
+    // Verify the JSON format
     EXPECT_FALSE(json.empty());
     EXPECT_NE(json.find("calculator"), std::string::npos);
     EXPECT_NE(json.find("weather"), std::string::npos);
@@ -776,67 +716,65 @@ TEST(FunctionCallingFormatTest, ToFunctionCallingFormat) {
     EXPECT_NE(json.find("Get weather information"), std::string::npos);
 }
 
-// 测试空工具列表的函数调用格式
+// Test function calling format with an empty tool list
 TEST(FunctionCallingFormatTest, ToFunctionCallingFormat_EmptyTools) {
     std::vector<ToolInfo> tools;
     
     std::string json = MCPAgentIntegration::toFunctionCallingFormat(tools);
     
-    // 空工具列表应返回空数组
+    // An empty tool list should return an empty array
     EXPECT_EQ(json, "[]");
 }
 
-// 测试初始化和关闭生命周期
+// Test initialize and shutdown lifecycle
 TEST_F(RAGMCPIntegrationTest, InitializeAndShutdown) {
     config_.rag_config.enabled = false;
     
-    // 初始化
+    // Initialize
     ASSERT_TRUE(integration_.initialize(config_));
     EXPECT_TRUE(integration_.isInitialized());
     
-    // 关闭
+    // Shutdown
     integration_.shutdown();
     EXPECT_FALSE(integration_.isInitialized());
     
-    // 可以重新初始化
+    // Can re-initialize
     ASSERT_TRUE(integration_.initialize(config_));
     EXPECT_TRUE(integration_.isInitialized());
 }
 
-// 测试多次初始化
+// Test multiple initializations
 TEST_F(RAGMCPIntegrationTest, MultipleInitialize) {
     config_.rag_config.enabled = false;
     
-    // 第一次初始化
+    // First initialization
     ASSERT_TRUE(integration_.initialize(config_));
     EXPECT_TRUE(integration_.isInitialized());
     
-    // 第二次初始化（应该先关闭再初始化）
+    // Second initialization (should shut down first)
     ASSERT_TRUE(integration_.initialize(config_));
     EXPECT_TRUE(integration_.isInitialized());
 }
 
-// 测试 getRelevantTools 自定义 top_k
+// Test getRelevantTools with a custom top_k
 TEST_F(RAGMCPIntegrationTest, GetRelevantTools_CustomTopK) {
     config_.rag_config.enabled = false;
     
     ASSERT_TRUE(integration_.initialize(config_));
     
-    // 使用自定义 top_k
+    // Use a custom top_k
     auto tools = integration_.getRelevantTools("test query", 10);
-    // 由于没有 MCP Server，工具列表为空
+    // With no MCP server connected, the tool list is empty
     EXPECT_TRUE(tools.empty());
 }
 
-// ============================================================================
-// VectorIndex 与 ToolRetriever 集成测试
-// ============================================================================
+// VectorIndex and ToolRetriever integration tests
 
 TEST(VectorIndexIntegrationTest, VectorIndex_ToolRetriever_Integration) {
-    // 创建向量索引
+    // Create a vector index
     VectorIndex index;
     
-    // 添加一些工具
+    // Add some tools
     int dimension = 64;
     for (int i = 0; i < 10; ++i) {
         IndexedTool tool;
@@ -849,24 +787,24 @@ TEST(VectorIndexIntegrationTest, VectorIndex_ToolRetriever_Integration) {
     
     EXPECT_EQ(index.size(), 10u);
     
-    // 搜索（使用 -1.0f 阈值确保不过滤任何结果）
+    // Search (use a -1.0f threshold so nothing is filtered)
     auto query = generateRandomVector(dimension);
     auto results = index.search(query, 5, -1.0f);
     
     EXPECT_EQ(results.size(), 5u);
     
-    // 验证结果按相似度排序
+    // Verify results are sorted by similarity
     for (size_t i = 1; i < results.size(); ++i) {
         EXPECT_GE(results[i-1].similarity, results[i].similarity);
     }
 }
 
-// 测试索引持久化和加载后的搜索一致性
+// Test search consistency after persistence and reload
 TEST(VectorIndexIntegrationTest, IndexPersistence_SearchConsistency) {
     VectorIndex original_index;
     int dimension = 64;
     
-    // 添加工具
+    // Add tools
     for (int i = 0; i < 5; ++i) {
         IndexedTool tool;
         tool.name = "tool_" + std::to_string(i);
@@ -876,32 +814,32 @@ TEST(VectorIndexIntegrationTest, IndexPersistence_SearchConsistency) {
         original_index.addTool(tool);
     }
     
-    // 保存
+    // Save
     std::string temp_path = "/tmp/test_integration_index_" + std::to_string(rand()) + ".json";
     ASSERT_TRUE(original_index.saveToFile(temp_path));
     
-    // 加载
+    // Load
     VectorIndex loaded_index;
     ASSERT_TRUE(loaded_index.loadFromFile(temp_path));
     
-    // 使用相同查询搜索
+    // Search with the same query
     auto query = generateRandomVector(dimension);
     auto original_results = original_index.search(query, 3);
     auto loaded_results = loaded_index.search(query, 3);
     
-    // 验证结果数量相同
+    // Verify the result counts match
     EXPECT_EQ(original_results.size(), loaded_results.size());
     
-    // 验证工具名称相同
+    // Verify the tool names match
     for (size_t i = 0; i < original_results.size(); ++i) {
         EXPECT_EQ(original_results[i].tool.name, loaded_results[i].tool.name);
     }
     
-    // 清理
+    // Clean up
     std::filesystem::remove(temp_path);
 }
 
-// 测试缓存与向量索引的集成
+// Test cache and vector index integration
 TEST(CacheIntegrationTest, Cache_VectorIndex_Integration) {
     CacheConfig cache_config;
     cache_config.enabled = true;
@@ -913,7 +851,7 @@ TEST(CacheIntegrationTest, Cache_VectorIndex_Integration) {
     
     int dimension = 64;
     
-    // 模拟工具索引流程
+    // Simulate the tool indexing flow
     std::vector<std::string> tool_descriptions = {
         "Calculate mathematical expressions",
         "Get weather information for a location",
@@ -923,19 +861,19 @@ TEST(CacheIntegrationTest, Cache_VectorIndex_Integration) {
     for (size_t i = 0; i < tool_descriptions.size(); ++i) {
         const auto& desc = tool_descriptions[i];
         
-        // 检查缓存
+        // Check the cache
         auto cached = cache.get(desc);
         std::vector<float> embedding;
         
         if (cached.has_value()) {
             embedding = cached.value();
         } else {
-            // 生成新向量（模拟 API 调用）
+            // Generate a new embedding (simulating an API call)
             embedding = generateRandomVector(dimension);
             cache.put(desc, embedding);
         }
         
-        // 添加到索引
+        // Add to the index
         IndexedTool tool;
         tool.name = "tool_" + std::to_string(i);
         tool.description = desc;
@@ -946,39 +884,35 @@ TEST(CacheIntegrationTest, Cache_VectorIndex_Integration) {
     
     EXPECT_EQ(index.size(), 3u);
     
-    // 验证缓存命中
+    // Verify cache hits
     for (const auto& desc : tool_descriptions) {
         auto cached = cache.get(desc);
         EXPECT_TRUE(cached.has_value());
     }
 }
 
-// ============================================================================
-// Property 测试: RAG 降级行为
-// **Feature: rag-mcp, Property 12: RAG Fallback Behavior**
-// **Validates: Requirements 6.4**
-// ============================================================================
+// Property: RAG fallback behavior
 
 RC_GTEST_PROP(RAGMCPIntegrationProperties, FallbackToAllToolsWhenRAGUnavailable, ()) {
     MCPAgentConfig config;
     config.enable_mcp = false;
     config.rag_config.enabled = true;
-    config.rag_config.api_key = "";  // 无效 API Key
+    config.rag_config.api_key = "";  // Invalid API key
     
     MCPAgentIntegration integration;
     
-    // 初始化应该成功（降级模式）
+    // Initialization should succeed (degraded mode)
     RC_ASSERT(integration.initialize(config));
     
-    // 生成随机查询
+    // Generate a random query
     std::string query = "random query " + std::to_string(*rc::gen::inRange(0, 10000));
     
-    // 获取相关工具不应崩溃
+    // Fetching relevant tools must not crash
     auto tools = integration.getRelevantTools(query);
     
-    // 由于没有 MCP Server，工具列表为空是预期的
-    // 关键是不应该抛出异常
-    RC_ASSERT(tools.empty() || !tools.empty());  // 总是为真，验证不崩溃
+    // An empty tool list is expected since there is no MCP server
+    // The key point is that it must not throw
+    RC_ASSERT(tools.empty() || !tools.empty());  // Always true; verifies no crash
     
     integration.shutdown();
 }

@@ -1,6 +1,6 @@
 /**
  * @file result_aggregator.h
- * @brief ResultAggregator — merges multiple subtask results into a final answer (P4-3)
+ * @brief ResultAggregator — merges multiple subtask results into a final answer
  *
  * Two strategies:
  *   - concat:        Topological-order concatenation (fast, zero-cost)

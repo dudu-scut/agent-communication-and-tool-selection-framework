@@ -5,13 +5,11 @@ package agent_communication;
 import "common.proto";
 import "ai_query.proto";
 
-// ============================================================================
-// Batch 7 U6: Session Sharing
-// ============================================================================
+// Session Sharing
 
 message ShareSessionRequest {
     string context_id = 1;
-    string mode = 2;           // PR-D: only "view" is supported
+    string mode = 2;           // Only "view" is supported
     int32 expiry_days = 3;     // Share link TTL (0 = no expiry)
 }
 
@@ -20,7 +18,7 @@ message ShareSessionResponse {
     string share_id = 2;
     string share_url = 3;      // Relative path ("/share/<token>"); the
                                // frontend assembles the absolute URL.
-    // PR-D: the high-entropy raw bearer token. PostgreSQL stores only its
+    // The high-entropy raw bearer token. PostgreSQL stores only its
     // SHA-256 hash; this field is returned exactly once, at creation time.
     string token = 4;
     // ISO-8601 expiry timestamp; empty when the share never expires.
@@ -51,10 +49,8 @@ message UseTemplateResponse {
     string context_id = 2;
 }
 
-// ============================================================================
-// PR-D: read-only public share access, owner share management, template
+// Read-only public share access, owner share management, template
 // listing. Field numbers start at unused tags; existing fields are unchanged.
-// ============================================================================
 
 // Public (no auth) read of a shared conversation by its raw token.
 message ReadSharedConversationRequest {
@@ -134,7 +130,7 @@ message GetTemplateResponse {
     TemplateEntry template = 2;
 }
 
-// Batch 7 U6: Session Sharing Service
+// Session Sharing Service
 service SharingService {
     // Share a session (generate share link)
     rpc ShareSession(ShareSessionRequest) returns (ShareSessionResponse);
@@ -148,15 +144,15 @@ service SharingService {
     // Apply a saved template to create a new conversation
     rpc UseTemplate(UseTemplateRequest) returns (UseTemplateResponse);
 
-    // PR-D: restricted public read of a shared conversation (token bearer,
+    // Restricted public read of a shared conversation (token bearer,
     // read-only, sanitized, expiry/revocation enforced).
     rpc ReadSharedConversation(ReadSharedConversationRequest) returns (ReadSharedConversationResponse);
 
-    // PR-D: owner-side share management.
+    // Owner-side share management.
     rpc ListShares(ListSharesRequest) returns (ListSharesResponse);
     rpc RevokeShare(RevokeShareRequest) returns (RevokeShareResponse);
 
-    // PR-D: template listing / detail.
+    // Template listing / detail.
     rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
     rpc GetTemplate(GetTemplateRequest) returns (GetTemplateResponse);
 }

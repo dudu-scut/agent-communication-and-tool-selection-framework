@@ -1,6 +1,6 @@
 /**
  * @file task_executor.h
- * @brief TaskExecutor — DAG execution engine for multi-agent orchestration (P4-2)
+ * @brief TaskExecutor — DAG execution engine for multi-agent orchestration
  *
  * Executes an ExecutionPlan by topologically sorting subtasks into layers,
  * running same-layer tasks in parallel via std::async, and propagating

@@ -1,7 +1,7 @@
-# 服务器模块
+# Server module
 cmake_minimum_required(VERSION 3.15)
 
-# 源文件列表 (库)
+# Source files (library)
 set(SERVER_SOURCES
     src/rpc_server.cpp
     src/agent_service.cpp
@@ -18,13 +18,11 @@ set(SERVER_SOURCES
     src/observability_service.cpp
 )
 
-# 创建静态库
+# Build the static library
 
 add_library(agent_rpc_server STATIC ${SERVER_SOURCES})
 
-# ============================================================================
-# RPC Server 可执行文件
-# ============================================================================
+# RPC server executable
 add_executable(rpc_server src/main.cpp)
 set(NEXUSAI_MIGRATIONS_DEFAULT_DIR
     "${CMAKE_SOURCE_DIR}/db/migrations"
@@ -56,7 +54,7 @@ target_link_libraries(rpc_server
     ${HIREDIS_LIBRARIES}
 )
 
-# 链接依赖
+# Link dependencies
 target_link_libraries(agent_rpc_server
     agent_rpc_common
     agent_rpc_registry
@@ -66,7 +64,7 @@ target_link_libraries(agent_rpc_server
     proto_lib
     ${GRPC_LIBRARIES}
     ${PROTOBUF_LIBRARIES}
-    grpc++_reflection  # Fix #55: linking directly (TODO: use find_package(gRPC CONFIG) for imported target gRPC::grpc++_reflection)
+    grpc++_reflection  # Link directly (TODO: use find_package(gRPC CONFIG) for imported target gRPC::grpc++_reflection)
     pthread
     CURL::libcurl
     OpenSSL::SSL
@@ -74,20 +72,20 @@ target_link_libraries(agent_rpc_server
     ${HIREDIS_LIBRARIES}
 )
 
-# 包含目录
+# Include directories
 target_include_directories(agent_rpc_server PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/../proto
 )
 
-# 编译选项
+# Compile options
 target_compile_options(agent_rpc_server PRIVATE
     -Wall
     -Wextra
     -std=c++20  # Consistent with root CMakeLists.txt C++20 standard
 )
 
-# 安装规则
+# Install rules
 install(TARGETS agent_rpc_server
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

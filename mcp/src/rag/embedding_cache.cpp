@@ -1,9 +1,6 @@
 /**
  * @file embedding_cache.cpp
- * @brief EmbeddingCache 实现
- * 
- * Requirements: 7.1, 7.2, 7.3, 7.4
- * Task 3: 实现 EmbeddingCache
+ * @brief EmbeddingCache implementation
  */
 
 #include "agent_rpc/mcp/rag/embedding_cache.h"
@@ -30,16 +27,16 @@ std::optional<std::vector<float>> EmbeddingCache::get(const std::string& text) {
         return std::nullopt;
     }
     
-    // 检查是否过期
+    // Check if expired
     if (isExpired(it->second->second)) {
-        // 移除过期条目
+        // Remove the expired entry
         cache_list_.erase(it->second);
         cache_map_.erase(it);
         stats_.misses++;
         return std::nullopt;
     }
     
-    // 移动到头部（最近使用）
+    // Move to the front (most recently used)
     moveToFront(it);
     
     stats_.hits++;
@@ -55,19 +52,19 @@ void EmbeddingCache::put(const std::string& text, const std::vector<float>& embe
     
     auto it = cache_map_.find(text);
     if (it != cache_map_.end()) {
-        // 更新现有条目
+        // Update the existing entry
         it->second->second.embedding = embedding;
         it->second->second.created_at = std::chrono::steady_clock::now();
         moveToFront(it);
         return;
     }
     
-    // 如果缓存已满，驱逐最久未使用的条目
+    // Evict the least recently used entry if the cache is full
     while (cache_list_.size() >= config_.max_size && !cache_list_.empty()) {
         evictLRU();
     }
     
-    // 添加新条目到头部
+    // Add the new entry to the front
     CacheEntry entry;
     entry.embedding = embedding;
     entry.created_at = std::chrono::steady_clock::now();
@@ -89,7 +86,7 @@ bool EmbeddingCache::contains(const std::string& text) const {
         return false;
     }
     
-    // 检查是否过期
+    // Check if expired
     return !isExpired(it->second->second);
 }
 
@@ -136,7 +133,7 @@ void EmbeddingCache::resetStats() {
 
 bool EmbeddingCache::isExpired(const CacheEntry& entry) const {
     if (config_.ttl_seconds <= 0) {
-        return false;  // TTL 为 0 表示永不过期
+        return false;  // TTL of 0 means never expires
     }
     
     auto now = std::chrono::steady_clock::now();
@@ -151,7 +148,7 @@ void EmbeddingCache::evictLRU() {
         return;
     }
     
-    // 移除尾部（最久未使用）
+    // Remove the tail (least recently used)
     auto& back = cache_list_.back();
     last_evicted_key_ = back.first;
     cache_map_.erase(back.first);
@@ -162,7 +159,7 @@ void EmbeddingCache::evictLRU() {
 }
 
 void EmbeddingCache::moveToFront(CacheMap::iterator it) {
-    // 将条目移动到列表头部
+    // Move the entry to the list front
     cache_list_.splice(cache_list_.begin(), cache_list_, it->second);
 }
 

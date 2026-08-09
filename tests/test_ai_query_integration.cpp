@@ -1,9 +1,6 @@
 /**
  * @file test_ai_query_integration.cpp
  * @brief Integration tests for AI Query Service
- * 
- * Task 17: 集成测试
- * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
  */
 
 #include <gtest/gtest.h>
@@ -26,9 +23,7 @@
 namespace agent_rpc {
 namespace tests {
 
-// ============================================================================
-// Test Fixtures
-// ============================================================================
+// Test fixtures
 
 class AIQueryIntegrationTest : public ::testing::Test {
 protected:
@@ -41,9 +36,7 @@ protected:
     }
 };
 
-// ============================================================================
-// A2A Adapter Tests
-// ============================================================================
+// A2A adapter tests
 
 TEST_F(AIQueryIntegrationTest, A2AAdapterInitialization) {
     a2a_adapter::A2AAdapter adapter;
@@ -86,9 +79,7 @@ TEST_F(AIQueryIntegrationTest, A2AConfigDefaults) {
     EXPECT_EQ(config.max_retries, 3);
 }
 
-// ============================================================================
-// Metrics Tests
-// ============================================================================
+// Metrics tests
 
 TEST_F(AIQueryIntegrationTest, MetricsRecording) {
     auto& metrics = a2a_adapter::A2AMetrics::getInstance();
@@ -158,9 +149,7 @@ TEST_F(AIQueryIntegrationTest, MetricsJsonExport) {
     EXPECT_NE(json.find("connections"), std::string::npos);
 }
 
-// ============================================================================
-// Retry Policy Tests
-// ============================================================================
+// Retry policy tests
 
 TEST_F(AIQueryIntegrationTest, RetryPolicySuccess) {
     a2a_adapter::RetryPolicy policy;
@@ -256,9 +245,7 @@ TEST_F(AIQueryIntegrationTest, IsRetryableError) {
     EXPECT_FALSE(a2a_adapter::isRetryableError("not found"));
 }
 
-// ============================================================================
-// Protobuf Message Tests
-// ============================================================================
+// Protobuf message tests
 
 TEST_F(AIQueryIntegrationTest, AIQueryRequestSerialization) {
     agent_communication::AIQueryRequest request;
@@ -331,13 +318,10 @@ TEST_F(AIQueryIntegrationTest, AIStreamEventSerialization) {
     EXPECT_EQ(deserialized.content(), "The answer");
 }
 
-// ============================================================================
-// Property-Based Tests
-// ============================================================================
+// Property-based tests
 
 /**
  * Property: Metrics counters are monotonically increasing
- * Validates: Requirements 10.5
  */
 RC_GTEST_PROP(AIQueryIntegration, MetricsMonotonicallyIncreasing, ()) {
     auto& metrics = a2a_adapter::A2AMetrics::getInstance();
@@ -355,7 +339,6 @@ RC_GTEST_PROP(AIQueryIntegration, MetricsMonotonicallyIncreasing, ()) {
 
 /**
  * Property: Retry policy respects max retries
- * Validates: Requirements 10.2
  */
 RC_GTEST_PROP(AIQueryIntegration, RetryPolicyRespectsMaxRetries, ()) {
     int max_retries = *rc::gen::inRange(0, 5);
@@ -382,7 +365,6 @@ RC_GTEST_PROP(AIQueryIntegration, RetryPolicyRespectsMaxRetries, ()) {
 
 /**
  * Property: Config validation always produces valid config
- * Validates: Requirements 9.5
  */
 RC_GTEST_PROP(AIQueryIntegration, ConfigValidationProducesValidConfig, ()) {
     a2a_adapter::A2AConfig config;

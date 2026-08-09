@@ -119,12 +119,10 @@ reg_ok = "OK" in stdout
 print(f"Register agent: {'OK' if reg_ok else 'FAIL'}")
 print()
 
-# ============================================
 print("=== BATCH 1: Infrastructure ===")
 test("HealthService/Check", "agent_communication.HealthService/Check", {}, expect_keys=["status"])
 test("GetAgents", "agent_communication.AgentCommunicationService/GetAgents", {}, expect_keys=["agents"])
 
-# ============================================
 print("\n=== BATCH 2: Feedback & Agent Metrics ===")
 test("SubmitFeedback", "agent_communication.AgentLifecycleService/SubmitFeedback",
      {"agent_id": "mock-general", "skill_name": "general", "rating": 5}, expect_keys=["OK"])
@@ -133,14 +131,12 @@ test("GetAgentCompare", "agent_communication.AgentLifecycleService/GetAgentCompa
 test("GetAgentMetrics", "agent_communication.AIQueryService/GetAgentMetrics",
      {"agent_id": "mock-general"}, expect_keys=["metrics"])
 
-# ============================================
 print("\n=== BATCH 3: Autonomy ===")
 test("SetAutonomyLevel", "agent_communication.AgentLifecycleService/SetAutonomyLevel",
      {"user_id": "smoke3", "agent_id": "mock-general", "level": 2}, expect_keys=["OK"])
 test("UndoAction", "agent_communication.AgentLifecycleService/UndoAction",
      {"trace_id": "test-trace-123", "step_index": 0}, expect_keys=["status"])
 
-# ============================================
 print("\n=== BATCH 4: QueryStream (full chain) ===")
 # Streaming RPC — use a longer timeout and read incrementally
 qs_cmd = [GRPCURL, "-plaintext", "-H", f"Authorization: Bearer {token}",
@@ -161,7 +157,6 @@ except sp.TimeoutExpired:
     print(f"  ⚠️  WARN: QueryStream timed out (streaming may hang)")
     passed += 1  # Accept timeout as "streaming started but didn't finish"
 
-# ============================================
 print("\n=== BATCH 6-7: Sharing & Templates ===")
 test("ShareSession", "agent_communication.SharingService/ShareSession",
      {"context_id": "ctx-test-001", "mode": "READONLY"}, expect_keys=["share_id"])
@@ -180,7 +175,6 @@ else:
     print(f"  ⚠️  WARN: ObserveSession — unexpected response: {stdout[:100]}")
     passed += 1  # Placeholder — not a fail since it's a stub
 
-# ============================================
 print("\n=== BATCH 8: ObservabilityService ===")
 test("GetCostReport",
      "agent_communication.ObservabilityService/GetCostReport",
@@ -191,7 +185,6 @@ test("GetTraceDetail",
      {"trace_id": "test-trace-id-nonexistent"},
      expect_keys=["status"])
 
-# ============================================
 print("\n=== BATCH 9: OrchestrationService ===")
 test("ExecutePlan",
      "agent_communication.OrchestrationService/ExecutePlan",
@@ -206,7 +199,6 @@ test("ExportConversation",
      {"context_id": "ctx-e2e", "format": "markdown"},
      expect_keys=["status"])
 
-# ============================================
 print("\n=== BATCH 10: FindAgents ===")
 test("FindAgents by skill",
      "agent_communication.AgentCommunicationService/FindAgents",
@@ -217,7 +209,6 @@ test("FindAgents by keyword",
      {"keyword": "math", "limit": 5},
      expect_keys=["status"])
 
-# ============================================
 print("\n=== BATCH 11: Orchestrator智能路由 ===")
 
 def test_routing_tier0_embedding():
@@ -257,7 +248,6 @@ test_routing_tier1_llm_intent()
 test_routing_tier2_keyword()
 test_routing_tier3_fallback()
 
-# ============================================
 print("\n=== BATCH 12: 动态编排（Orchestrator DAG） ===")
 
 def test_execute_plan_simple():
@@ -298,7 +288,6 @@ test_execute_plan_multi_agent()
 test_replay_query()
 test_export_conversation()
 
-# ============================================
 print("\n=== BATCH 13: Token计算与成本追踪 ===")
 
 def test_token_calculation():
@@ -335,7 +324,6 @@ test_cost_tracking()
 test_cost_report()
 test_budget_middleware()
 
-# ============================================
 print("\n=== BATCH 14: 链路追踪 ===")
 
 def test_trace_context():
@@ -363,7 +351,6 @@ test_trace_context()
 test_trace_detail_api()
 test_trace_span_structure()
 
-# ============================================
 print("\n=== BATCH 15: Agent生命周期 ===")
 
 def test_agent_registration():
@@ -411,7 +398,6 @@ test_agent_find_by_skill()
 test_agent_metrics()
 test_agent_unregistration()
 
-# ============================================
 print("\n=== BATCH 16: 用户认证与鉴权 ===")
 
 def test_user_register():
@@ -472,7 +458,6 @@ test_user_login()
 test_authenticated_query()
 test_unauthenticated_rejected()
 
-# ============================================
 print("\n=== BATCH 17: 会话分享与模板 ===")
 
 def test_share_session():
@@ -509,7 +494,6 @@ test_observe_session()
 test_save_template()
 test_use_template()
 
-# ============================================
 print("\n=== BATCH 18: 灰度部署 ===")
 
 def test_canary_deployment():
@@ -546,7 +530,6 @@ def test_autonomy_levels():
 test_canary_deployment()
 test_autonomy_levels()
 
-# ============================================
 print("\n=== BATCH 19: 系统健康与可观测性 ===")
 
 def test_health_check():
@@ -574,7 +557,6 @@ test_health_check()
 test_agent_feedback()
 test_agent_compare()
 
-# ============================================
 print("\n=== BATCH 20: 流式查询 ===")
 
 def test_streaming_query():
@@ -606,7 +588,6 @@ test_streaming_query()
 test_streaming_with_tool_call()
 test_query_status()
 
-# ============================================
 print(f"\n{'='*50}")
 print(f"RESULTS: {passed} passed, {failed} failed, {skipped} skipped")
 print(f"{'='*50}")

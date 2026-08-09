@@ -85,7 +85,7 @@ router.beforeEach((to) => {
     if (auth.token) auth.logout()
     return { name: 'login' }
   }
-  // PR-F: client-side admin gate is a UX nicety only — the server enforces
+  // Client-side admin gate is a UX nicety only — the server enforces
   // admin checks on every admin RPC regardless.
   if (to.meta.requiresAdmin && !auth.isAdmin) {
     return { name: 'chat' }

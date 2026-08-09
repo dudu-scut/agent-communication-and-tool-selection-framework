@@ -1,9 +1,6 @@
 /**
  * @file embedding_service.cpp
- * @brief EmbeddingService 实现（OpenAI 兼容 API）
- *
- * Requirements: 1.2, 2.1, 2.2, 2.3, 2.4
- * Task 2: 实现 EmbeddingService
+ * @brief EmbeddingService implementation (OpenAI-compatible API)
  */
 
 #include "agent_rpc/mcp/rag/embedding_service.h"
@@ -22,10 +19,6 @@ using json = nlohmann::json;
 namespace agent_rpc {
 namespace mcp {
 namespace rag {
-
-// ============================================================================
-// EmbeddingConfig 实现
-// ============================================================================
 
 bool EmbeddingConfig::loadApiKeyFromEnv() {
     const char* key = std::getenv("LLM_API_KEY");
@@ -55,13 +48,9 @@ bool EmbeddingConfig::validate() const {
     return true;
 }
 
-// ============================================================================
-// EmbeddingService 实现
-// ============================================================================
-
 EmbeddingService::EmbeddingService(const EmbeddingConfig& config)
     : config_(config) {
-    // 如果没有提供 API Key，尝试从环境变量加载
+    // Load the API key from the environment if not provided
     if (config_.api_key.empty()) {
         config_.loadApiKeyFromEnv();
     }
@@ -92,19 +81,19 @@ std::vector<std::vector<float>> EmbeddingService::embedBatch(
         throw std::runtime_error("Invalid EmbeddingConfig: API key may be missing");
     }
 
-    // 构造 OpenAI 兼容请求 JSON
-    // 格式: {"model": "...", "input": ["text1", "text2", ...]}
+    // Build the OpenAI-compatible request JSON
+    // Format: {"model": "...", "input": ["text1", "text2", ...]}
     json input_array = json::array();
     for (const auto& text : texts) {
-        // 确保文本不为空
+        // Ensure the text is not empty
         if (!text.empty()) {
             input_array.push_back(text);
         } else {
-            input_array.push_back(" ");  // 空文本用空格替代
+            input_array.push_back(" ");  // Substitute a space for empty text
         }
     }
 
-    // 单文本用字符串，多文本用数组
+    // Use a string for a single text, an array for multiple texts
     json request_body;
     if (texts.size() == 1) {
         request_body = {
@@ -120,10 +109,10 @@ std::vector<std::vector<float>> EmbeddingService::embedBatch(
 
     std::string request_str = request_body.dump();
 
-    // 调用 API（带重试）
+    // Call the API (with retries)
     std::string response = callApiWithRetry(request_str);
 
-    // 解析响应
+    // Parse the response
     return parseEmbeddingResponse(response);
 }
 
@@ -152,7 +141,7 @@ float EmbeddingService::cosineSimilarity(
     return dot_product / (std::sqrt(norm_a) * std::sqrt(norm_b));
 }
 
-// CURL 回调函数
+// CURL write callback
 static size_t writeCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     ((std::string*)userp)->append((char*)contents, size * nmemb);
     return size * nmemb;
@@ -166,13 +155,13 @@ std::string EmbeddingService::sendPostRequest(const std::string& data) {
 
     std::string response_data;
 
-    // 设置请求头
+    // Set request headers
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     std::string auth_header = "Authorization: Bearer " + config_.api_key;
     headers = curl_slist_append(headers, auth_header.c_str());
 
-    // 配置 CURL
+    // Configure CURL
     curl_easy_setopt(curl, CURLOPT_URL, config_.api_url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
@@ -180,10 +169,10 @@ std::string EmbeddingService::sendPostRequest(const std::string& data) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config_.timeout_ms);
 
-    // 执行请求
+    // Perform the request
     CURLcode res = curl_easy_perform(curl);
 
-    // 清理
+    // Cleanup
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -203,7 +192,7 @@ std::string EmbeddingService::callApiWithRetry(const std::string& request_body) 
         last_retry_stats_.total_attempts++;
 
         if (attempt > 0) {
-            // 计算退避延迟
+            // Compute the backoff delay
             int delay_ms = calculateBackoffDelay(attempt);
             last_retry_stats_.retry_delays_ms.push_back(delay_ms);
 
@@ -211,7 +200,7 @@ std::string EmbeddingService::callApiWithRetry(const std::string& request_body) 
                     "/" + std::to_string(config_.max_retries) +
                     ", delay: " + std::to_string(delay_ms) + "ms");
 
-            // 调用回调（用于测试）
+            // Invoke the callback (used for testing)
             if (retry_callback_) {
                 retry_callback_(attempt, delay_ms);
             }
@@ -230,7 +219,7 @@ std::string EmbeddingService::callApiWithRetry(const std::string& request_body) 
         }
     }
 
-    // 所有重试都失败
+    // All retries failed
     if (last_exception) {
         std::rethrow_exception(last_exception);
     }
@@ -239,11 +228,11 @@ std::string EmbeddingService::callApiWithRetry(const std::string& request_body) 
 }
 
 int EmbeddingService::calculateBackoffDelay(int attempt) const {
-    // 指数退避: delay = initial_delay * 2^(attempt-1)
-    // 加上一些随机抖动
+    // Exponential backoff: delay = initial_delay * 2^(attempt-1)
+    // plus some random jitter
     int base_delay = config_.initial_retry_delay_ms * (1 << (attempt - 1));
 
-    // 添加 0-25% 的随机抖动
+    // Add 0-25% random jitter
     int jitter = (std::rand() % (base_delay / 4 + 1));
 
     return base_delay + jitter;
@@ -255,14 +244,14 @@ std::vector<std::vector<float>> EmbeddingService::parseEmbeddingResponse(
     try {
         json response_json = json::parse(response);
 
-        // 检查错误（OpenAI 格式）
+        // Check for errors (OpenAI format)
         if (response_json.contains("error")) {
             std::string error_msg = "Embedding API Error: " +
                 response_json["error"].value("message", "Unknown error");
             throw std::runtime_error(error_msg);
         }
 
-        // 提取 embeddings（OpenAI 格式）
+        // Extract embeddings (OpenAI format)
         std::vector<std::vector<float>> results;
 
         if (response_json.contains("data") && response_json["data"].is_array()) {

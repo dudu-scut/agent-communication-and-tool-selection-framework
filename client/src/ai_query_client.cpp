@@ -1,9 +1,6 @@
 /**
  * @file ai_query_client.cpp
  * @brief AI Query Client implementation
- * 
- * Requirements: 2.1
- * Task 14: RPC客户端扩展
  */
 
 #include "agent_rpc/client/ai_query_client.h"
@@ -129,12 +126,12 @@ agent_communication::AIQueryResponse AIQueryClient::query(
         end_time - start_time);
     
     if (status.ok()) {
-        // gRPC 调用成功，检查响应状态
+        // gRPC call succeeded; check the response status
         if (response.status().code() == 0) {
             LOG_INFO("AI query completed: " + request.request_id() +
                     " in " + std::to_string(duration.count()) + "ms");
         } else {
-            // 服务端返回了错误
+            // The server returned an error
             std::string error_msg = response.status().message();
             if (error_msg.empty()) {
                 error_msg = "Unknown server error (code: " + 
@@ -144,7 +141,7 @@ agent_communication::AIQueryResponse AIQueryClient::query(
                     " - " + error_msg);
         }
     } else {
-        // gRPC 调用本身失败
+        // The gRPC call itself failed
         std::string error_msg = status.error_message();
         if (error_msg.empty()) {
             error_msg = "gRPC error code: " + std::to_string(static_cast<int>(status.error_code()));

@@ -4,67 +4,63 @@ package agent_communication.auth;
 
 import "common.proto";
 
-// ============================================================================
 // User Authentication Messages
-// ============================================================================
 
-// 注册请求
+// Register request
 message RegisterRequest {
     string username = 1;
     string password = 2;
-    string display_name = 3;       // 可选显示名
+    string display_name = 3;
 }
 
-// 注册响应
+// Register response
 message RegisterResponse {
     common.Status status = 1;
-    string user_id = 2;            // 服务端生成的 UUID
+    string user_id = 2;            // Server-generated UUID
     string username = 3;
-    string role = 4;               // USER | ADMIN（PR-C3 追加）
+    string role = 4;               // USER | ADMIN
 }
 
-// 登录请求
+// Login request
 message LoginRequest {
     string username = 1;
     string password = 2;
 }
 
-// 登录响应
+// Login response
 message LoginResponse {
     common.Status status = 1;
     string user_id = 2;
     string username = 3;
-    string token = 4;              // 认证令牌 (UUID)
-    int64 expires_at = 5;          // 过期时间 (Unix timestamp)
-    string role = 6;               // USER | ADMIN（PR-C3 追加）
+    string token = 4;              // Auth token (UUID)
+    int64 expires_at = 5;          // Expiry time (Unix timestamp)
+    string role = 6;               // USER | ADMIN
 }
 
-// Token 验证请求 (内部使用 / 拦截器)
+// Token validation request (internal / interceptor use)
 message ValidateTokenRequest {
     string token = 1;
 }
 
-// Token 验证响应
+// Token validation response
 message ValidateTokenResponse {
     common.Status status = 1;
     string user_id = 2;
     string username = 3;
     bool valid = 4;
-    string role = 5;               // USER | ADMIN（PR-C3 追加）
+    string role = 5;               // USER | ADMIN
 }
 
-// ============================================================================
 // User Service
-// ============================================================================
 
-// 用户认证服务
+// User authentication service
 service UserService {
-    // 注册新用户
+    // Register a new user
     rpc Register(RegisterRequest) returns (RegisterResponse);
 
-    // 用户登录
+    // User login
     rpc Login(LoginRequest) returns (LoginResponse);
 
-    // 验证 Token (供拦截器内部调用)
+    // Validate token (for interceptor internal use)
     rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
 }

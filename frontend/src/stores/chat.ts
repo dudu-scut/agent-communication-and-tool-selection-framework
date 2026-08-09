@@ -80,7 +80,7 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  // PR-F: retry the last user question after a real failure. Drops trailing
+  // Retry the last user question after a real failure. Drops trailing
   // errored agent placeholders and re-runs the same durable pipeline.
   function retryLast() {
     if (isStreaming.value) return
@@ -204,7 +204,7 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'error':
-        // PR-F: structured stream errors carry code semantics in content
+        // Structured stream errors carry code semantics in content
         // ("CODE_NAME: details"), so content is the primary source; the
         // optional details field is only a fallback when content is empty.
         msg.error = event.content || (event as AIStreamEvent & { details?: string }).details || 'Unknown error'

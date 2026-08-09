@@ -7,7 +7,6 @@
 namespace agent_rpc {
 namespace common {
 
-// ProtobufBinarySerializer 实现
 std::string ProtobufBinarySerializer::serialize(const google::protobuf::Message& message) {
     std::string data;
     if (!message.SerializeToString(&data)) {
@@ -52,14 +51,11 @@ bool ProtobufBinarySerializer::deserializeFromJson(const std::string& json, goog
     return true;
 }
 
-// ProtobufJsonSerializer 实现
 std::string ProtobufJsonSerializer::serialize(const google::protobuf::Message& message) {
-    // JSON序列化器直接输出JSON
     return serializeToJson(message);
 }
 
 bool ProtobufJsonSerializer::deserialize(const std::string& data, google::protobuf::Message& message) {
-    // JSON序列化器直接从JSON反序列化
     return deserializeFromJson(data, message);
 }
 
@@ -90,7 +86,6 @@ bool ProtobufJsonSerializer::deserializeFromJson(const std::string& json, google
     return true;
 }
 
-// SerializerFactory 实现
 std::unique_ptr<Serializer> SerializerFactory::createSerializer(SerializerType type) {
     switch (type) {
         case PROTOBUF_BINARY:
@@ -110,7 +105,6 @@ std::vector<std::string> SerializerFactory::getAvailableSerializers() {
     };
 }
 
-// MessageWrapper 实现
 std::string MessageWrapper::serialize(Serializer& serializer) const {
     return serializer.serialize(any_);
 }
@@ -119,7 +113,6 @@ bool MessageWrapper::deserialize(const std::string& data, Serializer& serializer
     return serializer.deserialize(data, any_);
 }
 
-// MessageSerializer 实现
 MessageSerializer& MessageSerializer::getInstance() {
     static MessageSerializer instance;
     return instance;

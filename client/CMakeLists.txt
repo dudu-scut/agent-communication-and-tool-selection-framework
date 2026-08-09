@@ -1,19 +1,17 @@
-# 客户端模块
+# Client module
 cmake_minimum_required(VERSION 3.15)
 
-# 源文件列表 (库)
+# Source files (library)
 set(CLIENT_SOURCES
     src/rpc_client.cpp
     src/ai_query_client.cpp
     src/agent_auto_registrar.cpp
 )
 
-# 创建静态库
+# Create the static library
 add_library(agent_rpc_client STATIC ${CLIENT_SOURCES})
 
-# ============================================================================
-# RPC Client 可执行文件
-# ============================================================================
+# RPC Client executable
 add_executable(rpc_client src/main.cpp)
 target_link_libraries(rpc_client
     agent_rpc_client
@@ -26,7 +24,7 @@ target_link_libraries(rpc_client
     ${UUID_LIB}
 )
 
-# 链接依赖
+# Link dependencies
 target_link_libraries(agent_rpc_client 
     agent_rpc_common
     agent_rpc_registry
@@ -37,20 +35,20 @@ target_link_libraries(agent_rpc_client
     ${UUID_LIB}
 )
 
-# 包含目录
+# Include directories
 target_include_directories(agent_rpc_client PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/../proto
 )
 
-# 编译选项
+# Compile options
 target_compile_options(agent_rpc_client PRIVATE
     -Wall
     -Wextra
     -std=c++17
 )
 
-# 安装规则
+# Install rules
 install(TARGETS agent_rpc_client
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

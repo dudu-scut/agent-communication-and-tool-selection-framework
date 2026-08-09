@@ -1,4 +1,4 @@
-# 生成protobuf和gRPC代码
+# Generate protobuf and gRPC code
 set(PROTO_FILES
     common.proto
     agent_service.proto
@@ -6,15 +6,15 @@ set(PROTO_FILES
     user.proto
     observability.proto
     agent_lifecycle.proto
-    user_experience.proto    # Batch 4 U3
-    orchestration.proto      # Batch 4 U4
-    sharing.proto            # Batch 7 U6
+    user_experience.proto
+    orchestration.proto
+    sharing.proto
 )
 
 foreach(PROTO_FILE ${PROTO_FILES})
     get_filename_component(PROTO_NAME ${PROTO_FILE} NAME_WE)
     
-    # 生成protobuf代码
+    # Generate protobuf code
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${PROTO_NAME}.pb.cc
                ${CMAKE_CURRENT_BINARY_DIR}/${PROTO_NAME}.pb.h
@@ -26,8 +26,8 @@ foreach(PROTO_FILE ${PROTO_FILES})
         COMMENT "Generating protobuf code for ${PROTO_FILE}"
     )
     
-    # 生成gRPC代码
-    # 查找 grpc_cpp_plugin (支持 Linux / MSYS2 MinGW / 自定义路径)
+    # Generate gRPC code
+    # Find grpc_cpp_plugin (Linux / MSYS2 MinGW / custom path)
     find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin
         PATHS
             /usr/bin
@@ -64,10 +64,10 @@ foreach(PROTO_FILE ${PROTO_FILES})
     )
 endforeach()
 
-# 创建proto库
+# Create proto library
 add_library(proto_lib STATIC ${PROTO_SOURCES} ${PROTO_HEADERS})
 target_link_libraries(proto_lib ${GRPC_LIBRARIES} ${PROTOBUF_LIBRARIES})
 target_include_directories(proto_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
-# 导出头文件
+# Export headers
 install(FILES ${PROTO_HEADERS} DESTINATION include/proto)

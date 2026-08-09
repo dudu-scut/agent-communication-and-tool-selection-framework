@@ -1,8 +1,6 @@
 /**
  * @file a2a_config.h
  * @brief A2A adapter configuration
- * 
- * Requirements: 9.1, 9.2, 9.3, 9.4
  */
 
 #pragma once

@@ -1,23 +1,23 @@
 cmake_minimum_required(VERSION 3.15)
 
-# 使用已生成的protobuf文件
+# Use pre-generated protobuf files
 set(PROTO_SOURCES
     generated/common.pb.cc
     generated/agent_service.pb.cc
 )
 
-# 创建protobuf库
+# Create protobuf library
 add_library(proto_lib STATIC ${PROTO_SOURCES})
 
-# 链接protobuf库
+# Link protobuf library
 target_link_libraries(proto_lib ${PROTOBUF_LIBRARIES})
 
-# 设置包含目录
+# Set include directories
 target_include_directories(proto_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/generated
 )
 
-# 安装规则
+# Install rules
 install(TARGETS proto_lib
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

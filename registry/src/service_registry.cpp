@@ -11,9 +11,7 @@
 namespace agent_rpc {
 namespace registry {
 
-// ========================================================================
-// Agent Live Metrics (Batch 5 — Health Dashboard)
-// ========================================================================
+// Agent Live Metrics
 namespace {
     std::unordered_map<std::string, AgentLiveMetrics> live_metrics_;
     std::mutex live_metrics_mutex_;
@@ -129,7 +127,6 @@ ServiceRegistry& ServiceRegistry::instance() {
     return reg;
 }
 
-// ConsulServiceRegistry 实现
 ConsulServiceRegistry::ConsulServiceRegistry() {
     // curl_global_init is now called once in server/src/main.cpp
 }
@@ -362,7 +359,6 @@ common::ServiceEndpoint ConsulServiceRegistry::parseServiceEndpoint(const std::s
     return endpoint;
 }
 
-// EtcdServiceRegistry 实现
 EtcdServiceRegistry::EtcdServiceRegistry() = default;
 
 EtcdServiceRegistry::~EtcdServiceRegistry() {
@@ -381,7 +377,7 @@ bool EtcdServiceRegistry::initialize(const std::string& etcd_address) {
 }
 
 bool EtcdServiceRegistry::registerService(const common::ServiceEndpoint& endpoint) {
-    // 简化的etcd注册实现
+    // Simplified etcd registration implementation
     std::string service_key = "/services/" + endpoint.service_name + "/" +
                              endpoint.host + ":" + std::to_string(endpoint.port);
 
@@ -438,12 +434,12 @@ std::vector<common::ServiceEndpoint> EtcdServiceRegistry::discoverServices(const
 }
 
 bool EtcdServiceRegistry::isServiceHealthy(const std::string& service_id) {
-    // 简化的健康检查实现
+    // Simplified health check implementation
     return true;
 }
 
 bool EtcdServiceRegistry::updateHeartbeat(const std::string& service_id) {
-    // 简化的心跳实现
+    // Simplified heartbeat implementation
     return true;
 }
 
@@ -454,7 +450,7 @@ void EtcdServiceRegistry::watchServices(const std::string& service_name,
 }
 
 void EtcdServiceRegistry::watchLoop() {
-    // 简化的监听实现
+    // Simplified watch implementation
     while (watch_running_) {
         std::this_thread::sleep_for(std::chrono::seconds(10));
     }
@@ -463,19 +459,18 @@ void EtcdServiceRegistry::watchLoop() {
 std::string EtcdServiceRegistry::makeEtcdRequest(const std::string& method,
                                                 const std::string& key,
                                                 const std::string& value) {
-    // Fix #11: Etcd registry is not implemented. Throw an explicit error
-    // instead of silently returning "OK" which masks the failure.
+    // Etcd registry is not implemented; throw an explicit error instead of
+    // silently returning "OK" which masks the failure.
     throw std::runtime_error(
         "Etcd service registry is not implemented. "
         "Use ConsulServiceRegistry or MemoryServiceRegistry instead.");
 }
 
 std::vector<common::ServiceEndpoint> EtcdServiceRegistry::parseEtcdResponse(const std::string& response) {
-    // 简化的响应解析实现
+    // Simplified response parsing implementation
     return {};
 }
 
-// MemoryServiceRegistry 实现
 bool MemoryServiceRegistry::registerService(const common::ServiceEndpoint& endpoint) {
     std::string service_id = endpoint.host + ":" + std::to_string(endpoint.port);
     std::vector<common::ServiceEndpoint> snapshot;

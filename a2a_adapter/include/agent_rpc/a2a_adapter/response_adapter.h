@@ -1,8 +1,6 @@
 /**
  * @file response_adapter.h
  * @brief A2A response to RPC response adapter
- *
- * Requirements: 8.2, 8.3
  */
 
 #pragma once
@@ -72,7 +70,7 @@ public:
         agent_communication::AIStreamEvent* event);
 
 private:
-    std::atomic<uint64_t> event_counter_{0};  // Fix #21: atomic for thread safety
+    std::atomic<uint64_t> event_counter_{0};  // Atomic for thread safety
 
     std::string generateEventId();
 };

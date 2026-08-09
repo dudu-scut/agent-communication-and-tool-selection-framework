@@ -1,4 +1,4 @@
--- Batch 3: Agent Autonomy Spectrum Settings
+-- Agent Autonomy Spectrum Settings
 -- Run: psql -U <user> -d <dbname> -f sql/003_autonomy_settings.sql
 
 -- autonomy_level:

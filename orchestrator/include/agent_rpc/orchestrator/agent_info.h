@@ -1,9 +1,6 @@
 /**
  * @file agent_info.h
  * @brief Agent information and routing strategy definitions
- * 
- * Task 8.2: 实现AgentInfo和RoutingStrategy
- * Requirements: 3.4
  */
 
 #pragma once

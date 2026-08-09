@@ -2,14 +2,14 @@ syntax = "proto3";
 
 package agent_communication.common;
 
-// 通用响应状态
+// Common response status
 message Status {
     int32 code = 1;
     string message = 2;
     string details = 3;
 }
 
-// 服务信息
+// Service info
 message ServiceInfo {
     string service_name = 1;
     string version = 2;
@@ -17,20 +17,20 @@ message ServiceInfo {
     int32 port = 4;
     repeated string tags = 5;
     map<string, string> metadata = 6;
-    repeated string skills = 7;          // AgentCard 技能名称列表
-    string agent_card = 8;               // AgentCard JSON（完整元数据）
-    AgentMetrics agent_metrics = 9;      // 运行时指标 (Batch 2)
-    bool cacheable = 10;                 // Semantically cacheable responses (Batch 3)
-    string deployment_stage = 11;        // Batch 6: STABLE / CANARY / DEPRECATED
-    string a2a_version = 12;             // Batch 8: A2A protocol version (e.g. "1.0", "1.1")
+    repeated string skills = 7;          // AgentCard skill name list
+    string agent_card = 8;               // AgentCard JSON (full metadata)
+    AgentMetrics agent_metrics = 9;      // Runtime metrics
+    bool cacheable = 10;                 // Semantically cacheable responses
+    string deployment_stage = 11;        // STABLE / CANARY / DEPRECATED
+    string a2a_version = 12;             // A2A protocol version (e.g. "1.0", "1.1")
 }
 
-// 健康检查请求
+// Health check request
 message HealthCheckRequest {
     string service = 1;
 }
 
-// 健康检查响应
+// Health check response
 message HealthCheckResponse {
     enum ServingStatus {
         UNKNOWN = 0;
@@ -40,7 +40,7 @@ message HealthCheckResponse {
     ServingStatus status = 1;
 }
 
-// 配置信息
+// Configuration
 message Config {
     string key = 1;
     string value = 2;
@@ -48,7 +48,7 @@ message Config {
     int64 timestamp = 4;
 }
 
-// 日志级别
+// Log level
 enum LogLevel {
     TRACE = 0;
     DEBUG = 1;
@@ -58,7 +58,7 @@ enum LogLevel {
     FATAL = 5;
 }
 
-// 日志条目
+// Log entry
 message LogEntry {
     LogLevel level = 1;
     string message = 2;
@@ -67,7 +67,7 @@ message LogEntry {
     map<string, string> fields = 5;
 }
 
-// 代理运行时指标 (Batch 2 - AgentCard透明度)
+// Agent runtime metrics
 message AgentMetrics {
     string agent_id = 1;
     double success_rate = 2;

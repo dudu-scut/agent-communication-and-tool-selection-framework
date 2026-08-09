@@ -4,9 +4,7 @@ package agent_communication;
 
 import "common.proto";
 
-// ============================================================================
 // Observability Messages
-// ============================================================================
 
 // Token usage record — matches token_usage table schema
 message TokenUsageRecord {
@@ -44,12 +42,10 @@ message CostRecord {
     int32 total_prompt_tokens = 4;
     int32 total_completion_tokens = 5;
     int32 total_requests = 6;
-    bool estimated = 7;            // true when provider usage was unavailable (PR-C3)
+    bool estimated = 7;            // True when provider usage was unavailable
 }
 
-// ============================================================================
 // RPC: GetTraceDetail
-// ============================================================================
 
 message GetTraceDetailRequest {
     string trace_id = 1;
@@ -58,12 +54,10 @@ message GetTraceDetailRequest {
 message GetTraceDetailResponse {
     common.Status status = 1;
     repeated TraceSpan spans = 2;
-    string trace_summary = 3;       // human-readable: "路由 12ms → 规划 340ms → Echo Agent 856ms"
+    string trace_summary = 3;       // human-readable: "route 12ms → plan 340ms → Echo Agent 856ms"
 }
 
-// ============================================================================
 // RPC: GetCostReport
-// ============================================================================
 
 message GetCostReportRequest {
     string user_id = 1;
@@ -77,9 +71,7 @@ message GetCostReportResponse {
     double total_cost_usd = 3;
 }
 
-// ============================================================================
 // Observability Service
-// ============================================================================
 
 service ObservabilityService {
     rpc GetTraceDetail(GetTraceDetailRequest) returns (GetTraceDetailResponse);

@@ -169,7 +169,7 @@ import type { TraceSpan } from '../types/proto'
 
 use([CanvasRenderer, GaugeChart, BarChart, LineChart, GridComponent, TooltipComponent])
 
-// --- State ---
+// State
 const dataAvailable = ref(false)
 
 const healthOverview = ref({ score: 0, healthy: 0, degraded: 0, offline: 0 })
@@ -190,13 +190,13 @@ const circuitBreakers = ref<Array<{
   recoveryTime: string | null
 }>>([])
 
-// --- Fallback data (used when API unavailable) ---
+// Fallback data (used when API unavailable)
 function useFallbackData() {
   healthOverview.value = { score: 0, healthy: 0, degraded: 0, offline: 0 }
   circuitBreakers.value = []
 }
 
-// --- Load trace data for latency/error panels ---
+// Load trace data for latency/error panels
 async function loadTraceData() {
   const chatStore = useChatStore()
   // Extract recent trace_ids from chat messages
@@ -250,7 +250,7 @@ async function loadTraceData() {
   errorRateAvailable.value = errorRateData.value.length > 0
 }
 
-// --- Data loading ---
+// Data loading
 async function loadMonitorData() {
   try {
     const response = await getAgents()
@@ -309,7 +309,7 @@ async function loadMonitorData() {
   }
 }
 
-// --- Refresh logic ---
+// Refresh logic
 const autoRefresh = ref(true)
 const refreshInterval = ref(10)
 const refreshing = ref(false)
@@ -330,13 +330,13 @@ function stopAutoRefresh() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
 }
 
-// --- Helpers ---
+// Helpers
 function stateLabel(state: string) {
   const map: Record<string, string> = { CLOSED: '正常', OPEN: '断开', HALF_OPEN: '半开' }
   return map[state] || state
 }
 
-// --- ECharts Options ---
+// ECharts Options
 const healthGaugeOption = computed(() => ({
   series: [{
     type: 'gauge',
@@ -365,7 +365,7 @@ const healthGaugeOption = computed(() => ({
   }],
 }))
 
-// --- Watch refresh settings ---
+// Watch refresh settings
 
 // Latency distribution bar chart
 const latencyDistributionOption = computed(() => ({
@@ -449,7 +449,7 @@ const errorRateOption = computed(() => ({
   }]
 }))
 
-// --- Watch refresh settings ---
+// Watch refresh settings
 watch([autoRefresh, refreshInterval], ([isAuto]) => {
   if (isAuto) {
     startAutoRefresh()
@@ -458,7 +458,7 @@ watch([autoRefresh, refreshInterval], ([isAuto]) => {
   }
 })
 
-// --- Lifecycle ---
+// Lifecycle
 onMounted(() => {
   loadMonitorData()
   if (autoRefresh.value) startAutoRefresh()

@@ -174,7 +174,7 @@
         </div>
       </div>
 
-      <!-- PR-F: Cron/Canary tabs removed — backend capabilities were deleted in PR-C3. -->
+      <!-- Cron/Canary tabs removed — backend capabilities were deleted. -->
     </div>
   </div>
 </template>
@@ -285,8 +285,8 @@ async function replayQuery() {
   }
 }
 
-// PR-F: Cron/Canary state and handlers removed — the backend capabilities
-// were deleted in PR-C3, so no local demo arrays may remain.
+// Cron/Canary state and handlers removed — the backend capabilities
+// were deleted, so no local demo arrays may remain.
 
 async function refreshAll() {
   loading.value = true

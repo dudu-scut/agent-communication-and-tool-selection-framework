@@ -1,15 +1,15 @@
-# 注册中心模块
+# Registry module
 cmake_minimum_required(VERSION 3.15)
 
-# 源文件列表
+# Source files
 set(REGISTRY_SOURCES
     src/service_registry.cpp
 )
 
-# 创建静态库
+# Create the static library
 add_library(agent_rpc_registry STATIC ${REGISTRY_SOURCES})
 
-# 链接依赖
+# Link dependencies
 target_link_libraries(agent_rpc_registry 
     agent_rpc_common
     curl
@@ -17,20 +17,20 @@ target_link_libraries(agent_rpc_registry
     pthread
 )
 
-# 包含目录
+# Include directories
 target_include_directories(agent_rpc_registry PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/../proto
 )
 
-# 编译选项
+# Compile options
 target_compile_options(agent_rpc_registry PRIVATE
     -Wall
     -Wextra
     -std=c++17
 )
 
-# 安装规则
+# Install rules
 install(TARGETS agent_rpc_registry
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

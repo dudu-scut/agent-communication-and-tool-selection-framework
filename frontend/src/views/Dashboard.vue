@@ -16,7 +16,7 @@ import type { AgentMetrics, ServiceInfo } from '../types/proto'
 
 use([CanvasRenderer, LineChart, BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
 
-// ---- State ----
+// State
 const loading = ref(true)
 const dataAvailable = ref(false)
 const observabilityAvailable = ref(false)
@@ -52,7 +52,7 @@ const recentActivities = ref<any[]>([])
 const counterRefs = ref<(HTMLElement | null)[]>([null, null, null, null])
 const countUpInstances = ref<(CountUp | null)[]>([null, null, null, null])
 
-// ---- Fallback data (zero/empty state when API unavailable) ----
+// Fallback data (zero/empty state when API unavailable)
 function useFallbackData() {
   // Reset to empty/zero state
   stats.value[0].value = null
@@ -69,7 +69,7 @@ function useFallbackData() {
   agentRanking.value = []
 }
 
-// ---- Load Observability data (cost + token trend) ----
+// Load Observability data (cost + token trend)
 async function loadObservabilityData() {
   const userId = authStore.userId
   if (!userId) return
@@ -108,7 +108,7 @@ async function loadObservabilityData() {
   }
 }
 
-// ---- Load real data ----
+// Load real data
 async function loadDashboardData() {
   loading.value = true
   try {
@@ -216,7 +216,7 @@ onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
 })
 
-// ---- Chart options ----
+// Chart options
 
 // Token trend chart (empty state when no data)
 const tokenTrendOption = computed(() => ({

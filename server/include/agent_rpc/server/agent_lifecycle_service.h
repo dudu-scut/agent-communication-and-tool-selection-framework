@@ -15,7 +15,7 @@ namespace agent_rpc { namespace server {
 
 class AgentLifecycleServiceImpl final : public agent_communication::AgentLifecycleService::Service {
 public:
-    // [PR-E] Executor used by CompareAgents: every compared agent runs the
+    // Executor used by CompareAgents: every compared agent runs the
     // same question through the already-initialized durable Query pipeline
     // (the only execution entry point) with the sandbox flag set, so no
     // compare traffic ever touches long-term memory.
@@ -24,7 +24,7 @@ public:
                            const std::string& question, std::string& answer,
                            std::string& error)>;
 
-    // Auth-disabled semantics (M1): AuthInterceptor::isAuthenticated()
+    // Auth-disabled semantics: AuthInterceptor::isAuthenticated()
     // returns true when auth enforcement is disabled, so SubmitFeedback
     // proceeds with the (empty) thread-local owner from currentUserId() and
     // writes a feedback row under that empty owner — the dev/test identity.
@@ -60,7 +60,7 @@ public:
         const agent_communication::UndoActionRequest* request,
         agent_communication::UndoActionResponse* response) override;
 
-    // [PR-E] Real parallel comparison (at most 3 healthy agents).
+    // Real parallel comparison (at most 3 healthy agents).
     grpc::Status CompareAgents(
         grpc::ServerContext* context,
         const agent_communication::CompareAgentsRequest* request,

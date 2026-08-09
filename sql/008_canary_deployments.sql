@@ -1,4 +1,4 @@
--- Batch 6: Canary Deployment
+-- Canary Deployment
 -- Run: psql -U <user> -d <dbname> -f sql/008_canary_deployments.sql
 
 CREATE TABLE IF NOT EXISTS canary_deployments (

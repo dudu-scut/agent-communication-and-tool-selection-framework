@@ -119,7 +119,7 @@
         />
       </div>
 
-      <!-- PR-F: failure banner with retry — error reason stays visible -->
+      <!-- Failure banner with retry — error reason stays visible -->
       <div v-if="lastErrorMessage && !chatStore.isStreaming" class="retry-bar">
         <span class="retry-reason">请求失败：{{ lastErrorMessage }}</span>
         <button class="btn-text retry-btn" @click="chatStore.retryLast()">重试</button>
@@ -200,7 +200,7 @@ const lastErrorMessage = computed(() => {
   return tail?.role === 'agent' && tail.error ? tail.error : ''
 })
 
-// PR-F: one-time share link via SharingService.ShareSession (PR-D backend).
+// One-time share link via SharingService.ShareSession.
 // The raw token is returned exactly once by the server — surface it to the
 // user immediately; failures are shown as real errors, never faked.
 async function handleShare() {
@@ -721,7 +721,7 @@ function scrollToBottom() {
   border-top: 1px solid var(--border-subtle);
 }
 
-/* PR-F: failure banner */
+/* Failure banner */
 .retry-bar {
   display: flex;
   align-items: center;

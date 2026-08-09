@@ -17,7 +17,7 @@ class QueryDomainRepository;
 namespace orchestrator {
 
 /**
- * @brief Conversation Export Service (PR-D: durable, PostgreSQL-backed)
+ * @brief Conversation Export Service (durable, PostgreSQL-backed)
  *
  * Exports a conversation transcript stored in PostgreSQL
  * (conversation_messages) as Markdown or standalone HTML. The lookup is

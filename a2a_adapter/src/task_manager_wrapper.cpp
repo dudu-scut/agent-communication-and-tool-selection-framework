@@ -1,8 +1,6 @@
 /**
  * @file task_manager_wrapper.cpp
  * @brief Task Manager Wrapper implementation
- * 
- * Task 6.1, 6.3, 6.5: Task management implementation
  */
 
 #include "agent_rpc/a2a_adapter/task_manager_wrapper.h"
@@ -14,10 +12,6 @@
 
 namespace agent_rpc {
 namespace a2a_adapter {
-
-// ============================================================================
-// TaskStateValidator Implementation
-// ============================================================================
 
 bool TaskStateValidator::isValidTransition(a2a::TaskState from, a2a::TaskState to) {
     // Terminal states cannot transition
@@ -76,10 +70,6 @@ std::vector<a2a::TaskState> TaskStateValidator::getValidNextStates(a2a::TaskStat
     
     return valid_states;
 }
-
-// ============================================================================
-// TaskManagerWrapper Implementation
-// ============================================================================
 
 TaskManagerWrapper::TaskManagerWrapper() = default;
 

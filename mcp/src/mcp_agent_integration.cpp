@@ -1,10 +1,6 @@
 /**
  * @file mcp_agent_integration.cpp
- * @brief MCP Agent Integration 实现
- * 
- * Requirements: 12.1, 12.4, 12.6
- * Task 19.2: 实现 MCPAgentIntegration 类
- * Task 10: 集成 RAG-MCP
+ * @brief MCP Agent Integration implementation
  */
 
 #include "agent_rpc/mcp/mcp_agent_integration.h"
@@ -38,32 +34,32 @@ bool MCPAgentIntegration::initialize(const MCPAgentConfig& config) {
     
     config_ = config;
     
-    // 如果 MCP 未启用，直接返回成功
+    // Return success immediately if MCP is disabled
     if (!config_.enable_mcp) {
         LOG_INFO("MCP is disabled, skipping initialization");
         initialized_ = true;
         return true;
     }
     
-    // 检查 MCP Server 路径
+    // Check the MCP server path
     if (config_.mcp_server_path.empty()) {
         LOG_WARN("MCP Server path is empty, MCP will not be available");
         initialized_ = true;
         return true;
     }
     
-    // 尝试连接 MCP Server
+    // Try connecting to the MCP server
     if (!connectToMCPServer()) {
         LOG_WARN("Failed to connect to MCP Server, continuing in degraded mode");
-        // 降级模式：初始化成功但 MCP 不可用
+        // Degraded mode: initialized successfully but MCP is unavailable
         initialized_ = true;
         return true;
     }
     
-    // 更新工具缓存
+    // Update the tool cache
     updateToolCache();
     
-    // 初始化 RAG-MCP (如果启用)
+    // Initialize RAG-MCP (if enabled)
     if (config_.rag_config.enabled) {
         initializeRAG();
     }
@@ -82,7 +78,7 @@ void MCPAgentIntegration::shutdown() {
     // Signal all pending async calls to stop (prevents use-after-free)
     alive_flag_->store(false);
 
-    // 关闭 RAG-MCP
+    // Shut down RAG-MCP
     shutdownRAG();
 
     disconnectFromMCPServer();
@@ -150,7 +146,7 @@ ToolCallResult MCPAgentIntegration::callTool(const std::string& tool_name,
     ToolCallResult result;
     auto start_time = std::chrono::steady_clock::now();
     
-    // 检查 MCP 是否可用
+    // Check whether MCP is available
     if (!isAvailable()) {
         result.success = false;
         result.error = "MCP is not available";
@@ -158,7 +154,7 @@ ToolCallResult MCPAgentIntegration::callTool(const std::string& tool_name,
         return result;
     }
     
-    // 检查工具是否存在
+    // Check whether the tool exists
     if (!hasToolAvailable(tool_name)) {
         result.success = false;
         result.error = "Tool not found: " + tool_name;
@@ -166,7 +162,7 @@ ToolCallResult MCPAgentIntegration::callTool(const std::string& tool_name,
         return result;
     }
     
-    // 调用工具
+    // Call the tool
     LOG_INFO("Calling MCP tool: " + tool_name);
     
     int retry_count = 0;
@@ -273,17 +269,17 @@ bool MCPAgentIntegration::refreshTools() {
 
 bool MCPAgentIntegration::connectToMCPServer() {
     try {
-        // 创建 MCP Client
+        // Create the MCP client
         mcp_client_ = std::make_shared<MCPClient>();
         
-        // 连接到 MCP Server
+        // Connect to the MCP server
         if (!mcp_client_->connect(config_.mcp_server_path, config_.mcp_args)) {
             LOG_ERROR("Failed to connect to MCP Server: " + config_.mcp_server_path);
             mcp_client_.reset();
             return false;
         }
         
-        // 创建工具管理器
+        // Create the tool manager
         tool_manager_ = std::make_shared<MCPToolManager>(mcp_client_);
         if (!tool_manager_->initialize()) {
             LOG_ERROR("Failed to initialize MCPToolManager");
@@ -338,15 +334,11 @@ void MCPAgentIntegration::updateToolCache() {
     
     LOG_INFO("Updated tool cache: " + std::to_string(tool_cache_.size()) + " tools");
     
-    // 更新 RAG 索引
+    // Update the RAG index
     if (rag_initialized_ && tool_retriever_) {
         tool_retriever_->indexTools(tool_cache_);
     }
 }
-
-// ============================================================================
-// RAG-MCP 功能实现 (Task 10)
-// ============================================================================
 
 bool MCPAgentIntegration::initializeRAG() {
     if (rag_initialized_) {
@@ -354,27 +346,27 @@ bool MCPAgentIntegration::initializeRAG() {
     }
     
     try {
-        // 构建 RetrieverConfig
+        // Build the RetrieverConfig
         rag::RetrieverConfig retriever_config;
         
-        // Embedding 配置
+        // Embedding configuration
         retriever_config.embedding_config.api_key = config_.rag_config.api_key;
         if (retriever_config.embedding_config.api_key.empty()) {
             retriever_config.embedding_config.loadApiKeyFromEnv();
         }
         retriever_config.embedding_config.model = config_.rag_config.model;
         
-        // 检索配置
+        // Retrieval configuration
         retriever_config.top_k = config_.rag_config.top_k;
         retriever_config.similarity_threshold = config_.rag_config.similarity_threshold;
         retriever_config.index_path = config_.rag_config.index_path;
         
-        // 缓存配置
+        // Cache configuration
         retriever_config.cache_config.enabled = config_.rag_config.enable_cache;
         retriever_config.cache_config.max_size = config_.rag_config.cache_max_size;
         retriever_config.cache_config.ttl_seconds = config_.rag_config.cache_ttl_seconds;
         
-        // 创建检索器
+        // Create the retriever
         tool_retriever_ = std::make_unique<rag::ToolRetriever>(retriever_config);
         
         if (!tool_retriever_->initialize()) {
@@ -383,7 +375,7 @@ bool MCPAgentIntegration::initializeRAG() {
             return false;
         }
         
-        // 索引现有工具
+        // Index existing tools
         std::lock_guard<std::mutex> lock(tool_cache_mutex_);
         if (!tool_cache_.empty()) {
             tool_retriever_->indexTools(tool_cache_);
@@ -423,7 +415,7 @@ std::vector<ToolInfo> MCPAgentIntegration::getRelevantTools(const std::string& q
 }
 
 std::vector<ToolInfo> MCPAgentIntegration::getRelevantTools(const std::string& query, int top_k) const {
-    // 如果 RAG 未启用，返回所有工具
+    // Return all tools if RAG is not enabled
     if (!isRAGEnabled()) {
         return getAvailableTools();
     }
@@ -459,7 +451,7 @@ std::string MCPAgentIntegration::toFunctionCallingFormat(const std::vector<ToolI
             {"description", tool.description}
         };
         
-        // 解析 input_schema
+        // Parse input_schema
         if (!tool.input_schema.empty()) {
             try {
                 func["parameters"] = json::parse(tool.input_schema);
@@ -482,9 +474,7 @@ std::string MCPAgentIntegration::getRelevantToolsAsJson(const std::string& query
 }
 
 
-// ============================================================================
-// 配置解析辅助函数
-// ============================================================================
+// Configuration parsing helpers
 
 MCPAgentConfig parseMCPConfigFromArgs(int argc, char* argv[]) {
     MCPAgentConfig config;
@@ -497,7 +487,7 @@ MCPAgentConfig parseMCPConfigFromArgs(int argc, char* argv[]) {
             config.enable_mcp = true;
         } else if (arg == "--mcp-args" && i + 1 < argc) {
             std::string args_str = argv[++i];
-            // 解析逗号分隔的参数
+            // Parse comma-separated arguments
             std::stringstream ss(args_str);
             std::string item;
             while (std::getline(ss, item, ',')) {
@@ -510,7 +500,7 @@ MCPAgentConfig parseMCPConfigFromArgs(int argc, char* argv[]) {
         } else if (arg == "--mcp-timeout" && i + 1 < argc) {
             config.tool_call_timeout_ms = std::stoi(argv[++i]);
         }
-        // RAG-MCP 参数
+        // RAG-MCP arguments
         else if (arg == "--enable-rag") {
             config.rag_config.enabled = true;
         } else if (arg == "--rag-api-key" && i + 1 < argc) {
@@ -527,7 +517,7 @@ MCPAgentConfig parseMCPConfigFromArgs(int argc, char* argv[]) {
         }
     }
     
-    // 如果启用了 RAG 但没有 API Key，尝试从环境变量获取
+    // Load the API key from the environment if RAG is enabled but no key was provided
     if (config.rag_config.enabled && config.rag_config.api_key.empty()) {
         const char* api_key = std::getenv("LLM_API_KEY");
         if (api_key && api_key[0] != '\0') {
@@ -573,22 +563,22 @@ MCPAgentConfig parseMCPConfigFromEnv() {
         try {
             config.tool_call_timeout_ms = std::stoi(timeout);
         } catch (...) {
-            // 忽略解析错误，使用默认值
+            // Ignore parse errors; use the default value
         }
     }
     
-    // RAG-MCP 环境变量
+    // RAG-MCP environment variables
     const char* rag_enabled = std::getenv("ENABLE_RAG");
     if (rag_enabled) {
         std::string rag_str = rag_enabled;
         config.rag_config.enabled = (rag_str == "true" || rag_str == "1" || rag_str == "yes");
     }
     
-    // LLM_API_KEY (用于 RAG Embedding，与 LLM 共用同一个 Key)
+    // LLM_API_KEY (shared with the LLM; used for RAG embeddings)
     const char* llm_key = std::getenv("LLM_API_KEY");
     if (llm_key && llm_key[0] != '\0') {
         config.rag_config.api_key = llm_key;
-        // 如果有 API Key，自动启用 RAG（除非显式禁用）
+        // Auto-enable RAG when an API key is present (unless explicitly disabled)
         if (!rag_enabled) {
             config.rag_config.enabled = true;
         }

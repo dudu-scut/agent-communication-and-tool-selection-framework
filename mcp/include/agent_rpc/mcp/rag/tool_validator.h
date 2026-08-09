@@ -1,9 +1,6 @@
 /**
  * @file tool_validator.h
- * @brief 可选工具验证器
- * 
- * Requirements: 5.1, 5.2, 5.3, 5.4
- * Task 8: 实现 ToolValidator
+ * @brief Optional tool validator
  */
 
 #pragma once
@@ -21,37 +18,37 @@ namespace mcp {
 namespace rag {
 
 /**
- * @brief 验证结果
+ * @brief Validation result
  */
 struct ValidationResult {
-    std::string tool_name;            ///< 工具名称
-    bool is_valid = false;            ///< 是否有效
-    std::string error_message;        ///< 错误信息
-    int64_t duration_ms = 0;          ///< 验证耗时
+    std::string tool_name;            ///< Tool name
+    bool is_valid = false;            ///< Whether valid
+    std::string error_message;        ///< Error message
+    int64_t duration_ms = 0;          ///< Validation duration (ms)
 };
 
 /**
- * @brief 验证器配置
+ * @brief Validator configuration
  */
 struct ValidatorConfig {
-    int timeout_ms = 5000;            ///< 验证超时 (毫秒)
-    bool treat_timeout_as_valid = true; ///< 超时时是否视为有效
-    int max_test_queries = 3;         ///< 每个工具的最大测试查询数
+    int timeout_ms = 5000;            ///< Validation timeout (ms)
+    bool treat_timeout_as_valid = true; ///< Whether timeout is treated as valid
+    int max_test_queries = 3;         ///< Maximum test queries per tool
 };
 
 /**
- * @brief 工具验证器
+ * @brief Tool validator
  * 
- * 验证检索到的工具是否兼容当前任务。
- * 通过生成测试查询并检查响应来验证工具。
+ * Validates whether retrieved tools are compatible with the current task.
+ * Validates tools by generating test queries and checking the responses.
  */
 class ToolValidator {
 public:
     /**
-     * @brief 工具调用函数类型
-     * @param tool_name 工具名称
-     * @param arguments 参数 JSON
-     * @return 调用结果
+     * @brief Tool call function type
+     * @param tool_name Tool name
+     * @param arguments Arguments JSON
+     * @return Call result
      */
     using ToolCallFunc = std::function<ToolCallResult(
         const std::string& tool_name, 
@@ -61,44 +58,44 @@ public:
     ~ToolValidator() = default;
     
     /**
-     * @brief 设置工具调用函数
+     * @brief Set the tool call function
      */
     void setToolCallFunc(ToolCallFunc func) { tool_call_func_ = func; }
     
     /**
-     * @brief 验证单个工具
-     * @param tool 工具信息
-     * @return 验证结果
+     * @brief Validate a single tool
+     * @param tool Tool info
+     * @return Validation result
      */
     ValidationResult validate(const RetrievedTool& tool);
     
     /**
-     * @brief 批量验证工具
-     * @param tools 工具列表
-     * @return 验证结果列表
+     * @brief Validate tools in batch
+     * @param tools Tool list
+     * @return List of validation results
      */
     std::vector<ValidationResult> validateBatch(const std::vector<RetrievedTool>& tools);
     
     /**
-     * @brief 过滤无效工具
-     * @param tools 工具列表
-     * @return 有效工具列表
+     * @brief Filter out invalid tools
+     * @param tools Tool list
+     * @return List of valid tools
      */
     std::vector<RetrievedTool> filterInvalid(const std::vector<RetrievedTool>& tools);
     
     /**
-     * @brief 获取配置
+     * @brief Get the configuration
      */
     const ValidatorConfig& getConfig() const { return config_; }
 
 private:
     /**
-     * @brief 生成测试查询
+     * @brief Generate test queries
      */
     std::vector<std::string> generateTestQueries(const RetrievedTool& tool);
     
     /**
-     * @brief 执行测试查询
+     * @brief Execute a test query
      */
     bool executeTestQuery(const std::string& tool_name, const std::string& query);
     

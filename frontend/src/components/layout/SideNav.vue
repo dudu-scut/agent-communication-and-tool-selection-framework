@@ -27,7 +27,7 @@ function toggleCollapse() {
   collapsed.value = !collapsed.value
 }
 
-// PR-F (MF-1): admin entry is only listed for ADMIN roles. This is a UX
+// Admin entry is only listed for ADMIN roles. This is a UX
 // nicety — the router guard and the server's requireAdmin checks remain the
 // authoritative boundaries.
 const navItems = computed(() => {

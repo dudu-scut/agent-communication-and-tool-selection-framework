@@ -109,7 +109,7 @@ bool AuthInterceptor::isWhitelisted(const std::string& method) {
     return method == "/agent_communication.auth.UserService/Register" ||
            method == "/agent_communication.auth.UserService/Login" ||
            method == "/agent_communication.auth.UserService/ValidateToken" ||
-           // PR-D: restricted public read of a shared conversation. The raw
+           // Restricted public read of a shared conversation. The raw
            // share token is the only credential; the handler stays read-only
            // and sanitized, and expired/revoked shares are refused.
            method == "/agent_communication.SharingService/ReadSharedConversation" ||
@@ -122,7 +122,7 @@ const AuthInterceptor::AuthContext& AuthInterceptor::currentAuth() {
 }
 
 void AuthInterceptor::propagateAuth(const AuthContext& context) {
-    // [PR-E] Worker-thread propagation point: the caller passes a snapshot it
+    // Worker-thread propagation point: the caller passes a snapshot it
     // copied from its own validated TLS context, so this never invents an
     // identity. Assigning into this thread's TLS makes currentUserId() and
     // isAuthenticated() behave identically to the originating RPC thread.

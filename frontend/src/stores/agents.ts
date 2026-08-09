@@ -28,9 +28,9 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   /**
-   * 获取指定Agent的运行时指标
-   * 返回 wrapper: { data: AgentMetrics | null, error?: string }
-   * 异常或后端返回空时，data 为 null 并携带 error
+   * Fetch runtime metrics for the given agent
+   * Returns a wrapper: { data: AgentMetrics | null, error?: string }
+   * data is null with an error when the call fails or the backend returns empty
    */
   async function fetchAgentMetrics(
     agentId: string,

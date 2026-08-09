@@ -1,6 +1,4 @@
-# Orchestrator Module CMakeLists.txt
-# Task 8.1, 11.6: Orchestrator模块编译配置
-# Requirements: 3.1
+# Orchestrator module CMakeLists.txt
 
 cmake_minimum_required(VERSION 3.15)
 

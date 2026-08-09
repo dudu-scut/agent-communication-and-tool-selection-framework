@@ -46,8 +46,6 @@ public:
     TaskManager(TaskManager&&) noexcept;
     TaskManager& operator=(TaskManager&&) noexcept;
     
-    // === Lifecycle Callbacks ===
-    
     /**
      * @brief Set callback for when a message is received
      * This is the main handler for agent logic
@@ -73,8 +71,6 @@ public:
      * @brief Set callback for agent card queries
      */
     void set_on_agent_card_query(AgentCardCallback callback);
-    
-    // === Task Operations ===
     
     /**
      * @brief Create a new task
@@ -118,8 +114,6 @@ public:
      */
     void return_artifact(const std::string& task_id,
                         const Artifact& artifact);
-    
-    // === Message Processing ===
     
     /**
      * @brief Process a message (non-streaming)

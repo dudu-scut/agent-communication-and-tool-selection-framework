@@ -1,9 +1,6 @@
 /**
  * @file embedding_service.h
- * @brief 通用文本向量化服务（OpenAI 兼容接口）
- *
- * Requirements: 1.2, 2.1, 2.2, 2.3, 2.4
- * Task 2: 实现 EmbeddingService
+ * @brief Generic text embedding service (OpenAI-compatible API)
  */
 
 #pragma once
@@ -21,117 +18,117 @@ namespace mcp {
 namespace rag {
 
 /**
- * @brief Embedding 服务配置
+ * @brief Embedding service configuration
  */
 struct EmbeddingConfig {
-    std::string api_key;                          ///< API Key（Bearer Token 认证）
+    std::string api_key;                          ///< API key (Bearer Token authentication)
     std::string model = agent_rpc::common::envOrDefault("EMBEDDING_MODEL", agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro"));
-    int dimension = 1024;                         ///< 向量维度
-    int max_retries = 3;                          ///< 最大重试次数
-    int timeout_ms = 10000;                       ///< 超时时间 (毫秒)
-    int initial_retry_delay_ms = 1000;            ///< 初始重试延迟 (毫秒)
+    int dimension = 1024;                         ///< Embedding dimension
+    int max_retries = 3;                          ///< Maximum retry count
+    int timeout_ms = 10000;                       ///< Timeout (ms)
+    int initial_retry_delay_ms = 1000;            ///< Initial retry delay (ms)
     std::string api_url = agent_rpc::common::envOrDefault("EMBEDDING_API_URL", "https://api.deepseek.com/v1/embeddings");
 
     /**
-     * @brief 从环境变量加载 API Key
-     * @return 如果成功加载返回 true
+     * @brief Load API key from environment variables
+     * @return true if the key was loaded successfully
      */
     bool loadApiKeyFromEnv();
 
     /**
-     * @brief 验证配置
-     * @return 如果配置有效返回 true
+     * @brief Validate the configuration
+     * @return true if the configuration is valid
      */
     bool validate() const;
 };
 
 /**
- * @brief 重试统计信息
+ * @brief Retry statistics
  */
 struct RetryStats {
     int total_attempts = 0;
     int successful_attempts = 0;
     int failed_attempts = 0;
-    std::vector<int> retry_delays_ms;  ///< 每次重试的延迟
+    std::vector<int> retry_delays_ms;  ///< Delay for each retry
 };
 
 /**
- * @brief Embedding 服务类
+ * @brief Embedding service class
  *
- * 调用 OpenAI 兼容的 Embedding API 生成文本向量。
- * 支持：
- * - 单文本向量化
- * - 批量向量化
- * - 指数退避重试
- * - 超时处理
+ * Calls the OpenAI-compatible Embedding API to generate text embeddings.
+ * Supports:
+ * - Single-text embedding
+ * - Batch embedding
+ * - Exponential backoff retry
+ * - Timeout handling
  */
 class EmbeddingService {
 public:
     explicit EmbeddingService(const EmbeddingConfig& config);
     ~EmbeddingService();
 
-    // 禁止拷贝
+    // Disable copy
     EmbeddingService(const EmbeddingService&) = delete;
     EmbeddingService& operator=(const EmbeddingService&) = delete;
 
     /**
-     * @brief 生成单个文本的向量
-     * @param text 输入文本
-     * @return 向量 (维度由配置决定)
-     * @throws std::runtime_error 如果 API 调用失败
+     * @brief Generate the embedding of a single text
+     * @param text Input text
+     * @return Embedding vector (dimension determined by configuration)
+     * @throws std::runtime_error if the API call fails
      */
     std::vector<float> embed(const std::string& text);
 
     /**
-     * @brief 批量生成向量
-     * @param texts 输入文本列表
-     * @return 向量列表
-     * @throws std::runtime_error 如果 API 调用失败
+     * @brief Generate embeddings in batch
+     * @param texts List of input texts
+     * @return List of embeddings
+     * @throws std::runtime_error if the API call fails
      */
     std::vector<std::vector<float>> embedBatch(const std::vector<std::string>& texts);
 
     /**
-     * @brief 计算两个向量的余弦相似度
-     * @param a 向量 a
-     * @param b 向量 b
-     * @return 相似度 [-1, 1]
+     * @brief Compute the cosine similarity of two vectors
+     * @param a Vector a
+     * @param b Vector b
+     * @return Similarity in [-1, 1]
      */
     static float cosineSimilarity(const std::vector<float>& a, const std::vector<float>& b);
 
     /**
-     * @brief 获取配置
+     * @brief Get the configuration
      */
     const EmbeddingConfig& getConfig() const { return config_; }
 
     /**
-     * @brief 获取最近一次调用的重试统计
+     * @brief Get the retry statistics of the last call
      */
     const RetryStats& getLastRetryStats() const { return last_retry_stats_; }
 
     /**
-     * @brief 设置重试回调（用于测试）
+     * @brief Set the retry callback (for testing)
      */
     using RetryCallback = std::function<void(int attempt, int delay_ms)>;
     void setRetryCallback(RetryCallback callback) { retry_callback_ = callback; }
 
 private:
     /**
-     * @brief 发送 HTTP POST 请求
+     * @brief Send an HTTP POST request
      */
     std::string sendPostRequest(const std::string& data);
 
     /**
-     * @brief 带重试的 API 调用
+     * @brief API call with retry
      */
     std::string callApiWithRetry(const std::string& request_body);
 
     /**
-     * @brief 计算指数退避延迟
+     * @brief Compute the exponential backoff delay
      */
     int calculateBackoffDelay(int attempt) const;
 
     /**
-     * @brief 解析 API 响应（OpenAI 格式）
+     * @brief Parse the API response (OpenAI format)
      */
     std::vector<std::vector<float>> parseEmbeddingResponse(const std::string& response);
 

@@ -78,9 +78,8 @@ std::string buildRegisteredServiceId(const std::shared_ptr<registry::ServiceRegi
 
 }  // namespace
 
-// RpcServer 实现
 RpcServer::RpcServer() {
-    // 设置默认MCP服务器路径 (预留，待实现MCP client)
+    // MCP server path reserved for the upcoming MCP client
     mcp_server_path_ = "";
     mcp_server_args_ = {};
     sharing_service_impl_ = std::make_unique<SharingServiceImpl>();
@@ -90,7 +89,7 @@ RpcServer::RpcServer() {
 RpcServer::~RpcServer() {
     stop();
     
-    // 显式清理成员变量，确保正确的析构顺序
+    // Explicitly release members to guarantee destructor order
     service_impl_.reset();
     health_service_impl_.reset();
     ai_query_service_impl_.reset();
@@ -165,7 +164,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     agent_rpc::common::CostTracker::instance().initialize(redis_client_.get());
 
     // Initialize FeedbackAggregator: Redis is only a metrics cache; the
-    // durable facts live in PostgreSQL (PR-C3).
+    // durable facts live in PostgreSQL.
     agent_rpc::orchestrator::FeedbackAggregator::initialize(redis_client_.get());
     agent_rpc::orchestrator::FeedbackAggregator::setRuntimeRepository(runtime_repository_.get());
 
@@ -180,21 +179,19 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     observability_service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
     observability_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
 
-    // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
     // Agent registration/heartbeat writes the durable registry to PostgreSQL
-    // and keeps only liveness in Redis (PR-C3).
+    // and keeps only liveness in Redis.
     service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
     service_impl_->setRedisClient(redis_client_.get());
     health_service_impl_ = std::make_shared<HealthServiceImpl>();
     ai_query_service_impl_ = std::make_shared<AIQueryServiceImpl>();
     auth_service_impl_ = std::make_shared<AuthServiceImpl>(auth_repository_.get());
     
-    // 初始化序列化器
     common::MessageSerializer::getInstance().initialize(common::SerializerFactory::PROTOBUF_BINARY);
     
-    // 初始化AI查询服务：durable pipeline 依赖三个 PostgreSQL 对象，任一
-    // 初始化失败即启动失败（不注册 Query 服务，不允许静默降级）。
+    // The durable query pipeline depends on PostgreSQL; fail startup rather
+    // than silently degrade (no Query service registered on failure).
     if (!ai_query_service_impl_->initialize(config_, a2a_config_, redis_client_.get(),
                                             *postgres_store_,
                                             *query_domain_repository_,
@@ -209,8 +206,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     // affect the query outcome (observability data, not the source of truth).
     ai_query_service_impl_->setInvocationRepository(runtime_repository_.get());
 
-    // PR-D (minimal DI addition, declared in the task report): wire the
-    // durable Replay/Export/Share services to the PostgreSQL source of
+    // Wire the durable Replay/Export/Share services to the PostgreSQL source of
     // truth. SharingServiceImpl gets the store + domain repository; the
     // ReplayService gets the repository, the current route provider and a
     // pipeline executor that invokes the already-initialized durable Query
@@ -258,8 +254,7 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
             return true;
         });
 
-    // PR-E (minimal DI addition, declared in the task report): wire the
-    // Sandbox / Compare / Intervention / Undo / Autonomy workflows to the
+    // Wire the Sandbox / Compare / Intervention / Undo / Autonomy workflows to the
     // PostgreSQL source of truth and to one shared pipeline executor. The
     // executor invokes the already-initialized durable Query pipeline with
     // the sandbox flag set (skips long-term memory writes); budget, owner,
@@ -299,12 +294,12 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     user_experience_service_impl_->setExecutor(sandbox_executor);
     agent_lifecycle_service_impl_->setExecutor(sandbox_executor);
 
-    // P0-2: Wire AgentRouter to AgentCommunicationService for registration sync
+    // Wire AgentRouter to AgentCommunicationService for registration sync
     if (ai_query_service_impl_ && service_impl_) {
         auto* router = ai_query_service_impl_->getAgentRouter();
         if (router) {
             service_impl_->setAgentRouter(router);
-            // PR-C3: owner-aware routing quality. The provider runs on the
+            // Owner-aware routing quality. The provider runs on the
             // serving thread, so the authenticated owner comes from the
             // thread-local auth context set by AuthInterceptor. It reads the
             // PRE-AGGREGATED agent_route_quality row (kept fresh by
@@ -358,7 +353,7 @@ bool RpcServer::start() {
     }
     
     try {
-        // 在后台线程中启动服务器
+        // Start the server on a background thread
         server_thread_ = std::thread([this]() {
             server_->Wait();
         });
@@ -380,17 +375,16 @@ void RpcServer::stop() {
     running_ = false;
     
     if (server_) {
-        // 设置一个截止时间，避免无限等待
+        // Bound the shutdown wait
         auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
         server_->Shutdown(deadline);
     }
     
-    // 等待服务器线程结束
     if (server_thread_.joinable()) {
         server_thread_.join();
     }
     
-    // 在 gRPC 服务器完全停止后，关闭服务实现
+    // Shut down the query service after the gRPC server has fully stopped
     if (ai_query_service_impl_) {
         ai_query_service_impl_->shutdown();
     }
@@ -446,10 +440,10 @@ void RpcServer::initializeServiceRegistry() {
         consul->initialize(stripScheme(config_.registry_address, "consul"));
         service_registry_ = consul;
     } else if (config_.registry_address.rfind("etcd://", 0) == 0) {
-        // [PR-G] etcd is outside the local delivery boundary: this branch is
-        // only reachable when an operator explicitly points
-        // RPC_REGISTRY_ADDRESS at etcd://. The supported local path is the
-        // in-memory registry plus the PostgreSQL agent_registry table.
+        // etcd is outside the supported local deployment: this branch is only
+        // reachable when an operator explicitly points RPC_REGISTRY_ADDRESS
+        // at etcd://. The supported local path is the in-memory registry plus
+        // the PostgreSQL agent_registry table.
         LOG_WARN("etcd service registry is not part of the supported local "
                  "deployment; expect no maintenance for this backend");
         auto etcd = std::make_shared<registry::EtcdServiceRegistry>();
@@ -486,68 +480,58 @@ void RpcServer::setupServer() {
     // Authentication is handled by the RPC interceptor, not transport TLS.
     builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
     LOG_INFO("RPC server listening on " + address_ + " (local transport)");
-    // 设置最大消息大小
     builder.SetMaxReceiveMessageSize(config_.max_receive_message_size);
     builder.SetMaxSendMessageSize(config_.max_message_size);
     
-    // 注册AI查询服务
     if (ai_query_service_impl_ && ai_query_service_impl_->isAvailable()) {
         builder.RegisterService(
             static_cast<agent_communication::AIQueryService::Service*>(
                 ai_query_service_impl_.get()));
         LOG_INFO("AI Query Service registered");
 
-        // [Batch 4 U4] Also register the OrchestrationService (DAG execution)
-        // on the same service implementation via the second base class.
+        // Also register the OrchestrationService (DAG execution) on the same
+        // service implementation via the second base class.
         builder.RegisterService(
             static_cast<agent_communication::OrchestrationService::Service*>(
                 ai_query_service_impl_.get()));
         LOG_INFO("Orchestration Service (DAG) registered");
     }
 
-    // 注册Agent通信服务
     if (service_impl_) {
         builder.RegisterService(service_impl_.get());
         LOG_INFO("Agent Communication Service registered");
     }
 
-    // 注册健康检查服务
     if (health_service_impl_) {
         builder.RegisterService(health_service_impl_.get());
         LOG_INFO("Health Service registered");
     }
 
-    // 注册认证服务
     if (auth_service_impl_) {
         builder.RegisterService(auth_service_impl_.get());
         LOG_INFO("User Auth Service registered");
     }
 
-    // 注册分享服务
     if (sharing_service_impl_) {
         builder.RegisterService(sharing_service_impl_.get());
         LOG_INFO("Sharing Service registered");
     }
 
-    // 注册生命周期服务
     if (agent_lifecycle_service_impl_) {
         builder.RegisterService(agent_lifecycle_service_impl_.get());
         LOG_INFO("Agent Lifecycle Service registered");
     }
 
-    // 注册用户体验服务
     if (user_experience_service_impl_) {
         builder.RegisterService(user_experience_service_impl_.get());
         LOG_INFO("User Experience Service registered");
     }
 
-    // 注册可观测性服务 (GetTraceDetail, GetCostReport)
     if (observability_service_impl_) {
         builder.RegisterService(observability_service_impl_.get());
         LOG_INFO("Observability Service registered");
     }
 
-    // 注册认证拦截器 (Token验证)
     if (auth_service_impl_) {
         AuthInterceptor::setAuthEnabled(true);
         std::vector<std::unique_ptr<grpc::experimental::ServerInterceptorFactoryInterface>>
@@ -559,10 +543,8 @@ void RpcServer::setupServer() {
         LOG_INFO("Auth interceptor registered");
     }
     
-    // 启用健康检查服务
     grpc::EnableDefaultHealthCheckService(true);
     
-    // 启用服务器反射
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
     builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, 30000);
     builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 5000);
@@ -570,7 +552,6 @@ void RpcServer::setupServer() {
     builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
     builder.AddChannelArgument(GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 10000);
     
-    // 构建服务器
     server_ = builder.BuildAndStart();
     
     if (!server_) {

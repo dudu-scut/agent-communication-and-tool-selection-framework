@@ -1,13 +1,13 @@
 /**
  * @file main.cpp
- * @brief RPC Client 主程序
+ * @brief RPC Client main program
  * 
- * 这是项目的核心客户端程序：
- * - 通过 gRPC 连接 RPC Server
- * - 发送 AI 查询请求
- * - 支持同步和流式查询
+ * The core client program of the project:
+ * - Connects to the RPC server via gRPC
+ * - Sends AI query requests
+ * - Supports synchronous and streaming queries
  * 
- * 架构:
+ * Architecture:
  *   rpc_client ──gRPC──> rpc_server ──A2A/HTTP──> Orchestrator ──> Agents
  */
 
@@ -23,13 +23,13 @@
 using namespace agent_rpc::client;
 using namespace agent_rpc::common;
 
-// 全局变量用于优雅关闭
+// Global flag for graceful shutdown
 std::atomic<bool> g_running{true};
 
 void signalHandler(int signal) {
     std::cout << "\n收到信号 " << signal << ", 退出..." << std::endl;
     g_running = false;
-    // 直接退出程序，因为 getline 是阻塞的，无法被信号中断
+    // Exit directly since getline is blocking and cannot be interrupted by signals
     std::exit(0);
 }
 

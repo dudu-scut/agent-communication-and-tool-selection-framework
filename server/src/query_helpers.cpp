@@ -23,15 +23,10 @@
 namespace agent_rpc {
 namespace server {
 
-// ============================================================================
-// Task Status Tracking
-// ============================================================================
-
-// [PR-G observation, final wrap-up] The in-memory task-status cache was
-// write-only: GetQueryStatus reads the durable PostgreSQL query_logs row
-// and nothing else ever consumed the cache, so the cache itself was
-// deleted. The entry points keep their signatures (the Query pipeline
-// still calls them as state-transition hooks) but are now no-ops.
+// The in-memory task-status cache was write-only: GetQueryStatus reads the
+// durable PostgreSQL query_logs row and nothing else ever consumed the cache,
+// so the cache was deleted. These entry points keep their signatures (the
+// Query pipeline still calls them as state-transition hooks) but are no-ops.
 void QueryHelpers::updateTaskStatus(
     const std::string& /*task_id*/,
     const std::string& /*state*/,
@@ -44,10 +39,6 @@ void QueryHelpers::updateTaskStatus(
 void QueryHelpers::cleanupExpiredTasks() {
     // Intentionally empty: nothing to clean up anymore (see updateTaskStatus).
 }
-
-// ============================================================================
-// Static helpers
-// ============================================================================
 
 void QueryHelpers::recordMetrics(
     const std::string& method,
@@ -102,10 +93,6 @@ std::string QueryHelpers::sanitizeErrorMessage(const std::string& msg) {
     }
     return msg;
 }
-
-// ============================================================================
-// Agent Switch / Memory helpers
-// ============================================================================
 
 void QueryHelpers::handleAgentSwitch(
     common::MemoryService* memory_service,

@@ -1,5 +1,4 @@
 # A2A Adapter Layer CMakeLists.txt
-# Requirements: 8.5
 
 cmake_minimum_required(VERSION 3.15)
 

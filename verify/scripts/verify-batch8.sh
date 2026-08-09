@@ -1,11 +1,9 @@
 #!/bin/bash
-# ============================================================================
-# Batch 8 Verification: Protocol + Security
+# Verification: Protocol + Security
 #  8.1 — v1.0 serialization (kind field)
 #  8.2 — v1.1 serialization (type field)
 #  8.3 — Compatible fallback (version mismatch)
 #  8.4 — Delegation depth limit
-# ============================================================================
 
 source "$(dirname "$0")/helpers.sh"
 
@@ -17,7 +15,7 @@ sleep 1
 
 MOCK_URL="http://localhost:5100/tasks/send"
 
-# ----- 8.1: v1.0 serialization ----------------------------------------------
+# 8.1: v1.0 serialization
 scenario "8.1 — v1.0 Serialization (kind field)"
 
 step "Call mock agent with version_v1_0 mode"
@@ -32,7 +30,7 @@ verify "Response uses kind field" \
 verify "Response does NOT use type field" \
     assert_not_contains "$V10_RESPONSE" '"type"'
 
-# ----- 8.2: v1.1 serialization ----------------------------------------------
+# 8.2: v1.1 serialization
 scenario "8.2 — v1.1 Serialization (type field)"
 
 step "Call mock agent with version_v1_1 mode"
@@ -47,7 +45,7 @@ verify "Response uses type field" \
 verify "Response does NOT use kind field" \
     assert_not_contains "$V11_RESPONSE" '"kind"'
 
-# ----- 8.3: Compatible fallback ---------------------------------------------
+# 8.3: Compatible fallback
 scenario "8.3 — Compatible Fallback (Version Mismatch)"
 
 step "Call v1.0-declared agent that responds with v1.1 format"
@@ -66,7 +64,7 @@ verify "Mixed response does NOT use kind field" \
 verify_warn "Trace spans mark version_fallback" \
     assert_pg_row_exists "trace_spans" "metadata::text LIKE '%version_fallback%'"
 
-# ----- 8.4: Delegation depth limit ------------------------------------------
+# 8.4: Delegation depth limit
 scenario "8.4 — Delegation Depth Limit"
 
 # NOTE: Delegation depth enforcement lives in the A2A adapter (C++ server),
@@ -94,6 +92,6 @@ verify_warn "Depth limit enforced beyond level 5 (requires server-integration)" 
 
 rm -f "$DEPTH_OUTPUT"
 
-# ----- Report ----------------------------------------------------------------
+# Report
 print_batch_report "Batch 8 — Protocol + Security"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

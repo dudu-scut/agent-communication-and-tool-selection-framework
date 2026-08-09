@@ -1,8 +1,6 @@
 /**
  * @file context_compressor.cpp
  * @brief Implementation of ContextCompressor
- *
- * Batch 3 — Task 2: Context Compression
  */
 
 #include "agent_rpc/orchestrator/context_compressor.h"
@@ -17,10 +15,6 @@ namespace agent_rpc {
 namespace orchestrator {
 
 ContextCompressor::ContextCompressor() = default;
-
-// -----------------------------------------------------------------------
-// Token estimation
-// -----------------------------------------------------------------------
 
 int ContextCompressor::estimateTokens(
     const std::vector<ConversationTurn>& history) {
@@ -71,10 +65,6 @@ int ContextCompressor::estimateTokens(
     return static_cast<int>(total_chars / avg_chars_per_token + 0.5);
 }
 
-// -----------------------------------------------------------------------
-// LLM summary generation
-// -----------------------------------------------------------------------
-
 static size_t writeCallback(void* contents, size_t size, size_t nmemb,
                              std::string* output) {
     size_t total = size * nmemb;
@@ -103,7 +93,6 @@ std::string ContextCompressor::generateSummary(
 
     prompt << "\nSummary:";
 
-    // ---- Call LLM API ----
     const char* api_key = std::getenv("LLM_API_KEY");
     if (!api_key) {
         // Fallback: concatenate into a brief summary
@@ -185,10 +174,6 @@ std::string ContextCompressor::generateSummary(
 
     return response_body.substr(start, end - start);
 }
-
-// -----------------------------------------------------------------------
-// Compression entry-point
-// -----------------------------------------------------------------------
 
 std::vector<ConversationTurn> ContextCompressor::compressIfNeeded(
     const std::vector<ConversationTurn>& history,

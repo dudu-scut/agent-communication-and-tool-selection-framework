@@ -1,13 +1,6 @@
 /**
  * @file test_agent_router_properties.cpp
  * @brief Property-based tests for Agent Router
- * 
- * Task 8.4, 8.5: Property tests for agent routing
- * 
- * **Feature: a2a-integration**
- * **Property 4: Agent Selection Determinism**
- * **Property 8: Agent Health State Consistency**
- * **Validates: Requirements 2.3, 3.4, 4.5, 10.3**
  */
 
 #include <gtest/gtest.h>
@@ -22,9 +15,7 @@
 
 using namespace agent_rpc::orchestrator;
 
-// ============================================================================
 // Test Fixtures
-// ============================================================================
 
 class AgentRouterPropertyTest : public ::testing::Test {
 protected:
@@ -53,9 +44,7 @@ protected:
     std::unique_ptr<AgentRouter> router_;
 };
 
-// ============================================================================
 // Helper Generators
-// ============================================================================
 
 namespace rc {
 
@@ -86,10 +75,7 @@ Gen<int> genAgentCount() {
 
 } // namespace rc
 
-// ============================================================================
 // Property 4: Agent Selection Determinism
-// **Validates: Requirements 2.3, 3.4**
-// ============================================================================
 
 /**
  * Property 4.1: Round-robin produces cyclic sequence
@@ -218,10 +204,7 @@ TEST_F(AgentRouterPropertyTest, AllUnhealthyReturnsNullopt) {
     EXPECT_FALSE(selected.has_value());
 }
 
-// ============================================================================
 // Property 8: Agent Health State Consistency
-// **Validates: Requirements 10.3, 4.5**
-// ============================================================================
 
 /**
  * Property 8.1: Unhealthy agents are excluded from selection
@@ -342,9 +325,7 @@ RC_GTEST_FIXTURE_PROP(AgentRouterPropertyTest, HealthyCountMatchesActual, ()) {
     RC_ASSERT(router_->getHealthyAgentCount() == static_cast<size_t>(expected_healthy));
 }
 
-// ============================================================================
 // Additional Unit Tests
-// ============================================================================
 
 TEST_F(AgentRouterPropertyTest, InitializeAndShutdown) {
     AgentRouter router;
@@ -503,9 +484,7 @@ TEST_F(AgentRouterPropertyTest, AgentInfoHasSkillMethods) {
     EXPECT_FALSE(agent.hasAnySkill({"writing", "translation"}));
 }
 
-// ============================================================================
 // Main
-// ============================================================================
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

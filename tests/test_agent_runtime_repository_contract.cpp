@@ -95,9 +95,7 @@ std::string utcToday() {
     return buffer;
 }
 
-// ============================================================================
 // 1. Static source guards (required item 5)
-// ============================================================================
 
 TEST(RuntimeFactsContractTest, NoPopenOrPsqlOrPgUrlInRuntimeCode) {
     const std::vector<std::string> guarded_files = {
@@ -168,9 +166,7 @@ TEST(RuntimeFactsContractTest, MigrationIsAppendOnlyAndIdempotent) {
     EXPECT_EQ(migration.find("DROP COLUMN"), std::string::npos);
 }
 
-// ============================================================================
 // 2. Repository integration (real PostgreSQL)
-// ============================================================================
 
 class AgentRuntimeRepositoryTest : public ::testing::Test {
 protected:
@@ -459,9 +455,7 @@ TEST_F(AgentRuntimeRepositoryTest, HeartbeatUpsertHealsMissingRegistryRow) {
     EXPECT_EQ(countRows(*context->store, "agent_registry", "agent_id", agent_id), 1);
 }
 
-// ============================================================================
 // 3. End-to-end gRPC (real RpcServer + PostgreSQL + Redis, mock A2A agent)
-// ============================================================================
 
 class MockA2AHttpServer {
 public:

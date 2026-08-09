@@ -1,9 +1,6 @@
 /**
  * @file ai_query_client.h
  * @brief AI Query Client for gRPC
- * 
- * Requirements: 2.1
- * Task 14: RPC客户端扩展
  */
 
 #pragma once
@@ -60,9 +57,7 @@ public:
      */
     const std::string& getServerAddress() const { return server_address_; }
     
-    // ========================================================================
     // Query Methods
-    // ========================================================================
     
     /**
      * @brief Send a synchronous AI query

@@ -2,12 +2,7 @@
  * @file test_mcp_integration.cpp
  * @brief MCP Agent Integration Tests
  * 
- * Tests for:
- * - Task 20.1: MCPAgentIntegration initialization and shutdown
- * - Task 20.2: MCP error handling (server unavailable, timeouts)
- * 
- * **Feature: a2a-integration, Task 20: MCP 集成测试**
- * **Validates: Requirements 12.1, 12.3, 12.5**
+ *
  */
 
 #include <gtest/gtest.h>
@@ -20,11 +15,7 @@ namespace {
 
 using namespace agent_rpc::mcp;
 
-// ============================================================================
-// Task 20.1: MCPAgentIntegration Unit Tests
-// **Feature: a2a-integration, Task 20.1: MCP Agent 集成单元测试**
-// **Validates: Requirements 12.1, 12.3**
-// ============================================================================
+// MCPAgentIntegration unit tests
 
 class MCPAgentIntegrationTest : public ::testing::Test {
 protected:
@@ -189,11 +180,7 @@ TEST_F(MCPAgentIntegrationTest, GetToolInputSchemaWhenMCPDisabled) {
     EXPECT_EQ(integration_->getToolInputSchema("any_tool"), "");
 }
 
-// ============================================================================
-// Task 20.2: MCP Error Handling Tests
-// **Feature: a2a-integration, Task 20.2: MCP 错误处理测试**
-// **Validates: Requirements 12.5**
-// ============================================================================
+// MCP error handling tests
 
 // Test: Tool call when MCP not available
 TEST_F(MCPAgentIntegrationTest, ToolCallWhenMCPNotAvailable) {
@@ -282,9 +269,7 @@ TEST_F(MCPAgentIntegrationTest, ToolCallWithServerUnavailable) {
     EXPECT_FALSE(result.error.empty());
 }
 
-// ============================================================================
-// Property-based Tests
-// ============================================================================
+// Property-based tests
 
 // Property: Config parsing preserves values
 RC_GTEST_PROP(MCPConfigProperties, ConfigPreservesValues, ()) {
@@ -368,11 +353,7 @@ RC_GTEST_PROP(MCPConfigProperties, CallToolSimpleErrorPrefix, ()) {
     RC_ASSERT(result.substr(0, 7) == "[ERROR]");
 }
 
-// ============================================================================
-// Task 10.4: RAG-MCP Integration Tests
-// **Feature: rag-mcp, Task 10.4: RAG-MCP 集成测试**
-// **Validates: Requirements 6.1, 6.2, 6.4**
-// ============================================================================
+// RAG-MCP integration tests
 
 // Test: RAG disabled by default
 TEST_F(MCPAgentIntegrationTest, RAGDisabledByDefault) {
@@ -573,9 +554,7 @@ RC_GTEST_PROP(RAGMCPProperties, ToFunctionCallingFormatProducesValidJSON, ()) {
     }
 }
 
-// ============================================================================
-// Command Line Argument Parsing Tests
-// ============================================================================
+// Command line argument parsing tests
 
 TEST(MCPConfigParsingTest, ParseEmptyArgs) {
     char* argv[] = {const_cast<char*>("test")};

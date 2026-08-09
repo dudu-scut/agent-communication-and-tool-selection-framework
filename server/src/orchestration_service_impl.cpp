@@ -36,16 +36,11 @@ OrchestrationServiceImpl::OrchestrationServiceImpl(
     , rpc_config_(config) {
 }
 
-// ============================================================================
-// ExecutePlan — User-modified DAG Execution (Batch 4 U4)
-// ============================================================================
-
 grpc::Status OrchestrationServiceImpl::executePlan(
     grpc::ServerContext* context,
     const agent_communication::ExecutePlanRequest* request,
     agent_communication::ExecutePlanResponse* response) {
 
-    // Auth: reject unauthenticated requests
     if (!AuthInterceptor::isAuthenticated()) {
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                            "Valid authentication token required");
@@ -163,10 +158,6 @@ grpc::Status OrchestrationServiceImpl::executePlan(
     }
 }
 
-// ============================================================================
-// ReplayQuery (Batch 5)
-// ============================================================================
-
 grpc::Status OrchestrationServiceImpl::replayQuery(
     grpc::ServerContext* context,
     const agent_communication::ReplayQueryRequest* request,
@@ -179,18 +170,14 @@ grpc::Status OrchestrationServiceImpl::replayQuery(
                            "Valid authentication token required");
     }
 
-    // PR-D: the owner always comes from the authenticated session. The
-    // durable ReplayService loads the original trace from PostgreSQL
-    // (owner-scoped; cross-owner or unknown traces are NOT_FOUND) and either
-    // compares routes (mode=route, no execution) or re-executes under a NEW
-    // request id (mode=exact) without ever modifying the original records.
+    // The owner always comes from the authenticated session. The durable
+    // ReplayService loads the original trace from PostgreSQL (owner-scoped;
+    // cross-owner or unknown traces are NOT_FOUND) and either compares routes
+    // (mode=route, no execution) or re-executes under a NEW request id
+    // (mode=exact) without ever modifying the original records.
     return orchestrator::ReplayService::handleReplayRequest(
         AuthInterceptor::currentUserId(), request, response);
 }
-
-// ============================================================================
-// ExportConversation (Batch 6)
-// ============================================================================
 
 grpc::Status OrchestrationServiceImpl::exportConversation(
     grpc::ServerContext* context,
@@ -204,9 +191,9 @@ grpc::Status OrchestrationServiceImpl::exportConversation(
                            "Valid authentication token required");
     }
 
-    // PR-D: owner-scoped export straight from PostgreSQL conversation
-    // messages; missing or foreign conversations are NOT_FOUND and HTML
-    // output is fully escaped.
+    // Owner-scoped export straight from PostgreSQL conversation messages;
+    // missing or foreign conversations are NOT_FOUND and HTML output is
+    // fully escaped.
     return orchestrator::ExportService::handleExportRequest(
         AuthInterceptor::currentUserId(), request, response);
 }

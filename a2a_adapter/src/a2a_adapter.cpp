@@ -1,8 +1,6 @@
 /**
  * @file a2a_adapter.cpp
  * @brief Implementation of main A2A adapter
- * 
- * Requirements: 8.1, 8.2, 8.5
  */
 
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
@@ -21,7 +19,6 @@
 namespace agent_rpc {
 namespace a2a_adapter {
 
-// 使用 nlohmann/json
 using json = nlohmann::json;
 
 A2AAdapter::A2AAdapter()
@@ -104,12 +101,12 @@ bool A2AAdapter::processQuery(
             return false;
         }
 
-        // [Batch 1] Inject trace headers into A2A HTTP call
+        // Inject trace headers into A2A HTTP call
         auto* trace = agent_rpc::common::TraceContext::current();
         if (trace) {
             trace->startSpan("agent_call", "a2a_adapter");
 
-            // [Batch 8] Delegation depth limit check
+            // Delegation depth limit check
             constexpr int MAX_DEPTH = 5;
             // Use depth() counter as primary. Safety net: count agent_call spans
             // in completedSpans() as fallback when depth counter is unset (0).
@@ -137,7 +134,7 @@ bool A2AAdapter::processQuery(
             a2a_client_->add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] autonomy-level header removed (PR-E): the old Redis key
+        // Autonomy-level header removed: the old Redis key
         // autonomy:<user>:<agent> was replaced by PostgreSQL autonomy_settings;
         // this header had no consumer anywhere and its owner came from the
         // request body. To restore it, read via QueryDomainRepository::
@@ -252,7 +249,7 @@ void A2AAdapter::processQueryAsync(
         return;
     }
     
-    // [PR-G] True asynchronous A2A submission (submit now, poll/fetch the
+    // True asynchronous A2A submission (submit now, poll/fetch the
     // result later) is outside the local delivery boundary. This entry point
     // stays a synchronous fallback so callers never receive a fake task id or
     // an untracked background job; QueryStream is the supported streaming
@@ -289,14 +286,15 @@ void A2AAdapter::processQueryStreaming(
         std::string context_id = params.context_id().value_or("");
 
         // Use streaming API
-        // 注意：http_client按双换行符切分数据，每次回调收到完整的SSE事件
-        // [Batch 1] Inject trace headers into A2A HTTP streaming call
+        // Note: http_client splits on double newlines, so each callback
+        // receives a complete SSE event
+        // Inject trace headers into A2A HTTP streaming call
         auto* trace = agent_rpc::common::TraceContext::current();
         std::string trace_id;
         if (trace) {
             trace->startSpan("agent_call_streaming", "a2a_adapter");
 
-            // [Batch 8] Delegation depth limit check for streaming
+            // Delegation depth limit check for streaming
             constexpr int MAX_DEPTH = 5;
             int depth = trace->depth();
             if (depth >= MAX_DEPTH) {
@@ -315,46 +313,46 @@ void A2AAdapter::processQueryStreaming(
             a2a_client_->add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] autonomy-level header removed (PR-E, see processQuery).
+        // Autonomy-level header removed (see processQuery).
 
         a2a_client_->send_message_streaming(params,
             [this, &callback, &context_id, trace_id](const std::string& event_line) {
-                // 跳过空行
+                // Skip empty lines
                 if (event_line.empty() || event_line == "\n" || event_line == "\r\n") {
                     return;
                 }
                 
-                // 解析SSE格式: "data: {...}\n" 或 "data: {...}"
+                // Parse SSE format: "data: {...}\n" or "data: {...}"
                 std::string event_data = event_line;
                 
-                // 移除行尾换行符
+                // Strip trailing newlines
                 while (!event_data.empty() && 
                        (event_data.back() == '\n' || event_data.back() == '\r')) {
                     event_data.pop_back();
                 }
                 
-                // 提取data:后面的内容
+                // Extract the content after "data: "
                 const std::string data_prefix = "data: ";
                 if (event_data.find(data_prefix) == 0) {
                     event_data = event_data.substr(data_prefix.length());
                 }
                 
-                // 跳过空数据
+                // Skip empty data
                 if (event_data.empty()) {
                     return;
                 }
                 
-                // 解析 JSON 响应，捕获所有 JSON 异常（包括 UTF-8 错误）
+                // Parse JSON; catch all JSON exceptions (including UTF-8 errors)
                 json j;
                 try {
                     j = json::parse(event_data);
                 } catch (const json::exception& e) {
-                    // JSON 解析失败（包括 UTF-8 错误），跳过这个事件
+                    // JSON parse failed (including UTF-8 errors); skip this event
                     return;
                 }
                 
                 try {
-                    // 检查是否有错误
+                    // Check for errors
                     if (j.contains("error")) {
                         agent_communication::AIStreamEvent event;
                         std::string error_msg = j["error"].value("message", "Unknown error");
@@ -364,41 +362,41 @@ void A2AAdapter::processQueryStreaming(
                         return;
                     }
                     
-                    // 检查是否有结果
+                    // Check for a result
                     if (j.contains("result")) {
                         auto& result = j["result"];
                         std::string type = result.value("type", "");
                         
                         if (type == "chunk") {
-                            // 流式内容块
+                            // Streaming content chunk
                             std::string content = result.value("content", "");
                             agent_communication::AIStreamEvent event;
                             response_adapter_->buildStreamEvent(
                                 content, context_id, "partial", &event);
                             callback(event);
                         } else if (type == "stream_start") {
-                            // 流开始事件
+                            // Stream start event
                             agent_communication::AIStreamEvent event;
                             response_adapter_->buildStreamEvent(
                                 "", context_id, "status", &event);
                             event.set_task_state("processing");
                             callback(event);
                         } else if (type == "stream_end") {
-                            // 流结束事件 - 不在这里发送 complete，让外层处理
+                            // Stream end event — do not send "complete" here; the outer layer handles it
                         } else if (type == "intent") {
-                            // 意图识别事件
+                            // Intent classification event
                             agent_communication::AIStreamEvent event;
                             std::string intent = result.value("intent", "");
                             response_adapter_->buildStreamEvent(
                                 "Intent: " + intent, context_id, "status", &event);
                             callback(event);
                         } else if (type == "status") {
-                            // A2A 标准状态事件
+                            // Standard A2A status event
                             if (result.contains("status")) {
                                 auto& status_obj = result["status"];
                                 std::string state = status_obj.value("state", "");
 
-                                // [Batch 4 U3] Write activity feed record
+                                // Write activity feed record
                                 if (!trace_id.empty() && redis_) {
                                     try {
                                         nlohmann::json activity;
@@ -423,7 +421,7 @@ void A2AAdapter::processQueryStreaming(
                                     event.set_task_state("processing");
                                     callback(event);
                                 } else if (state == "completed") {
-                                    // 提取完成消息中的文本内容
+                                    // Extract text content from the completion message
                                     if (status_obj.contains("message")) {
                                         auto& message = status_obj["message"];
                                         if (message.contains("parts")) {
@@ -446,11 +444,11 @@ void A2AAdapter::processQueryStreaming(
                         }
                     }
                 } catch (const std::exception& e) {
-                    // 处理结果时出错，跳过
+                    // Error while processing the result; skip
                 }
             });
 
-        // [Batch 1] End streaming trace span
+        // End streaming trace span
         if (trace) {
             trace->endSpan();
             a2a_client_->clear_headers();
@@ -559,12 +557,12 @@ bool A2AAdapter::processQueryDirect(
         a2a::A2AClient client(agent_url);
         client.set_timeout(config_.request_timeout_seconds);
 
-        // [Batch 1] Inject trace headers into direct A2A HTTP call
+        // Inject trace headers into direct A2A HTTP call
         auto* trace = agent_rpc::common::TraceContext::current();
         if (trace) {
             trace->startSpan("agent_call_direct", "a2a_adapter");
 
-            // [Batch 8] Delegation depth limit check for direct calls
+            // Delegation depth limit check for direct calls
             constexpr int MAX_DEPTH = 5;
             int depth = trace->depth();
             if (depth >= MAX_DEPTH) {
@@ -583,11 +581,11 @@ bool A2AAdapter::processQueryDirect(
             client.add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] autonomy-level header removed (PR-E, see processQuery).
+        // Autonomy-level header removed (see processQuery).
 
         a2a::A2AResponse a2a_response = client.send_message(params);
 
-        // [Batch 1] End trace span
+        // End trace span
         if (trace) {
             trace->endSpan();
         }
@@ -666,13 +664,13 @@ void A2AAdapter::processQueryStreamingDirect(
         a2a::A2AClient client(agent_url);
         client.set_timeout(config_.request_timeout_seconds);
 
-        // [Batch 1] Inject trace headers into direct A2A HTTP streaming call
+        // Inject trace headers into direct A2A HTTP streaming call
         auto* trace = agent_rpc::common::TraceContext::current();
         std::string trace_id;
         if (trace) {
             trace->startSpan("agent_call_streaming_direct", "a2a_adapter");
 
-            // [Batch 8] Delegation depth limit check for streaming direct
+            // Delegation depth limit check for streaming direct
             constexpr int MAX_DEPTH = 5;
             int depth = trace->depth();
             if (depth >= MAX_DEPTH) {
@@ -691,7 +689,7 @@ void A2AAdapter::processQueryStreamingDirect(
             client.add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] autonomy-level header removed (PR-E, see processQuery).
+        // Autonomy-level header removed (see processQuery).
 
         client.send_message_streaming(params,
             [this, &callback, &context_id, trace_id](const std::string& event_line) {
@@ -754,12 +752,12 @@ void A2AAdapter::processQueryStreamingDirect(
                                 "Intent: " + intent, context_id, "status", &event);
                             callback(event);
                         } else if (type == "status") {
-                            // A2A 标准状态事件
+                            // Standard A2A status event
                             if (result.contains("status")) {
                                 auto& status_obj = result["status"];
                                 std::string state = status_obj.value("state", "");
 
-                                // [Batch 4 U3] Write activity feed record
+                                // Write activity feed record
                                 if (!trace_id.empty() && redis_) {
                                     try {
                                         nlohmann::json activity;
@@ -784,7 +782,7 @@ void A2AAdapter::processQueryStreamingDirect(
                                     event.set_task_state("processing");
                                     callback(event);
                                 } else if (state == "completed") {
-                                    // 提取完成消息中的文本内容
+                                    // Extract text content from the completion message
                                     if (status_obj.contains("message")) {
                                         auto& message = status_obj["message"];
                                         if (message.contains("parts")) {
@@ -811,7 +809,7 @@ void A2AAdapter::processQueryStreamingDirect(
                 }
             });
 
-        // [Batch 1] End direct streaming trace span
+        // End direct streaming trace span
         if (trace) {
             trace->endSpan();
         }
@@ -835,9 +833,7 @@ void A2AAdapter::processQueryStreamingDirect(
     }
 }
 
-// ============================================================================
-// [Batch 4 U3] Intervention Detection
-// ============================================================================
+// Intervention detection
 
 bool A2AAdapter::shouldIntervene(const std::string& action_type,
                                   long estimated_tokens,

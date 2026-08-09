@@ -1,5 +1,5 @@
 /**
- * PR-F: proto.ts drift guard.
+ * proto.ts drift guard.
  *
  * Parses the repository proto/ sources (single source of truth) and compares
  * the fields of the core messages on this link against the hand-written
@@ -16,7 +16,7 @@ const root = path.resolve(import.meta.dirname, '../../..');
 const PROTO_DIR = path.join(root, 'proto');
 const PROTO_TS = path.join(root, 'frontend/src/types/proto.ts');
 
-// ── proto/ parsing ────────────────────────────────────────────────────────
+// proto/ parsing
 
 function parseProtoMessages(file) {
   const src = fs.readFileSync(path.join(PROTO_DIR, file), 'utf8');
@@ -50,7 +50,7 @@ const protoMessages = {
   ...parseProtoMessages('common.proto'),
 };
 
-// Minor #5 defensive assertion: if the regex parser silently degrades
+// Minor defensive assertion: if the regex parser silently degrades
 // (proto syntax change, encoding drift), the whole suite would otherwise
 // compare nothing against nothing and stay green.
 assert.ok(
@@ -58,7 +58,7 @@ assert.ok(
   `proto regex parser produced only ${Object.keys(protoMessages).length} messages — parser drift`,
 );
 
-// ── proto.ts parsing ──────────────────────────────────────────────────────
+// proto.ts parsing
 
 const tsSource = fs.readFileSync(PROTO_TS, 'utf8');
 
@@ -85,7 +85,7 @@ function parseTsInterface(name) {
   return fields;
 }
 
-// ── type compatibility ────────────────────────────────────────────────────
+// type compatibility
 
 // proto scalar → acceptable TS surface (proxy transcodes longs:String,
 // bytes → base64 string).
@@ -117,24 +117,24 @@ function tsTypeOk(protoField, tsType) {
   return tsType.length > 0;
 }
 
-// ── messages on this link that must never drift ──────────────────────────
+// messages on this link that must never drift
 const CORE_MESSAGES = [
   // AI query link
   'AIQueryRequest',
   'AIQueryResponse',
   'AIStreamEvent',
   'Artifact',
-  // auth + role (PR-C3)
+  // auth + role
   'LoginResponse',
   'RegisterResponse',
   'ValidateTokenResponse',
-  // observability (CostRecord.estimated from PR-C3)
+  // observability (CostRecord.estimated)
   'CostRecord',
   'TokenUsageRecord',
   'TraceSpan',
   'GetTraceDetailResponse',
   'GetCostReportResponse',
-  // PR-D: replay / export / share / template
+  // replay / export / share / template
   'ReplayQueryRequest',
   'ReplayQueryResponse',
   'ExportConversationRequest',
@@ -143,7 +143,7 @@ const CORE_MESSAGES = [
   'ShareSessionResponse',
   'ReadSharedConversationRequest',
   'ReadSharedConversationResponse',
-  // PR-E: sandbox / intervention / compare / autonomy / undo
+  // sandbox / intervention / compare / autonomy / undo
   'SandboxQueryRequest',
   'SandboxQueryResponse',
   'InterventionResponseRequest',
@@ -159,7 +159,7 @@ for (const name of CORE_MESSAGES) {
   test(`proto.ts interface ${name} matches proto/ fields`, () => {
     const protoFields = protoMessages[name];
     assert.ok(protoFields, `proto/ must define message ${name}`);
-    // Minor #5 defensive assertion: a message parsed to zero fields means the
+    // Minor defensive assertion: a message parsed to zero fields means the
     // field regex no longer matches the wire source — fail loudly instead of
     // vacuously passing the field loop.
     assert.ok(
@@ -196,7 +196,7 @@ for (const name of CORE_MESSAGES) {
   });
 }
 
-// ── specific regression pins called out by PR-F ──────────────────────────
+// Specific regression pins
 
 test('LoginResponse carries the C3 role field', () => {
   const ts = parseTsInterface('LoginResponse');
@@ -210,7 +210,7 @@ test('CostRecord carries the C3 estimated flag', () => {
   assert.match(ts.estimated, /boolean/);
 });
 
-test('AIQueryRequest carries the PR-E sandbox flag', () => {
+test('AIQueryRequest carries the sandbox flag', () => {
   const ts = parseTsInterface('AIQueryRequest');
   assert.ok(ts.sandbox, 'AIQueryRequest.sandbox must exist');
   assert.match(ts.sandbox, /boolean/);

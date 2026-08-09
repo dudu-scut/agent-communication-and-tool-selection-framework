@@ -206,7 +206,7 @@ grpc::Status ReplayService::handleReplayRequest(
     } catch (const std::exception& error) {
         const bool persistence_fault = common::isPostgresError(error);
         LOG_ERROR(std::string("ReplayQuery failed: ") + error.what());
-        // M1 (PR-D): the client-facing status message is a fixed, sanitized
+        // The client-facing status message is a fixed, sanitized
         // text. Internal exception detail stays in the server log only and
         // never rides the response (no cross-tenant information leak).
         return grpc::Status(

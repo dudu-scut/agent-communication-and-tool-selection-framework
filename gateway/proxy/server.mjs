@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
 
-// ── Config ──────────────────────────────────────────────────────────────
+// Config
 const PROXY_PORT = parseInt(process.env.PROXY_PORT || '8081', 10);
 const GRPC_TARGET = process.env.GRPC_TARGET || 'localhost:50051';
 const PROTO_DIR = path.resolve(
@@ -22,7 +22,7 @@ const PROTO_DIR = path.resolve(
   '../../proto'
 );
 
-// ── Load Proto Definitions ─────────────────────────────────────────────
+// Load Proto Definitions
 const loaderOptions = {
   keepCase: true,
   longs: String,
@@ -49,51 +49,43 @@ const sharingProto = loadProto('sharing.proto');
 const lifecycleProto = loadProto('agent_lifecycle.proto');
 const experienceProto = loadProto('user_experience.proto');
 
-// ── Create gRPC Clients ─────────────────────────────────────────────────
+// Create gRPC Clients
 const clients = {};
 
 function initClients() {
   const creds = grpc.credentials.createInsecure();
 
-  // agent_communication.AgentCommunicationService
   clients['agent_communication.AgentCommunicationService'] =
     new agentProto.agent_communication.AgentCommunicationService(GRPC_TARGET, creds);
 
-  // agent_communication.AIQueryService
   clients['agent_communication.AIQueryService'] =
     new queryProto.agent_communication.AIQueryService(GRPC_TARGET, creds);
 
   clients['agent_communication.ObservabilityService'] =
     new observabilityProto.agent_communication.ObservabilityService(GRPC_TARGET, creds);
 
-  // agent_communication.auth.UserService
   clients['agent_communication.auth.UserService'] =
     new userProto.agent_communication.auth.UserService(GRPC_TARGET, creds);
 
-  // agent_communication.HealthService
   clients['agent_communication.HealthService'] =
     new agentProto.agent_communication.HealthService(GRPC_TARGET, creds);
 
-  // agent_communication.OrchestrationService
   clients['agent_communication.OrchestrationService'] =
     new orchestrationProto.agent_communication.OrchestrationService(GRPC_TARGET, creds);
 
-  // agent_communication.SharingService
   clients['agent_communication.SharingService'] =
     new sharingProto.agent_communication.SharingService(GRPC_TARGET, creds);
 
-  // agent_communication.AgentLifecycleService
   clients['agent_communication.AgentLifecycleService'] =
     new lifecycleProto.agent_communication.AgentLifecycleService(GRPC_TARGET, creds);
 
-  // agent_communication.UserExperienceService
   clients['agent_communication.UserExperienceService'] =
     new experienceProto.agent_communication.UserExperienceService(GRPC_TARGET, creds);
 
   console.log(`gRPC clients initialized → ${GRPC_TARGET}`);
 }
 
-// ── Streaming RPC Classification ───────────────────────────────────────
+// Streaming RPC Classification
 const SERVER_STREAMING_RPCS = new Set([
   'agent_communication.AIQueryService/QueryStream',
   'agent_communication.AgentCommunicationService/ListenMessages',
@@ -106,7 +98,7 @@ const UNSUPPORTED_STREAMING_RPCS = new Set([
   'agent_communication.AgentCommunicationService/RealTimeCommunication',
 ]);
 
-// ── gRPC status → HTTP status mapping (PR-F) ─────────────────────────────
+// gRPC status → HTTP status mapping
 // Stable error semantics: gRPC errors are surfaced as structured JSON/SSE
 // errors, never wrapped as 200 success responses.
 const GRPC_HTTP_STATUS = {
@@ -119,7 +111,7 @@ const GRPC_HTTP_STATUS = {
 };
 // NOTE: the mapping table above is the single source of truth — the
 // error-mapping contract test's static guard asserts on these computed
-// entries, not on any prose comment (PR-F Minor #1).
+// entries, not on any prose comment.
 
 const GRPC_STATUS_NAME = Object.fromEntries(
   Object.entries(grpc.status)
@@ -139,7 +131,7 @@ function grpcErrorPayload(err, fallbackMessage) {
   };
 }
 
-// ── Helper: Extract auth metadata ───────────────────────────────────────
+// Helper: Extract auth metadata
 function buildMetadata(headers) {
   const meta = new grpc.Metadata();
   const auth = headers['authorization'];
@@ -149,8 +141,8 @@ function buildMetadata(headers) {
   return meta;
 }
 
-// ── Helper: Convert Buffer fields to base64 ─────────────────────────────
-// B-04: protobuf bytes fields come back as Buffer objects from grpc-js.
+// Helper: Convert Buffer fields to base64
+// protobuf bytes fields come back as Buffer objects from grpc-js.
 // JSON.stringify renders them as {"type":"Buffer","data":[...]}.
 // This function recursively walks the object and converts Buffers to base64.
 function sanitizeBuffers(obj) {
@@ -164,7 +156,7 @@ function sanitizeBuffers(obj) {
   return result;
 }
 
-// ── Unary RPC Handler ───────────────────────────────────────────────────
+// Unary RPC Handler
 function unaryCall(serviceName, methodName, body, metadata) {
   return new Promise((resolve, reject) => {
     const client = clients[serviceName];
@@ -188,7 +180,7 @@ function unaryCall(serviceName, methodName, body, metadata) {
   });
 }
 
-// ── Server-Streaming RPC Handler ────────────────────────────────────────
+// Server-Streaming RPC Handler
 function streamCall(serviceName, methodName, body, metadata, res) {
   const client = clients[serviceName];
   if (!client) {
@@ -213,7 +205,7 @@ function streamCall(serviceName, methodName, body, metadata, res) {
 
   const stream = client[grpcMethod](body, metadata);
   let ended = false;
-  // PR-C2: the gRPC server is the single authoritative emitter of terminal
+  // The gRPC server is the single authoritative emitter of terminal
   // events. Track whether a terminal event (complete/error) was relayed and
   // only synthesize a fallback complete when gRPC ended without one.
   let completeSeen = false;
@@ -241,7 +233,7 @@ function streamCall(serviceName, methodName, body, metadata, res) {
     ended = true;
     const codeLabel = err.code != null ? err.code : 'N/A';
     console.error(`[proxy] Stream error (${serviceName}.${methodName}):`, err.message, `(code: ${codeLabel})`);
-    // PR-F: structured SSE error event with stable code semantics, then close.
+    // Structured SSE error event with stable code semantics, then close.
     const payload = grpcErrorPayload(err, 'Stream error');
     const errJson = JSON.stringify({
       event_type: 'error',
@@ -264,7 +256,7 @@ function streamCall(serviceName, methodName, body, metadata, res) {
   });
 }
 
-// ── HTTP Request Handler ────────────────────────────────────────────────
+// HTTP Request Handler
 function handleRequest(req, res) {
   // CORS preflight
   if (req.method === 'OPTIONS') {
@@ -362,7 +354,7 @@ function handleRequest(req, res) {
     } catch (err) {
       const codeLabel = err.code != null ? err.code : 'N/A';
       console.error(`[proxy] RPC error (${serviceName}.${methodName}):`, err.message, `(code: ${codeLabel})`);
-      // PR-F: map the five contract codes (plus ALREADY_EXISTS) to stable
+      // Map the five contract codes (plus ALREADY_EXISTS) to stable
       // HTTP statuses; everything else is a generic 500.
       const status = (typeof err.code === 'number' && GRPC_HTTP_STATUS[err.code]) || 500;
       const payload = grpcErrorPayload(err, 'RPC failed');
@@ -376,7 +368,7 @@ function handleRequest(req, res) {
   });
 }
 
-// ── Start Server ────────────────────────────────────────────────────────
+// Start Server
 initClients();
 
 const server = http.createServer(handleRequest);

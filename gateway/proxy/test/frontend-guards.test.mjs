@@ -1,9 +1,9 @@
 /**
- * PR-F: static guards for the frontend surface.
+ * Static guards for the frontend surface.
  *
  * Node-side contract tests that read the frontend sources and assert the
  * cleanup/role-gating invariants cannot silently regress:
- *  - AdminView keeps no Cron/Canary leftovers (backend deleted in PR-C3)
+ *  - AdminView keeps no Cron/Canary leftovers
  *  - Dashboard/Monitor stay wired to the real PG durability RPCs
  *  - admin entry points are gated on the login-provided role
  *  - AgentSandbox exposes all four intervention decisions (MODIFY with text)
@@ -21,7 +21,7 @@ function read(rel) {
   return fs.readFileSync(path.join(root, rel), 'utf8');
 }
 
-// ── 1. AdminView: no Cron/Canary leftovers ────────────────────────────────
+// 1. AdminView: no Cron/Canary leftovers
 
 test('AdminView has no Cron/Canary state, tabs or handlers', () => {
   const admin = fs.readFileSync(path.join(VIEWS, 'AdminView.vue'), 'utf8');
@@ -60,7 +60,7 @@ test('proto.ts no longer declares removed Cron/Canary interfaces', () => {
   assert.ok(!protoTs.includes('interface CanaryConfig'));
 });
 
-// ── 2. Dashboard/Monitor stay on real PG durability RPCs ─────────────────
+// 2. Dashboard/Monitor stay on real PG durability RPCs
 
 test('Dashboard reads real observability/registry RPCs and shows honest states', () => {
   const dashboard = fs.readFileSync(path.join(VIEWS, 'Dashboard.vue'), 'utf8');
@@ -82,7 +82,7 @@ test('Monitor reads real trace/metrics RPCs and shows honest states', () => {
   assert.match(monitor, /EmptyState/, 'empty state required when no trace data');
 });
 
-// ── 3. Role gating (login role → admin entry points) ─────────────────────
+// 3. Role gating (login role → admin entry points)
 
 test('auth store persists the login role and exposes isAdmin', () => {
   const auth = read('frontend/src/stores/auth.ts');
@@ -103,7 +103,7 @@ test('ChatView hides the Admin entry for non-admin roles', () => {
   assert.match(chat, /v-if="authStore\.isAdmin" to="\/admin"/);
 });
 
-test('SideNav admin nav item is gated behind isAdmin (MF-1)', () => {
+test('SideNav admin nav item is gated behind isAdmin', () => {
   const sidenav = read('frontend/src/components/layout/SideNav.vue');
   // navItems must be reactive on the role, not a static literal.
   assert.match(sidenav, /const navItems = computed\(/, 'navItems must be a computed');
@@ -121,7 +121,7 @@ test('SideNav admin nav item is gated behind isAdmin (MF-1)', () => {
   );
 });
 
-// ── 4. AgentSandbox: all four intervention decisions ─────────────────────
+// 4. AgentSandbox: all four intervention decisions
 
 test('AgentSandbox exposes PROCEED/MODIFY/SKIP/ABORT decisions', () => {
   const sandbox = fs.readFileSync(path.join(VIEWS, 'AgentSandbox.vue'), 'utf8');
@@ -134,7 +134,7 @@ test('AgentSandbox exposes PROCEED/MODIFY/SKIP/ABORT decisions', () => {
   assert.match(sandbox, /decision === 'MODIFY' && !modificationText\.value\.trim\(\)/);
 });
 
-// ── 5. ChatView: share entry point wired to shareSession ─────────────────
+// 5. ChatView: share entry point wired to shareSession
 
 test('ChatView provides a share entry calling shareSession', () => {
   const chat = fs.readFileSync(path.join(VIEWS, 'ChatView.vue'), 'utf8');

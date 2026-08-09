@@ -1,6 +1,6 @@
 /**
  * @file agent_auto_registrar.cpp
- * @brief AgentAutoRegistrar implementation — gRPC registration lifecycle (P0-2)
+ * @brief AgentAutoRegistrar implementation - gRPC registration lifecycle
  */
 
 #include "agent_rpc/client/agent_auto_registrar.h"
@@ -75,10 +75,6 @@ void AgentAutoRegistrar::stop() {
     stub_.reset();
     channel_.reset();
 }
-
-// ============================================================================
-// Private
-// ============================================================================
 
 bool AgentAutoRegistrar::sendRegister() {
     agent_communication::RegisterAgentRequest request;

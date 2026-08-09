@@ -10,10 +10,10 @@
 using json = nlohmann::json;
 
 /**
- * @brief 通用 LLM API 客户端（OpenAI 兼容接口）
+ * @brief Generic LLM API client (OpenAI-compatible interface)
  *
- * 支持所有兼容 OpenAI API 格式的服务。
- * 通过 Bearer Token 认证，使用 /v1/chat/completions 端点。
+ * Supports any service compatible with the OpenAI API format.
+ * Authenticates via Bearer token and uses the /v1/chat/completions endpoint.
  */
 class LLMClient {
 public:
@@ -34,14 +34,14 @@ public:
     }
 
     /**
-     * @brief 调用 LLM API（OpenAI 兼容格式）
-     * @param system_prompt 系统提示词
-     * @param user_message 用户消息
-     * @return AI 回复
+     * @brief Call the LLM API (OpenAI-compatible format)
+     * @param system_prompt System prompt
+     * @param user_message User message
+     * @return AI reply
      */
     std::string chat(const std::string& system_prompt,
                     const std::string& user_message) {
-        // 构造 OpenAI 兼容请求 JSON
+        // Build the OpenAI-compatible request JSON
         json messages = json::array();
 
         if (!system_prompt.empty()) {
@@ -63,21 +63,21 @@ public:
 
         std::string request_str = request_body.dump();
 
-        // 发送 HTTP 请求
+        // Send the HTTP request
         std::string response = send_post_request(request_str);
 
-        // 解析响应
+        // Parse the response
         try {
             json response_json = json::parse(response);
 
-            // 检查错误（OpenAI 格式）
+            // Check for errors (OpenAI format)
             if (response_json.contains("error")) {
                 std::string error_msg = "API Error: " +
                     response_json["error"].value("message", "Unknown error");
                 throw std::runtime_error(error_msg);
             }
 
-            // 提取回复内容（OpenAI 格式）
+            // Extract the reply content (OpenAI format)
             if (response_json.contains("choices") &&
                 response_json["choices"].is_array() &&
                 !response_json["choices"].empty()) {
@@ -96,10 +96,10 @@ public:
         }
     }
 
-    /// 获取当前模型名称
+    /// Returns the current model name
     const std::string& model() const { return model_; }
 
-    /// 设置模型名称
+    /// Sets the model name
     void setModel(const std::string& model) { model_ = model; }
 
 private:
@@ -116,13 +116,13 @@ private:
 
         std::string response_data;
 
-        // 设置请求头
+        // Set request headers
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, "Content-Type: application/json");
         std::string auth_header = "Authorization: Bearer " + api_key_;
         headers = curl_slist_append(headers, auth_header.c_str());
 
-        // 配置 CURL
+        // Configure CURL
         curl_easy_setopt(curl, CURLOPT_URL, api_url_.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
@@ -131,10 +131,10 @@ private:
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
 
-        // 执行请求
+        // Perform the request
         CURLcode res = curl_easy_perform(curl);
 
-        // 清理
+        // Cleanup
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 

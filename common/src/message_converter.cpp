@@ -5,8 +5,6 @@
 namespace agent_rpc {
 namespace common {
 
-// MessageConverter 实现
-
 agent_communication::common::ServiceInfo MessageConverter::toProtobuf(const ServiceEndpoint& endpoint) {
     agent_communication::common::ServiceInfo service_info;
     service_info.set_service_name(endpoint.service_name);
@@ -14,10 +12,9 @@ agent_communication::common::ServiceInfo MessageConverter::toProtobuf(const Serv
     service_info.set_host(endpoint.host);
     service_info.set_port(endpoint.port);
     
-    // 添加标签
+    // Parse the comma-separated "tags" metadata entry into tag list
     for (const auto& tag : endpoint.metadata) {
         if (tag.first == "tags") {
-            // 如果metadata中有tags字段，解析为标签列表
             std::stringstream ss(tag.second);
             std::string tag_item;
             while (std::getline(ss, tag_item, ',')) {
@@ -26,7 +23,6 @@ agent_communication::common::ServiceInfo MessageConverter::toProtobuf(const Serv
         }
     }
     
-    // 添加元数据
     for (const auto& pair : endpoint.metadata) {
         if (pair.first != "tags") {
             (*service_info.mutable_metadata())[pair.first] = pair.second;
@@ -42,10 +38,10 @@ ServiceEndpoint MessageConverter::fromProtobuf(const agent_communication::common
     endpoint.version = service_info.version();
     endpoint.host = service_info.host();
     endpoint.port = service_info.port();
-    endpoint.is_healthy = true; // 默认健康
+    endpoint.is_healthy = true;
     endpoint.last_heartbeat = std::chrono::steady_clock::now();
     
-    // 添加标签到元数据
+    // Serialize tags back into the "tags" metadata entry
     if (service_info.tags_size() > 0) {
         std::string tags_str;
         for (int i = 0; i < service_info.tags_size(); ++i) {
@@ -55,7 +51,6 @@ ServiceEndpoint MessageConverter::fromProtobuf(const agent_communication::common
         endpoint.metadata["tags"] = tags_str;
     }
     
-    // 添加元数据
     for (const auto& pair : service_info.metadata()) {
         endpoint.metadata[pair.first] = pair.second;
     }
@@ -273,8 +268,6 @@ std::string MessageConverter::getStatusMessage(const agent_communication::common
     return status.message();
 }
 
-// MessageBuilder 实现
-
 agent_communication::Message MessageBuilder::buildMessage(
     const std::string& content,
     const std::string& id,
@@ -289,12 +282,10 @@ agent_communication::Message MessageBuilder::buildMessage(
     message.set_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     
-    // 添加头部
     for (const auto& pair : headers) {
         (*message.mutable_headers())[pair.first] = pair.second;
     }
     
-    // 添加负载
     if (!payload.empty()) {
         message.set_payload(payload);
     }
@@ -315,12 +306,10 @@ agent_communication::common::ServiceInfo MessageBuilder::buildServiceInfo(
     service_info.set_host(host);
     service_info.set_port(port);
     
-    // 添加标签
     for (const auto& tag : tags) {
         service_info.add_tags(tag);
     }
     
-    // 添加元数据
     for (const auto& pair : metadata) {
         (*service_info.mutable_metadata())[pair.first] = pair.second;
     }
@@ -359,15 +348,12 @@ agent_communication::common::LogEntry MessageBuilder::buildLogEntry(
     entry.set_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     
-    // 添加字段
     for (const auto& pair : fields) {
         (*entry.mutable_fields())[pair.first] = pair.second;
     }
     
     return entry;
 }
-
-// MessageValidator 实现
 
 bool MessageValidator::validateMessage(const agent_communication::Message& message) {
     return !message.id().empty() && !message.content().empty();
@@ -380,7 +366,7 @@ bool MessageValidator::validateServiceInfo(const agent_communication::common::Se
 }
 
 bool MessageValidator::validateStatus(const agent_communication::common::Status& status) {
-    return true; // 状态总是有效的
+    return true;
 }
 
 bool MessageValidator::validateSendMessageRequest(const agent_communication::SendMessageRequest& request) {

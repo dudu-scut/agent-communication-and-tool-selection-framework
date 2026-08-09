@@ -142,7 +142,7 @@ grpc::Status SharingServiceImpl::ShareSession(
         return grpc::Status(grpc::StatusCode::INTERNAL,
                             "Sharing persistence is not configured");
     }
-    // PR-D supports read-only sharing exclusively.
+    // Only read-only sharing is supported.
     if (request->mode() != "view") {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "Only read-only 'view' sharing is supported");

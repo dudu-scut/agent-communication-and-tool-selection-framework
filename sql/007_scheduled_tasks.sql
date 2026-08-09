@@ -1,4 +1,4 @@
--- Batch 6: Cron Scheduler + Webhook
+-- Cron Scheduler + Webhook
 -- Run: psql -U <user> -d <dbname> -f sql/007_scheduled_tasks.sql
 
 CREATE TABLE IF NOT EXISTS scheduled_tasks (

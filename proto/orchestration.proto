@@ -4,10 +4,7 @@ package agent_communication;
 
 import "common.proto";
 
-// ============================================================================
-// U4: DAG Composition — Orchestration Plan & Execution
-// Batch 4: Unified Memory + Activity Feed + DAG Composition
-// ============================================================================
+// DAG Composition — Orchestration Plan & Execution
 
 // A single node in a DAG execution plan
 message DAGNode {
@@ -35,9 +32,7 @@ message ExecutePlanResponse {
     string trace_id = 2;
 }
 
-// ============================================================================
-// Batch 5: Query Replay — ReplayQuery RPC
-// ============================================================================
+// Query Replay — ReplayQuery RPC
 
 message ReplayQueryRequest {
     string trace_id = 1;
@@ -48,16 +43,14 @@ message ReplayQueryResponse {
     common.Status status = 1;
     string original = 2;
     string replayed = 3;
-    // PR-D: exact replay persists a NEW trace (the original is never
+    // Exact replay persists a NEW trace (the original is never
     // overwritten). These fields identify the new records; empty in
     // route mode, which performs no execution at all.
     string new_trace_id = 4;
     string new_request_id = 5;
 }
 
-// ============================================================================
-// Batch 6: Export Conversation
-// ============================================================================
+// Export Conversation
 
 message ExportConversationRequest {
     string context_id = 1;
@@ -70,17 +63,15 @@ message ExportConversationResponse {
     string mime_type = 3;
 }
 
-// ============================================================================
 // Orchestration Service
-// ============================================================================
 
 service OrchestrationService {
     // Execute a user-approved (or user-modified) DAG plan
     rpc ExecutePlan(ExecutePlanRequest) returns (ExecutePlanResponse);
 
-    // Batch 5: Replay a previous query (exact or route-only)
+    // Replay a previous query (exact or route-only)
     rpc ReplayQuery(ReplayQueryRequest) returns (ReplayQueryResponse);
 
-    // Batch 6: Export conversation as Markdown or HTML
+    // Export conversation as Markdown or HTML
     rpc ExportConversation(ExportConversationRequest) returns (ExportConversationResponse);
 }

@@ -13,15 +13,15 @@ import type { AgentMetrics, ServiceInfo } from '../types/proto'
 
 use([CanvasRenderer, GraphChart, TooltipComponent, LegendComponent])
 
-// --- Chat Store ---
+// Chat Store
 const chatStore = useChatStore()
 
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-// --- Toast ---
+// Toast
 const toast = inject<any>('toast')
 
-// --- Types ---
+// Types
 interface AgentNode {
   id: string
   name: string
@@ -41,12 +41,10 @@ interface Connection {
   status: 'active' | 'idle'
 }
 
-// --- State ---
-// TODO: 考虑复用 stores/agents.ts 的 useAgentsStore 获取 Agent 列表。
-// 当前 AgentTopology 维护独立的 agents ref + 30s 轮询定时器，与 agentsStore 的 15s 轮询并行。
-// 由于此页面使用不同的数据模型（AgentNode 含拓扑类型/连接推断）和自定义 ECharts 渲染，
-// 重构需要 >50 行改动，暂不处理。未来可让 agentsStore 提供原始 ServiceInfo + metrics，
-// 再由本页面做拓扑转换，避免重复 API 调用。
+// State
+// TODO: reuse stores/agents.ts instead of the local agents ref + 30s polling;
+// deferred because this page uses a different data model (topology/connections)
+// and custom ECharts rendering (refactor > 50 lines).
 const loading = ref(true)
 const agents = ref<AgentNode[]>([])
 const connections = ref<Connection[]>([])
@@ -55,11 +53,11 @@ const searchQuery = ref('')
 const isFallback = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-// --- Active Agent State (real-time topology) ---
+// Active Agent State (real-time topology)
 const activeAgents = ref<Set<string>>(new Set())
 const activeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-// --- Computed ---
+// Computed
 const filteredAgents = computed(() => {
   if (!searchQuery.value) return agents.value
   const q = searchQuery.value.toLowerCase()
@@ -238,7 +236,7 @@ const chartOption = computed(() => {
   }
 })
 
-// --- Watch activityEntries for real-time topology ---
+// Watch activityEntries for real-time topology
 watch(() => chatStore.activityEntries.length, (newLen, oldLen) => {
   if (!oldLen || newLen <= oldLen) return
   const newEntries = chatStore.activityEntries.slice(oldLen)
@@ -272,7 +270,7 @@ function markAgentActive(name: string) {
   }, 30000))
 }
 
-// --- Methods ---
+// Methods
 function onChartClick(params: any) {
   if (params.dataType === 'node') {
     const agent = agents.value.find(a => a.id === params.data.id)
@@ -282,7 +280,7 @@ function onChartClick(params: any) {
   }
 }
 
-// --- Helper functions ---
+// Helper functions
 function inferAgentType(agent: ServiceInfo): 'orchestrator' | 'worker' {
   if (agent.agent_card) {
     try {
@@ -335,7 +333,7 @@ function useFallbackData() {
   isFallback.value = true
 }
 
-// --- Data loading ---
+// Data loading
 async function loadData() {
   loading.value = true
   try {
@@ -391,7 +389,7 @@ async function refreshData() {
   await loadData()
 }
 
-// --- Lifecycle ---
+// Lifecycle
 onMounted(() => {
   loadData()
   // Auto-refresh every 30 seconds

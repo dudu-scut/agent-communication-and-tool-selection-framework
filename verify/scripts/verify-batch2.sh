@@ -1,11 +1,9 @@
 #!/bin/bash
-# ============================================================================
-# Batch 2 Verification: Resilience
+# Verification: Resilience
 #  2.1 — Circuit breaker passes healthy agent
 #  2.2 — Circuit breaker triggers fallback after failures
 #  2.3 — User feedback loop
 #  2.4 — Agent metrics query
-# ============================================================================
 
 source "$(dirname "$0")/helpers.sh"
 
@@ -15,7 +13,7 @@ register_mock_agent "mock-general" "general" "1.0" "STABLE"
 register_mock_agent "mock-unstable" "general" "1.0" "STABLE"
 sleep 1
 
-# ----- 2.1: Normal circuit breaker pass -------------------------------------
+# 2.1: Normal circuit breaker pass
 scenario "2.1 — Circuit Breaker Passes Healthy Agent"
 
 step "Send query via gRPC server"
@@ -24,7 +22,7 @@ RESPONSE=$(query_grpc "hello" "verify-user-2-1" "verify-ctx-2-1")
 verify "Query response received (no gRPC error)" \
     assert_not_contains "$RESPONSE" "error"
 
-# ----- 2.2: Circuit breaker triggers fallback --------------------------------
+# 2.2: Circuit breaker triggers fallback
 scenario "2.2 — Circuit Breaker Triggers Fallback"
 
 reset_mock_agent
@@ -46,7 +44,7 @@ verify_warn "Response indicates fallback or circuit open (requires server-integr
 
 reset_mock_agent
 
-# ----- 2.3: User feedback loop ----------------------------------------------
+# 2.3: User feedback loop
 scenario "2.3 — User Feedback Loop"
 
 step "Submit positive feedback via AgentLifecycleService"
@@ -61,7 +59,7 @@ verify "Feedback stored in PG" \
 verify_warn "Feedback aggregated to Redis (RedisClient may not be wired in test env)" \
     assert_redis_key_exists "feedback:mock-general:general"
 
-# ----- 2.4: Agent metrics query ---------------------------------------------
+# 2.4: Agent metrics query
 scenario "2.4 — Agent Metrics Query"
 
 step "Query GetAgentMetrics RPC (with auth)"
@@ -70,6 +68,6 @@ METRICS=$(get_metrics_grpc "mock-general" 2>&1 || echo "")
 verify "Metrics contain metrics field" \
     assert_contains "$METRICS" "metrics"
 
-# ----- Report ----------------------------------------------------------------
+# Report
 print_batch_report "Batch 2 — Resilience"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

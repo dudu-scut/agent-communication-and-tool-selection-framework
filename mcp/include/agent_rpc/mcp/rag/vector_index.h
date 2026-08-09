@@ -1,9 +1,6 @@
 /**
  * @file vector_index.h
- * @brief 内存向量索引，支持快速相似度搜索
- * 
- * Requirements: 1.3, 1.4, 3.1, 3.2, 3.3, 3.4
- * Task 5: 实现 VectorIndex
+ * @brief In-memory vector index with fast similarity search
  */
 
 #pragma once
@@ -19,94 +16,90 @@ namespace mcp {
 namespace rag {
 
 /**
- * @brief 索引中的工具记录
+ * @brief Tool record stored in the index
  */
 struct IndexedTool {
-    std::string name;                 ///< 工具名称
-    std::string description;          ///< 工具描述
-    std::string input_schema;         ///< 输入参数 JSON Schema
-    std::vector<float> embedding;     ///< 向量表示
-    int64_t created_at = 0;           ///< 创建时间戳
-    int64_t updated_at = 0;           ///< 更新时间戳
+    std::string name;                 ///< Tool name
+    std::string description;          ///< Tool description
+    std::string input_schema;         ///< Input parameter JSON Schema
+    std::vector<float> embedding;     ///< Embedding vector
+    int64_t created_at = 0;           ///< Creation timestamp
+    int64_t updated_at = 0;           ///< Update timestamp
 };
 
 /**
- * @brief 搜索结果
+ * @brief Search result
  */
 struct SearchResult {
-    IndexedTool tool;                 ///< 工具信息
-    float similarity;                 ///< 相似度分数 [0, 1]
+    IndexedTool tool;                 ///< Tool info
+    float similarity;                 ///< Similarity score [0, 1]
 };
 
 /**
- * @brief 向量索引类
+ * @brief Vector index class
  * 
- * 内存向量索引，支持：
- * - 工具的增删改查
- * - 基于余弦相似度的 Top-K 搜索
- * - 持久化到 JSON 文件
- * - 线程安全
+ * In-memory vector index supporting:
+ * - CRUD for tools
+ * - Top-K search based on cosine similarity
+ * - Persistence to JSON files
+ * - Thread safety
  */
 class VectorIndex {
 public:
     VectorIndex() = default;
     ~VectorIndex() = default;
     
-    // 禁止拷贝
+    // Disable copy
     VectorIndex(const VectorIndex&) = delete;
     VectorIndex& operator=(const VectorIndex&) = delete;
     
-    // ========================================================================
-    // 工具管理
-    // ========================================================================
+    // Tool management
     
     /**
-     * @brief 添加工具到索引
-     * @param tool 工具信息（必须包含 embedding）
+     * @brief Add a tool to the index
+     * @param tool Tool info (must include the embedding)
      */
     void addTool(const IndexedTool& tool);
     
     /**
-     * @brief 从索引移除工具
-     * @param tool_name 工具名称
-     * @return 如果工具存在并被移除返回 true
+     * @brief Remove a tool from the index
+     * @param tool_name Tool name
+     * @return true if the tool existed and was removed
      */
     bool removeTool(const std::string& tool_name);
     
     /**
-     * @brief 更新工具信息
-     * @param tool 新的工具信息
-     * @return 如果工具存在并被更新返回 true
+     * @brief Update tool info
+     * @param tool New tool info
+     * @return true if the tool existed and was updated
      */
     bool updateTool(const IndexedTool& tool);
     
     /**
-     * @brief 获取工具信息
-     * @param tool_name 工具名称
-     * @return 工具信息，如果不存在返回 nullptr
+     * @brief Get tool info
+     * @param tool_name Tool name
+     * @return Tool info, or nullptr if it does not exist
      */
     const IndexedTool* getTool(const std::string& tool_name) const;
     
     /**
-     * @brief 检查工具是否存在
+     * @brief Check whether a tool exists
      */
     bool hasTool(const std::string& tool_name) const;
     
     /**
-     * @brief 获取所有工具
+     * @brief Get all tools
      */
     std::vector<IndexedTool> getAllTools() const;
     
-    // ========================================================================
-    // 搜索
-    // ========================================================================
+    // Search
     
     /**
-     * @brief 搜索最相似的 K 个工具
-     * @param query_embedding 查询向量
-     * @param top_k 返回数量
-     * @param threshold 相似度阈值 (0-1)，低于此值的结果会被过滤
-     * @return 搜索结果，按相似度降序排列
+     * @brief Search the top-K most similar tools
+     * @param query_embedding Query embedding
+     * @param top_k Number of results to return
+     * @param threshold Similarity threshold (0-1); results below it are filtered out
+     * @return Search results sorted by similarity in descending order
      */
     std::vector<SearchResult> search(
         const std::vector<float>& query_embedding,
@@ -114,51 +107,47 @@ public:
         float threshold = 0.0f) const;
     
     /**
-     * @brief 计算余弦相似度
+     * @brief Compute cosine similarity
      */
     static float cosineSimilarity(
         const std::vector<float>& a,
         const std::vector<float>& b);
     
-    // ========================================================================
-    // 持久化
-    // ========================================================================
+    // Persistence
     
     /**
-     * @brief 保存索引到 JSON 文件
-     * @param path 文件路径
-     * @return 如果保存成功返回 true
+     * @brief Save the index to a JSON file
+     * @param path File path
+     * @return true if the save succeeded
      */
     bool saveToFile(const std::string& path) const;
     
     /**
-     * @brief 从 JSON 文件加载索引
-     * @param path 文件路径
-     * @return 如果加载成功返回 true
+     * @brief Load the index from a JSON file
+     * @param path File path
+     * @return true if the load succeeded
      */
     bool loadFromFile(const std::string& path);
     
-    // ========================================================================
-    // 状态
-    // ========================================================================
+    // State
     
     /**
-     * @brief 获取索引大小
+     * @brief Get the index size
      */
     size_t size() const;
     
     /**
-     * @brief 清空索引
+     * @brief Clear the index
      */
     void clear();
     
     /**
-     * @brief 获取索引版本
+     * @brief Get the index version
      */
     std::string getVersion() const { return version_; }
     
     /**
-     * @brief 设置索引版本
+     * @brief Set the index version
      */
     void setVersion(const std::string& version) { version_ = version; }
 

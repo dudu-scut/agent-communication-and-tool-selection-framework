@@ -1,10 +1,6 @@
 /**
  * @file mcp_agent_integration.h
- * @brief MCP Agent Integration - 简化 AI Agent 与 MCP 的集成
- * 
- * Requirements: 12.1, 12.2, 12.3
- * Task 19.1: 创建 MCPAgentIntegration 辅助类
- * Task 10: 集成 RAG-MCP
+ * @brief MCP Agent Integration - simplifies integrating AI agents with MCP
  */
 
 #pragma once
@@ -21,7 +17,7 @@
 #include <atomic>
 #include <mutex>
 
-// 前向声明
+// Forward declarations
 namespace agent_rpc {
 namespace mcp {
 namespace rag {
@@ -36,291 +32,272 @@ namespace agent_rpc {
 namespace mcp {
 
 /**
- * @brief RAG-MCP 配置
- * Task 10.1: 扩展 MCPAgentConfig 添加 RAG 配置
+ * @brief RAG-MCP configuration
  */
 struct RAGConfig {
-    bool enabled = false;                  ///< 是否启用 RAG-MCP
-    std::string api_key;                   ///< API Key（可从环境变量 LLM_API_KEY 读取）
+    bool enabled = false;                  ///< Whether RAG-MCP is enabled
+    std::string api_key;                   ///< API key (read from LLM_API_KEY env var if empty)
     std::string model = agent_rpc::common::envOrDefault("EMBEDDING_MODEL", agent_rpc::common::envOrDefault("LLM_MODEL", "deepseek-v4-pro"));
     int top_k = agent_rpc::common::envOrInt("RAG_TOP_K", 5);
     float similarity_threshold = agent_rpc::common::envOrFloat("RAG_THRESHOLD", 0.3f);
-    std::string index_path;                ///< 索引文件路径
-    bool enable_cache = true;              ///< 是否启用缓存
-    size_t cache_max_size = 1000;          ///< 缓存最大条目
-    int cache_ttl_seconds = 3600;          ///< 缓存过期时间
+    std::string index_path;                ///< Index file path
+    bool enable_cache = true;              ///< Whether caching is enabled
+    size_t cache_max_size = 1000;          ///< Maximum cache entries
+    int cache_ttl_seconds = 3600;          ///< Cache TTL in seconds
 };
 
 /**
- * @brief MCP Agent 集成配置
+ * @brief MCP agent integration configuration
  */
 struct MCPAgentConfig {
-    std::string mcp_server_path;           ///< MCP Server 可执行文件路径
-    std::vector<std::string> mcp_args;     ///< MCP Server 启动参数
-    bool enable_mcp = false;               ///< 是否启用 MCP
-    int connection_timeout_ms = 5000;      ///< 连接超时 (毫秒)
-    int tool_call_timeout_ms = 30000;      ///< 工具调用超时 (毫秒)
-    int max_retry_count = 3;               ///< 最大重试次数
-    int retry_delay_ms = 1000;             ///< 重试延迟 (毫秒)
+    std::string mcp_server_path;           ///< MCP server executable path
+    std::vector<std::string> mcp_args;     ///< MCP server startup arguments
+    bool enable_mcp = false;               ///< Whether MCP is enabled
+    int connection_timeout_ms = 5000;      ///< Connection timeout (ms)
+    int tool_call_timeout_ms = 30000;      ///< Tool call timeout (ms)
+    int max_retry_count = 3;               ///< Maximum retry count
+    int retry_delay_ms = 1000;             ///< Retry delay (ms)
     
-    // RAG-MCP 配置
-    RAGConfig rag_config;                  ///< RAG-MCP 配置
+    // RAG-MCP configuration
+    RAGConfig rag_config;                  ///< RAG-MCP configuration
 };
 
 /**
- * @brief 工具调用结果
+ * @brief Tool call result
  */
 struct ToolCallResult {
-    bool success = false;                  ///< 是否成功
-    std::string result;                    ///< 成功时的结果
-    std::string error;                     ///< 失败时的错误信息
-    int64_t duration_ms = 0;               ///< 调用耗时 (毫秒)
+    bool success = false;                  ///< Whether the call succeeded
+    std::string result;                    ///< Result on success
+    std::string error;                     ///< Error message on failure
+    int64_t duration_ms = 0;               ///< Call duration (ms)
 };
 
 /**
- * @brief 工具信息
+ * @brief Tool information
  */
 struct ToolInfo {
-    std::string name;                      ///< 工具名称
-    std::string description;               ///< 工具描述
-    std::string input_schema;              ///< 输入参数 JSON Schema
+    std::string name;                      ///< Tool name
+    std::string description;               ///< Tool description
+    std::string input_schema;              ///< Input parameters JSON Schema
 };
 
 /**
- * @brief MCP Agent 集成辅助类
- * 
- * 封装 MCPClient 和 MCPToolManager，提供简化的 AI Agent 集成接口。
- * 支持：
- * - 自动连接和断开 MCP Server
- * - 工具发现和调用
- * - 错误处理和降级
- * - 异步工具调用
+ * @brief MCP agent integration helper class
+ *
+ * Wraps MCPClient and MCPToolManager to provide a simplified AI agent
+ * integration interface. Supports:
+ * - Automatic connect/disconnect of the MCP server
+ * - Tool discovery and invocation
+ * - Error handling and graceful degradation
+ * - Asynchronous tool invocation
  */
 class MCPAgentIntegration {
 public:
     MCPAgentIntegration();
     ~MCPAgentIntegration();
     
-    // 禁止拷贝
+    // Disable copy
     MCPAgentIntegration(const MCPAgentIntegration&) = delete;
     MCPAgentIntegration& operator=(const MCPAgentIntegration&) = delete;
     
-    // ========================================================================
-    // 生命周期管理
-    // ========================================================================
-    
     /**
-     * @brief 初始化 MCP 集成
-     * @param config MCP 配置
-     * @return true 如果初始化成功或 MCP 未启用
-     * 
-     * 如果 config.enable_mcp 为 false，则直接返回 true 但不连接 MCP Server。
-     * 如果连接失败，会记录错误日志但仍返回 true（降级模式）。
+     * @brief Initialize MCP integration
+     * @param config MCP configuration
+     * @return true if initialization succeeded or MCP is disabled
+     *
+     * If config.enable_mcp is false, returns true without connecting to the
+     * MCP server. If connecting fails, logs an error but still returns true
+     * (degraded mode).
      */
     bool initialize(const MCPAgentConfig& config);
     
     /**
-     * @brief 关闭 MCP 集成
-     * 
-     * 断开与 MCP Server 的连接，释放资源。
+     * @brief Shut down MCP integration
+     *
+     * Disconnects from the MCP server and releases resources.
      */
     void shutdown();
     
     /**
-     * @brief 检查 MCP 是否已初始化
+     * @brief Check whether MCP is initialized
      */
     bool isInitialized() const { return initialized_; }
     
     /**
-     * @brief 检查 MCP 是否可用（已连接且工具管理器就绪）
+     * @brief Check whether MCP is available (connected and tool manager ready)
      */
     bool isAvailable() const;
     
-    // ========================================================================
-    // 工具管理
-    // ========================================================================
-    
     /**
-     * @brief 获取可用工具列表
-     * @return 工具信息列表
+     * @brief Get the list of available tools
+     * @return List of tool information
      */
     std::vector<ToolInfo> getAvailableTools() const;
     
     /**
-     * @brief 获取可用工具名称列表
-     * @return 工具名称列表
+     * @brief Get the list of available tool names
+     * @return List of tool names
      */
     std::vector<std::string> getToolNames() const;
     
     /**
-     * @brief 检查工具是否可用
-     * @param tool_name 工具名称
-     * @return true 如果工具可用
+     * @brief Check whether a tool is available
+     * @param tool_name Tool name
+     * @return true if the tool is available
      */
     bool hasToolAvailable(const std::string& tool_name) const;
     
     /**
-     * @brief 获取工具描述
-     * @param tool_name 工具名称
-     * @return 工具描述，如果工具不存在返回空字符串
+     * @brief Get a tool description
+     * @param tool_name Tool name
+     * @return Tool description, or an empty string if the tool does not exist
      */
     std::string getToolDescription(const std::string& tool_name) const;
     
     /**
-     * @brief 获取工具输入 Schema
-     * @param tool_name 工具名称
-     * @return JSON Schema 字符串，如果工具不存在返回空字符串
+     * @brief Get a tool input schema
+     * @param tool_name Tool name
+     * @return JSON Schema string, or an empty string if the tool does not exist
      */
     std::string getToolInputSchema(const std::string& tool_name) const;
     
-    // ========================================================================
-    // 工具调用
-    // ========================================================================
-    
     /**
-     * @brief 同步调用 MCP 工具
-     * @param tool_name 工具名称
-     * @param arguments JSON 格式的参数
-     * @return 工具调用结果
-     * 
-     * 如果 MCP 不可用，返回失败结果但不抛出异常。
+     * @brief Invoke an MCP tool synchronously
+     * @param tool_name Tool name
+     * @param arguments JSON-formatted arguments
+     * @return Tool call result
+     *
+     * Returns a failed result without throwing if MCP is unavailable.
      */
     ToolCallResult callTool(const std::string& tool_name, 
                             const std::string& arguments);
     
     /**
-     * @brief 异步调用 MCP 工具
-     * @param tool_name 工具名称
-     * @param arguments JSON 格式的参数
-     * @param callback 完成回调
-     * 
-     * 回调在工具调用完成后被调用，可能在不同线程中执行。
+     * @brief Invoke an MCP tool asynchronously
+     * @param tool_name Tool name
+     * @param arguments JSON-formatted arguments
+     * @param callback Completion callback
+     *
+     * The callback is invoked after the tool call completes, possibly on a
+     * different thread.
      */
     void callToolAsync(const std::string& tool_name,
                        const std::string& arguments,
                        std::function<void(const ToolCallResult&)> callback);
     
     /**
-     * @brief 简化的工具调用（返回结果字符串）
-     * @param tool_name 工具名称
-     * @param arguments JSON 格式的参数
-     * @return 成功时返回结果，失败时返回错误信息（带 [ERROR] 前缀）
+     * @brief Simplified tool invocation (returns the result string)
+     * @param tool_name Tool name
+     * @param arguments JSON-formatted arguments
+     * @return Result on success, or an error message prefixed with [ERROR]
      */
     std::string callToolSimple(const std::string& tool_name,
                                const std::string& arguments);
     
-    // ========================================================================
-    // 配置和状态
-    // ========================================================================
-    
     /**
-     * @brief 获取当前配置
+     * @brief Get the current configuration
      */
     const MCPAgentConfig& getConfig() const { return config_; }
     
     /**
-     * @brief 获取 MCP Server 路径
+     * @brief Get the MCP server path
      */
     const std::string& getMCPServerPath() const { return config_.mcp_server_path; }
     
     /**
-     * @brief 获取连接状态描述
+     * @brief Get the connection status description
      */
     std::string getStatusDescription() const;
     
     /**
-     * @brief 刷新工具列表
-     * @return true 如果刷新成功
+     * @brief Refresh the tool list
+     * @return true if the refresh succeeded
      */
     bool refreshTools();
     
-    // ========================================================================
-    // RAG-MCP 功能 (Task 10)
-    // ========================================================================
-    
     /**
-     * @brief 检查 RAG-MCP 是否启用
+     * @brief Check whether RAG-MCP is enabled
      */
     bool isRAGEnabled() const;
     
     /**
-     * @brief 根据查询检索相关工具
-     * @param query 用户查询
-     * @return 相关工具列表（按相关性排序）
-     * 
-     * 如果 RAG 未启用，返回所有工具。
+     * @brief Retrieve relevant tools for a query
+     * @param query User query
+     * @return Relevant tool list (sorted by relevance)
+     *
+     * Returns all tools if RAG is not enabled.
      */
     std::vector<ToolInfo> getRelevantTools(const std::string& query) const;
     
     /**
-     * @brief 根据查询检索相关工具（自定义 top_k）
+     * @brief Retrieve relevant tools for a query (custom top_k)
      */
     std::vector<ToolInfo> getRelevantTools(const std::string& query, int top_k) const;
     
     /**
-     * @brief 获取工具的 LLM 函数调用格式
-     * @param tools 工具列表
-     * @return JSON 格式的函数定义
+     * @brief Get tools in LLM function-calling format
+     * @param tools Tool list
+     * @return JSON-formatted function definitions
      */
     static std::string toFunctionCallingFormat(const std::vector<ToolInfo>& tools);
     
     /**
-     * @brief 获取相关工具的 LLM 函数调用格式
-     * @param query 用户查询
-     * @return JSON 格式的函数定义
+     * @brief Get relevant tools in LLM function-calling format
+     * @param query User query
+     * @return JSON-formatted function definitions
      */
     std::string getRelevantToolsAsJson(const std::string& query) const;
 
 private:
-    // 内部方法
+    // Internal methods
     bool connectToMCPServer();
     void disconnectFromMCPServer();
     void updateToolCache();
     bool initializeRAG();
     void shutdownRAG();
     
-    // 成员变量
+    // Member variables
     MCPAgentConfig config_;
     std::shared_ptr<MCPClient> mcp_client_;
     std::shared_ptr<MCPToolManager> tool_manager_;
     
-    // 工具缓存
+    // Tool cache
     std::vector<ToolInfo> tool_cache_;
     mutable std::mutex tool_cache_mutex_;
-    std::shared_ptr<std::atomic<bool>> alive_flag_;  // 防止异步调用 use-after-free
+    std::shared_ptr<std::atomic<bool>> alive_flag_;  // Prevents use-after-free in async calls
     
     // RAG-MCP
     std::unique_ptr<rag::ToolRetriever> tool_retriever_;
     
-    // 状态
+    // State
     std::atomic<bool> initialized_{false};
     std::atomic<bool> connected_{false};
     std::atomic<bool> rag_initialized_{false};
 };
 
 /**
- * @brief 从命令行参数解析 MCP 配置
- * @param argc 参数数量
- * @param argv 参数数组
- * @return MCP 配置
- * 
- * 支持的参数：
- * --mcp-server <path>    MCP Server 可执行文件路径
- * --mcp-args <args>      MCP Server 启动参数（逗号分隔）
- * --enable-mcp           启用 MCP
- * --mcp-timeout <ms>     工具调用超时（毫秒）
+ * @brief Parse MCP configuration from command-line arguments
+ * @param argc Argument count
+ * @param argv Argument array
+ * @return MCP configuration
+ *
+ * Supported arguments:
+ * --mcp-server <path>    MCP server executable path
+ * --mcp-args <args>      MCP server startup arguments (comma-separated)
+ * --enable-mcp           Enable MCP
+ * --mcp-timeout <ms>     Tool call timeout (ms)
  */
 MCPAgentConfig parseMCPConfigFromArgs(int argc, char* argv[]);
 
 /**
- * @brief 从环境变量解析 MCP 配置
- * @return MCP 配置
- * 
- * 支持的环境变量：
- * MCP_SERVER_PATH        MCP Server 可执行文件路径
- * MCP_SERVER_ARGS        MCP Server 启动参数（逗号分隔）
- * MCP_ENABLED            是否启用 MCP (true/false)
- * MCP_TIMEOUT_MS         工具调用超时（毫秒）
+ * @brief Parse MCP configuration from environment variables
+ * @return MCP configuration
+ *
+ * Supported environment variables:
+ * MCP_SERVER_PATH        MCP server executable path
+ * MCP_SERVER_ARGS        MCP server startup arguments (comma-separated)
+ * MCP_ENABLED             Whether MCP is enabled (true/false)
+ * MCP_TIMEOUT_MS         Tool call timeout (ms)
  */
 MCPAgentConfig parseMCPConfigFromEnv();
 

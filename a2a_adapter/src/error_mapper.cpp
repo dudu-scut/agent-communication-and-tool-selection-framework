@@ -2,8 +2,6 @@
  * @file error_mapper.cpp
  * @brief Implementation of A2A to gRPC error code mapper
  * 
- * Requirements: 8.4, 10.1
- * 
  * Error Code Mapping:
  * | A2A Error              | gRPC Status        | Description              |
  * |------------------------|--------------------| -------------------------|

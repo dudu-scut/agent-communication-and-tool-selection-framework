@@ -1,5 +1,5 @@
 :root {
-  /* === 暗色主题色板 === */
+  /* 暗色主题色板 */
   /* 背景梯度层次 */
   --bg-primary: #0a0e1a;
   --bg-secondary: #111827;
@@ -32,14 +32,14 @@
   --border-strong: rgba(255, 255, 255, 0.15);
   --border-brand: rgba(99, 102, 241, 0.4);
 
-  /* === 玻璃拟态参数 === */
+  /* 玻璃拟态参数 */
   --glass-blur: 12px;
   --glass-bg: rgba(255, 255, 255, 0.04);
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 
-  /* === 间距系统 (4px基准) === */
+  /* 间距系统 (4px基准) */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -51,14 +51,14 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* === 圆角系统 === */
+  /* 圆角系统 */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  /* === 阴影系统 === */
+  /* 阴影系统 */
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -67,7 +67,7 @@
   --shadow-glow-warning: 0 0 20px rgba(245, 158, 11, 0.3);
   --shadow-glow-error: 0 0 20px rgba(239, 68, 68, 0.3);
 
-  /* === 动画时间系统 === */
+  /* 动画时间系统 */
   --duration-fast: 150ms;
   --duration-normal: 300ms;
   --duration-slow: 500ms;
@@ -76,11 +76,11 @@
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-  /* === 字体系统 === */
+  /* 字体系统 */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
-  /* === Z-index层次 === */
+  /* Z-index层次 */
   --z-base: 1;
   --z-dropdown: 100;
   --z-sticky: 200;

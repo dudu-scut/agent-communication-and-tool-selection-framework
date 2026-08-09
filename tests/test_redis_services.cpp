@@ -39,9 +39,7 @@ std::string testPrefix() {
 
 }  // namespace
 
-// ============================================================================
 // Fixture: provides a connected RedisClient, skips if Redis unavailable
-// ============================================================================
 class RedisFixture : public ::testing::Test {
 protected:
     common::RedisClient redis;
@@ -61,9 +59,7 @@ protected:
     }
 };
 
-// ============================================================================
 // RedisClient basic operations
-// ============================================================================
 
 TEST_F(RedisFixture, StringSetGetDel) {
     auto key = testPrefix() + ":str";
@@ -166,9 +162,7 @@ TEST_F(RedisFixture, ExpireKey) {
     redis.del(key);
 }
 
-// ============================================================================
 // MemoryService (Redis-backed)
-// ============================================================================
 
 class MemoryFixture : public RedisFixture {
 protected:

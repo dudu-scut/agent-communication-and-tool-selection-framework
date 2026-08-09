@@ -29,7 +29,7 @@ namespace server {
 
 namespace {
 
-// PR-C2: MultiAgentHandler never emits terminal stream events. The top-level
+// MultiAgentHandler never emits terminal stream events. The top-level
 // AIQueryServiceImpl::QueryStream is the single emitter of "complete" and
 // "error" events; this thread-local slot hands the accumulated answer/error
 // back to it after handleQueryStream returns.
@@ -111,10 +111,6 @@ void MultiAgentHandler::recordInvocationFact(
     }
 }
 
-// ============================================================================
-// Static factory: create orchestrator components
-// ============================================================================
-
 bool MultiAgentHandler::initializeOrchestrator(
     const std::string& api_key,
     const std::string& model,
@@ -131,11 +127,11 @@ bool MultiAgentHandler::initializeOrchestrator(
         out_router = std::make_unique<orchestrator::AgentRouter>();
         out_router->initialize(orchestrator::RoutingStrategy::SKILL_MATCH);
 
-        // Wire LLM client into AgentRouter for Tier 0 intent classification (P1-1)
+        // Wire LLM client into AgentRouter for Tier 0 intent classification
         auto router_llm = std::make_unique<LLMClient>(api_key, model, api_url);
         out_router->setLLMClient(std::move(router_llm));
 
-        // Wire Redis client for feedback-driven routing (Batch 2)
+        // Wire Redis client for feedback-driven routing
         if (redis_client) {
             out_router->setRedisClient(redis_client);
         }
@@ -169,17 +165,13 @@ bool MultiAgentHandler::initializeOrchestrator(
     }
 }
 
-// ============================================================================
-// Synchronous multi-agent query
-// ============================================================================
-
 grpc::Status MultiAgentHandler::handleQuery(
     grpc::ServerContext* context,
     const agent_communication::AIQueryRequest* request,
     agent_communication::AIQueryResponse* response,
     const std::string& request_id) {
 
-    // Fix #15: Propagate gRPC deadline to A2A call timeouts
+    // Propagate gRPC deadline to A2A call timeouts
     auto gpr_deadline = context->deadline();
     int effective_timeout_seconds = rpc_config_->timeout_seconds;
     if (gpr_deadline != std::chrono::system_clock::time_point::max()) {
@@ -307,10 +299,6 @@ grpc::Status MultiAgentHandler::handleQuery(
                                std::string("Multi-agent orchestration failed: ") + e.what()));
     }
 }
-
-// ============================================================================
-// Streaming multi-agent query
-// ============================================================================
 
 grpc::Status MultiAgentHandler::handleQueryStream(
     grpc::ServerContext* context,
@@ -559,10 +547,6 @@ grpc::Status MultiAgentHandler::handleQueryStream(
                            std::string("Multi-agent orchestration failed: ") + e.what());
     }
 }
-
-// ============================================================================
-// Private helpers
-// ============================================================================
 
 std::function<std::string(const std::string&, const std::string&)>
 MultiAgentHandler::buildCallAgent(const agent_communication::AIQueryRequest* request) {

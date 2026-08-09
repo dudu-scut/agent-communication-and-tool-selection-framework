@@ -84,9 +84,7 @@ std::string uniqueSuffix() {
     return std::to_string(ticks) + "-" + std::to_string(counter.fetch_add(1));
 }
 
-// ============================================================================
 // 1. Static source contracts
-// ============================================================================
 
 TEST(DurablePipelineContractTest, QueryServiceUsesAuthenticatedOwnerOnly) {
     const std::string service = readFileOrEmpty(rootPath() + "/server/src/ai_query_service.cpp");
@@ -198,9 +196,7 @@ TEST(DurablePipelineContractTest, ProxyTracksCompleteSeenAndCancelsOnClose) {
     EXPECT_EQ(countOccurrences(proxy, "event_type: 'complete'"), 1u);
 }
 
-// ============================================================================
 // 2. Repository integration (real PostgreSQL)
-// ============================================================================
 
 class DurableRepositoryTest : public ::testing::Test {
 protected:
@@ -375,9 +371,7 @@ TEST_F(DurableRepositoryTest, EnsureConversationSurvivesConcurrentFirstCreation)
     EXPECT_EQ(conversation->owner_id, owner_id);
 }
 
-// ============================================================================
 // 3. End-to-end pipeline (real RpcServer + PG + Redis + mock A2A agent)
-// ============================================================================
 
 // Minimal blocking HTTP server emulating an A2A agent for message/send and
 // message/stream (SSE). Modes: "ok", "http500", "stream-slow".

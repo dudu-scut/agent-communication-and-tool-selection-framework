@@ -85,10 +85,6 @@ AgentInvocationRecord invocationFromRow(const Row& row) {
 
 AgentRuntimeRepository::AgentRuntimeRepository(PostgresStore& store) : store_(store) {}
 
-// ============================================================================
-// agent registry
-// ============================================================================
-
 bool AgentRuntimeRepository::upsertAgentRegistry(const AgentRegistryRecord& record) {
     bool ok = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
@@ -111,10 +107,6 @@ bool AgentRuntimeRepository::upsertAgentRegistry(const AgentRegistryRecord& reco
 }
 
 bool AgentRuntimeRepository::updateAgentHeartbeat(const std::string& agent_id) {
-    // Upsert semantics: a heartbeat must heal a missing registry row (e.g. the
-    // original RegisterAgent persisted nothing because PostgreSQL was down at
-    // that moment). A pure UPDATE would silently succeed with 0 rows and the
-    // gap would never self-heal.
     bool ok = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
         const auto result = execParams(
@@ -179,10 +171,6 @@ std::vector<AgentRegistryRecord> AgentRuntimeRepository::listAgents() {
     });
     return records;
 }
-
-// ============================================================================
-// feedback & owner-scoped route quality
-// ============================================================================
 
 bool AgentRuntimeRepository::insertFeedback(const RuntimeFeedbackRecord& feedback) {
     bool inserted = false;
@@ -301,10 +289,6 @@ std::vector<FeedbackKey> AgentRuntimeRepository::listFeedbackKeys() {
     return keys;
 }
 
-// ============================================================================
-// invocation facts
-// ============================================================================
-
 bool AgentRuntimeRepository::recordInvocation(const AgentInvocationRecord& invocation) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
@@ -361,10 +345,6 @@ std::vector<InvocationMetricsRecord> AgentRuntimeRepository::aggregateInvocation
     });
     return records;
 }
-
-// ============================================================================
-// cost reporting
-// ============================================================================
 
 std::vector<DailyCostRecord> AgentRuntimeRepository::dailyCostReport(
     const std::string& owner_id, const std::string& start_date, const std::string& end_date) {

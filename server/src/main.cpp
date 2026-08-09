@@ -1,13 +1,12 @@
 /**
  * @file main.cpp
- * @brief RPC Server 主程序
- * 
- * 这是项目的核心服务端程序：
- * - 提供 gRPC 服务，接收客户端请求
- * - 通过 A2A 协议调用 Orchestrator 协调多 Agent
- * - 支持 AI 查询、流式响应等功能
- * 
- * 架构:
+ * @brief RPC server entry point.
+ *
+ * Serves gRPC requests from the client, coordinates multiple agents via the
+ * A2A protocol through the Orchestrator, and supports AI queries with
+ * streaming responses.
+ *
+ * Architecture:
  *   rpc_client ──gRPC──> rpc_server ──A2A/HTTP──> Orchestrator ──> Agents
  */
 
@@ -44,15 +43,13 @@
 using namespace agent_rpc::server;
 using namespace agent_rpc::common;
 
-// 全局变量用于优雅关闭
+// Global state for graceful shutdown
 std::atomic<bool> g_running{true};
 RpcServer* g_server = nullptr;
 
-// ============================================================================
-// Global span queue for span_batch_flush BackgroundScheduler task.
+// Global span queue for the span_batch_flush BackgroundScheduler task.
 // TraceContext::endSpan() pushes completed spans here via the SpanExporter
 // callback; the periodic task drains them into Redis in batches.
-// ============================================================================
 namespace {
 
 struct QueuedSpan {
@@ -99,7 +96,7 @@ std::filesystem::path resolveMigrationDirectory() {
 void signalHandler(int signal) {
     std::cout << "\n收到信号 " << signal << ", 正在关闭服务器..." << std::endl;
     g_running = false;
-    // 不在信号处理函数中调用 stop()，让主循环处理
+    // Do not call stop() from the signal handler; the main loop handles shutdown
 }
 
 void crashHandler(int sig) {
@@ -163,17 +160,15 @@ int main(int argc, char* argv[]) {
     // are safe (libcurl >= 7.36.0 uses reference counting).
     curl_global_init(CURL_GLOBAL_ALL);
 
-    // 加载 .env 文件（必须在所有 getenv 之前）
+    // Load .env before any getenv calls
     agent_rpc::common::loadEnvFile(".env");
 
-    // 默认配置
     std::string port = "50051";
     std::string orchestrator_url = "http://localhost:5000";
     std::string registry_address = "localhost:8500";
     bool enable_registry = false;
     int timeout_seconds = 60;
-    
-    // 从环境变量读取
+
     if (const char* env_port = std::getenv("RPC_SERVER_PORT")) {
         port = env_port;
     }
@@ -185,7 +180,7 @@ int main(int argc, char* argv[]) {
         enable_registry = true;
     }
     
-    // 解析命令行参数
+    // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         
@@ -210,7 +205,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // 设置信号处理
+    // Install signal handlers
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
     // Crash signal handlers for diagnostic logging before termination
@@ -238,7 +233,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // 配置 RPC Server
+    // Configure RPC server
     RpcConfig config;
     config.server_address = "0.0.0.0:" + port;
     config.max_message_size = 64 * 1024 * 1024;  // 64MB
@@ -250,12 +245,12 @@ int main(int argc, char* argv[]) {
         config.registry_address = registry_address;
     }
     
-    // 配置 A2A 适配器
+    // Configure A2A adapter
     agent_rpc::a2a_adapter::A2AConfig a2a_config;
     a2a_config.orchestrator_url = orchestrator_url;
     a2a_config.request_timeout_seconds = timeout_seconds;
     
-    // 创建并初始化服务器
+    // Create and initialize the server
     RpcServer server;
     g_server = &server;
     
@@ -269,18 +264,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // 检查 AI 查询服务状态
+    // Check AI query service availability
     auto ai_service = server.getAIQueryService();
     bool ai_available = ai_service && ai_service->isAvailable();
     
-    // 启动服务器
+    // Start the server
     if (!server.start()) {
         LOG_ERROR("无法启动 RPC 服务器");
         std::cerr << "错误: 无法启动 RPC 服务器" << std::endl;
         return 1;
     }
     
-    // 打印启动信息
+    // Print startup information
     std::cout << "==========================================" << std::endl;
     std::cout << "RPC Server 启动成功" << std::endl;
     std::cout << "==========================================" << std::endl;
@@ -303,7 +298,7 @@ int main(int argc, char* argv[]) {
     // Start BackgroundScheduler for periodic tasks
     agent_rpc::common::BackgroundScheduler::instance().start(2);
 
-    // Batch 2: Register feedback aggregation and metrics aggregation tasks (hourly)
+    // Register feedback aggregation and metrics aggregation tasks (hourly)
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "feedback_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculate(); },
@@ -320,7 +315,7 @@ int main(int argc, char* argv[]) {
         std::chrono::seconds(3600));
 
 #ifdef AGENT_RPC_ENABLE_MCP
-    // Batch 3: Register semantic cache cleanup task (every 10 minutes)
+    // Register semantic cache cleanup task (every 10 minutes)
     // The SemanticCacheIndex instance should be shared from wherever it is owned
     // (e.g., held by the MCP module or AIQueryService).  At startup the shared_ptr
     // is null, so the lambda is a safe no-op until the cache is wired up.
@@ -331,7 +326,7 @@ int main(int argc, char* argv[]) {
         std::chrono::seconds(600));
 #endif
 
-    // Batch 4 U2: Register profile extraction task (every 5 minutes)
+    // Register profile extraction task (every 5 minutes)
     // Calls ProfileSummarizer::processPending(), which performs real work
     // (reads pending users from Redis and calls the LLM when LLM_API_KEY is
     // set). Known limitation: the extracted profiles are written back to
@@ -342,7 +337,7 @@ int main(int argc, char* argv[]) {
         []() { agent_rpc::common::ProfileSummarizer::processPending(); },
         std::chrono::seconds(300));
 
-    // Batch 5: Register health evaluation task (every 30 seconds)
+    // Register health evaluation task (every 30 seconds)
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "health_evaluation",
         []() {
@@ -350,16 +345,14 @@ int main(int argc, char* argv[]) {
         },
         std::chrono::seconds(30));
 
-    // PR-C3: the legacy CronScheduler and canary-evaluation background tasks
+    // The legacy CronScheduler and canary-evaluation background tasks
     // were removed per the local delivery boundary and are NOT planned to be
     // rebuilt. Canary weighting was dropped together with the CANARY/DEPRECATED
     // router modifiers — routing quality is now owner-scoped PostgreSQL data.
 
-    // ========================================================================
-    // Batch 8: Span batch flush (every 1 second)
-    // Drains completed spans from the global queue and writes them to Redis
-    // as a JSON list under key "trace:spans:<trace_id>".
-    // ========================================================================
+    // Span batch flush (every 1 second): drains completed spans from the
+    // global queue and writes them to Redis as a JSON list under
+    // key "trace:spans:<trace_id>".
 
     // Register the SpanExporter callback so TraceContext::endSpan() pushes
     // completed spans into the global queue.
@@ -368,7 +361,6 @@ int main(int argc, char* argv[]) {
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "span_batch_flush",
         [&server]() {
-            // Drain up to kSpanBatchMax spans from the queue
             std::queue<QueuedSpan> batch;
             {
                 std::lock_guard<std::mutex> lock(g_span_queue_mutex);
@@ -399,7 +391,6 @@ int main(int argc, char* argv[]) {
             size_t flushed = 0;
             while (!batch.empty()) {
                 auto& qs = batch.front();
-                // Build a compact JSON representation
                 std::string json = "{\"trace_id\":\"" + qs.trace_id +
                     "\",\"span_id\":\"" + qs.span_id +
                     "\",\"name\":\"" + qs.name +
@@ -419,7 +410,7 @@ int main(int argc, char* argv[]) {
         },
         std::chrono::seconds(1));
 
-    // 主循环
+    // Main loop
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -427,7 +418,7 @@ int main(int argc, char* argv[]) {
     // Stop BackgroundScheduler before shutting down server
     agent_rpc::common::BackgroundScheduler::instance().stop();
 
-    // 停止服务器
+    // Stop the server
     server.stop();
     LOG_INFO("RPC Server 已停止");
     std::cout << "RPC 服务器已停止" << std::endl;

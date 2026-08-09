@@ -35,7 +35,7 @@ std::string generateRowId(const char* prefix) {
     return std::string{prefix} + "-" + suffix;
 }
 
-// M3 (PR-C3): feedback dimensions form a closed key space. agent_id and
+// Feedback dimensions form a closed key space. agent_id and
 // skill_name must either be empty (dimension omitted) or a bounded
 // identifier from the known charset — unknown/arbitrary keys are refused
 // before any write so the feedback/quality tables never accumulate garbage
@@ -95,7 +95,7 @@ grpc::Status AgentLifecycleServiceImpl::SubmitFeedback(
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "rating must be between 1 and 5");
     }
 
-    // M3 (PR-C3): closed key space — refuse oversized or arbitrary keys.
+    // Closed key space — refuse oversized or arbitrary keys.
     if (!validFeedbackKey(request->agent_id()) || !validFeedbackKey(request->skill_name())) {
         response->mutable_status()->set_code(1);
         response->mutable_status()->set_message(
@@ -188,7 +188,7 @@ grpc::Status AgentLifecycleServiceImpl::GetAgentCompare(
                             "Compare persistence not available");
     }
 
-    // [PR-E] Real summary of the owner's persisted compare_runs rows — the
+    // Real summary of the owner's persisted compare_runs rows — the
     // empty list is the true empty state, never fabricated metrics.
     try {
         const auto runs = query_repository_->listCompareRunsByOwner(owner);
@@ -215,7 +215,7 @@ grpc::Status AgentLifecycleServiceImpl::SetAutonomyLevel(
     (void)ctx;
     if (!AuthInterceptor::isAuthenticated())
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Authentication required");
-    // [PR-E] Owner comes exclusively from the auth context; any identity in
+    // Owner comes exclusively from the auth context; any identity in
     // the request body is ignored on purpose.
     const std::string owner = AuthInterceptor::currentUserId();
 

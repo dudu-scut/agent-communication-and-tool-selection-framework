@@ -3,7 +3,6 @@
  * @brief Unit tests for A2A module integration
  * 
  * Tests A2A type initialization and namespace correctness
- * Requirements: 1.2, 1.5
  */
 
 #include <gtest/gtest.h>
@@ -43,9 +42,7 @@ protected:
     void TearDown() override {}
 };
 
-// ============================================================================
-// Namespace Tests - Verify a2a:: namespace is preserved
-// ============================================================================
+// Namespace tests - verify the a2a:: namespace is preserved
 
 TEST_F(A2AIntegrationTest, NamespacePreserved_Types) {
     // Test that types are in a2a:: namespace
@@ -75,9 +72,7 @@ TEST_F(A2AIntegrationTest, NamespacePreserved_Exception) {
     EXPECT_STREQ(ex.what(), "Test error");
 }
 
-// ============================================================================
-// Type Initialization Tests
-// ============================================================================
+// Type initialization tests
 
 TEST_F(A2AIntegrationTest, TypeInit_MessageRole) {
     // Test MessageRole enum values
@@ -115,9 +110,7 @@ TEST_F(A2AIntegrationTest, TypeInit_ErrorCodes) {
     EXPECT_EQ(static_cast<int32_t>(a2a::ErrorCode::TaskNotFound), -32001);
 }
 
-// ============================================================================
-// Model Class Tests
-// ============================================================================
+// Model class tests
 
 TEST_F(A2AIntegrationTest, ModelInit_AgentCard) {
     a2a::AgentCard card;
@@ -168,9 +161,7 @@ TEST_F(A2AIntegrationTest, ModelInit_Artifact) {
     EXPECT_EQ(artifact.mime_type(), "text/plain");
 }
 
-// ============================================================================
-// Server Component Tests
-// ============================================================================
+// Server component tests
 
 TEST_F(A2AIntegrationTest, ServerInit_MemoryTaskStore) {
     auto store = std::make_unique<a2a::MemoryTaskStore>();
@@ -185,9 +176,7 @@ TEST_F(A2AIntegrationTest, ServerInit_TaskManager) {
     EXPECT_NE(&manager, nullptr);
 }
 
-// ============================================================================
-// Exception Tests
-// ============================================================================
+// Exception tests
 
 TEST_F(A2AIntegrationTest, ExceptionInit_WithMessage) {
     a2a::A2AException ex("Test error message", a2a::ErrorCode::InvalidRequest);

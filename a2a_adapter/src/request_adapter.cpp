@@ -1,8 +1,6 @@
 /**
  * @file request_adapter.cpp
  * @brief Implementation of RPC to A2A request adapter
- * 
- * Requirements: 8.1, 8.3
  */
 
 #include "agent_rpc/a2a_adapter/request_adapter.h"

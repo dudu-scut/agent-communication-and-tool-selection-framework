@@ -4,11 +4,11 @@
  *
  * Two layers:
  *   1. Static source guards (no placeholder strings, no hardcoded share
- *      host, no "开发中" fake-success placeholders in the PR-D views).
+ *      host, no "under development" fake-success placeholders in the PR-D views).
  *   2. End-to-end workflows against a real RpcServer + real PostgreSQL +
  *      real Redis + embedded mock A2A HTTP agent (no repository mocks).
  *
- * Mandatory coverage (TODO 3.4 / PR-D):
+ * Mandatory coverage:
  *   - Replay: cross-owner NOT_FOUND; route mode returns old-vs-new route
  *     without executing; exact mode persists a NEW trace leaving the
  *     original untouched; invalid mode rejected.
@@ -97,9 +97,7 @@ std::string sha256Hex(const std::string& input) {
     return hex.str();
 }
 
-// ============================================================================
 // 1. Static source guards
-// ============================================================================
 
 TEST(DurableWorkflowsContractTest, NoPlaceholderStringsInWorkflowServices) {
     const std::string replay = readFileOrEmpty(rootPath() + "/orchestrator/src/replay_service.cpp");
@@ -174,9 +172,7 @@ TEST(DurableWorkflowsContractTest, PrDViewsHaveNoFakeDevelopmentPlaceholders) {
     EXPECT_EQ(admin.find("Replay功能开发中"), std::string::npos);
 }
 
-// ============================================================================
 // 2. Embedded mock A2A agent (same shape as the durable pipeline tests)
-// ============================================================================
 
 class MockA2AHttpServer {
 public:
@@ -287,9 +283,7 @@ private:
     std::thread thread_;
 };
 
-// ============================================================================
 // 3. End-to-end fixture: real RpcServer + PG + Redis + mock A2A
-// ============================================================================
 
 class DurableWorkflowsE2ETest : public ::testing::Test {
 protected:
@@ -478,9 +472,7 @@ protected:
     std::unique_ptr<agent_communication::SharingService::Stub> sharing_stub_;
 };
 
-// ============================================================================
 // Auth gate
-// ============================================================================
 
 TEST_F(DurableWorkflowsE2ETest, UnauthenticatedWorkflowCallsAreRejected) {
     startWorkflow();
@@ -519,9 +511,7 @@ TEST_F(DurableWorkflowsE2ETest, UnauthenticatedWorkflowCallsAreRejected) {
     }
 }
 
-// ============================================================================
 // Replay
-// ============================================================================
 
 TEST_F(DurableWorkflowsE2ETest, ReplayCrossOwnerOrUnknownTraceIsNotFound) {
     startWorkflow();
@@ -663,9 +653,7 @@ TEST_F(DurableWorkflowsE2ETest, ReplayExactPersistsNewTraceWithoutTouchingOrigin
     EXPECT_EQ(replayed_log->request_text, "exact replay target");
 }
 
-// ============================================================================
 // Export
-// ============================================================================
 
 TEST_F(DurableWorkflowsE2ETest, ExportCrossOwnerOrMissingConversationIsNotFound) {
     startWorkflow();
@@ -739,9 +727,7 @@ TEST_F(DurableWorkflowsE2ETest, ExportHtmlEscapesHostileMessagePayloads) {
     EXPECT_NE(md_response.file_data().find("reply & <b>bold</b>"), std::string::npos);
 }
 
-// ============================================================================
 // Share
-// ============================================================================
 
 TEST_F(DurableWorkflowsE2ETest, ShareTokenIsHighEntropyAndStoredOnlyAsHash) {
     startWorkflow();
@@ -941,9 +927,7 @@ TEST_F(DurableWorkflowsE2ETest, ExpiredShareIsRefused) {
     EXPECT_NE(read_status.error_message().find("expired"), std::string::npos);
 }
 
-// ============================================================================
 // Template
-// ============================================================================
 
 TEST_F(DurableWorkflowsE2ETest, TemplateWithInvalidDefinitionIsRejected) {
     startWorkflow();

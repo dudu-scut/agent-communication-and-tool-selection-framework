@@ -1,6 +1,6 @@
 /**
  * @file user_experience_service.cpp
- * @brief [PR-E] Real Sandbox + Intervention workflows on PostgreSQL.
+ * @brief Real Sandbox + Intervention workflows on PostgreSQL.
  *
  * SandboxQuery executes through the already-initialized durable Query
  * pipeline (the only execution entry point) with the sandbox flag set, and

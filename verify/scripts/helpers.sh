@@ -1,16 +1,12 @@
 #!/bin/bash
-# ============================================================================
 # NexusAI E2E Verification — Shared Helpers
 #
 # Source this file in all verify-batch*.sh scripts:
 #   source "$(dirname "$0")/helpers.sh"
-# ============================================================================
 
 set -euo pipefail
 
-# ============================================================================
 # Paths
-# ============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERIFY_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$VERIFY_DIR")"
@@ -18,7 +14,7 @@ PROJECT_ROOT="$(dirname "$VERIFY_DIR")"
 # Ensure ~/.local/bin is on PATH (for grpcurl, etc.)
 export PATH="$HOME/.local/bin:$PATH"
 
-# ---- Mock psql for environments without PostgreSQL ----
+# Mock psql for environments without PostgreSQL
 if ! command -v psql &>/dev/null; then
     # Use Python-based mock psql so PG assertions pass in test environments
     MOCK_PSQL="$SCRIPT_DIR/mock_psql.py"
@@ -27,7 +23,7 @@ if ! command -v psql &>/dev/null; then
     fi
 fi
 
-# ---- Auth management ----
+# Auth management
 AUTH_TOKEN="${AUTH_TOKEN:-}"
 AUTH_TOKEN_FILE="$VERIFY_DIR/.auth_token"
 
@@ -49,7 +45,7 @@ ensure_auth() {
     fi
 }
 
-# ---- Auth-aware gRPC send ----
+# Auth-aware gRPC send
 _send_grpc_auth() {
     local method="$1"
     local body="$2"
@@ -73,25 +69,19 @@ PG_USER="${PG_USER:-nexusai}"
 GRPC_SERVER="${GRPC_SERVER:-localhost:50051}"
 MOCK_AGENT_URL="${MOCK_AGENT_URL:-http://localhost:5100}"
 
-# ============================================================================
 # Color output
-# ============================================================================
 PASS='\033[0;32m[PASS]\033[0m'
 FAIL='\033[0;31m[FAIL]\033[0m'
 WARN='\033[0;33m[WARN]\033[0m'
 SKIP='\033[0;34m[SKIP]\033[0m'
 
-# ============================================================================
 # Counters
-# ============================================================================
 PASS_COUNT=0
 FAIL_COUNT=0
 WARN_COUNT=0
 FAILED_SCENARIOS=()
 
-# ============================================================================
 # Scenario scaffolding
-# ============================================================================
 scenario() {
     echo ""
     echo "=========================================="
@@ -133,9 +123,7 @@ verify_warn() {
     fi
 }
 
-# ============================================================================
 # Pre-check: ensure required services are running
-# ============================================================================
 PIDS_DIR="$PROJECT_ROOT/pids"
 precheck_services() {
     echo "--- Pre-check: Services ---"
@@ -174,9 +162,7 @@ precheck_services() {
     echo ""
 }
 
-# ============================================================================
 # Assertion functions
-# ============================================================================
 assert_http_ok() {
     local url="$1"
     local code
@@ -250,9 +236,7 @@ assert_json_field_eq() {
     [ "$actual" = "$expected" ]
 }
 
-# ============================================================================
 # gRPC communication
-# ============================================================================
 send_grpc() {
     _send_grpc_auth "$@"
 }
@@ -261,9 +245,7 @@ send_grpc_stream() {
     _send_grpc_auth "$@"
 }
 
-# ============================================================================
 # Data injection helpers
-# ============================================================================
 register_mock_agent() {
     local agent_id="$1"
     local skill="$2"
@@ -286,7 +268,7 @@ EOF
     send_grpc "agent_communication.AgentCommunicationService/RegisterAgent" "$payload" || true
 }
 
-# ---- Standardized gRPC query helpers (correct proto field names) ----
+# Standardized gRPC query helpers (correct proto field names)
 gen_request_id() { echo "verify-$(date +%s)-$$-$RANDOM"; }
 
 query_grpc() {
@@ -379,9 +361,7 @@ cleanup_redis_keys() {
         done
 }
 
-# ============================================================================
 # Report generation
-# ============================================================================
 print_batch_report() {
     local batch_name="$1"
     local total=$((PASS_COUNT + FAIL_COUNT + WARN_COUNT))

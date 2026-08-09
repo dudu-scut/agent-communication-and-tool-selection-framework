@@ -33,9 +33,7 @@ std::string endpointId(const common::ServiceEndpoint& endpoint) {
 
 }  // namespace
 
-// =============================================================================
-// WeightedRoundRobin 测试
-// =============================================================================
+// WeightedRoundRobin tests
 
 class WeightedRoundRobinAdvancedTest : public ::testing::Test {
 protected:
@@ -125,9 +123,7 @@ TEST_F(WeightedRoundRobinAdvancedTest, UnhealthyEndpointsExcluded) {
     }
 }
 
-// =============================================================================
-// ConsistentHash 测试
-// =============================================================================
+// ConsistentHash tests
 
 class ConsistentHashAdvancedTest : public ::testing::Test {
 protected:
@@ -283,9 +279,7 @@ TEST_F(ConsistentHashAdvancedTest, DistributionUniformity) {
     }
 }
 
-// =============================================================================
-// LeastResponseTime 测试
-// =============================================================================
+// LeastResponseTime tests
 
 class LeastResponseTimeAdvancedTest : public ::testing::Test {
 protected:
@@ -389,9 +383,7 @@ TEST_F(LeastResponseTimeAdvancedTest, ExponentialMovingAverageSmooths) {
     EXPECT_EQ(endpointId(ep), "10.0.0.1:8080");
 }
 
-// =============================================================================
-// LoadBalancerManager (setStrategy) 测试
-// =============================================================================
+// LoadBalancerManager (setStrategy) tests
 
 class LoadBalancerManagerTest : public ::testing::Test {
 protected:

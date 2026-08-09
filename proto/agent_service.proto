@@ -4,7 +4,7 @@ package agent_communication;
 
 import "common.proto";
 
-// 消息类型
+// Message type
 message Message {
     string id = 1;
     string type = 2;
@@ -14,41 +14,41 @@ message Message {
     bytes payload = 6;
 }
 
-// 发送消息请求
+// Send message request
 message SendMessageRequest {
     Message message = 1;
     string target_agent = 2;
     int32 timeout_seconds = 3;
 }
 
-// 发送消息响应
+// Send message response
 message SendMessageResponse {
     common.Status status = 1;
     string message_id = 2;
     int64 timestamp = 3;
 }
 
-// 接收消息请求
+// Receive message request
 message ReceiveMessageRequest {
     string agent_id = 1;
     int32 max_messages = 2;
     int32 timeout_seconds = 3;
 }
 
-// 接收消息响应
+// Receive message response
 message ReceiveMessageResponse {
     common.Status status = 1;
     repeated Message messages = 2;
 }
 
-// 广播消息请求
+// Broadcast message request
 message BroadcastMessageRequest {
     Message message = 1;
     repeated string target_agents = 2;
     bool exclude_sender = 3;
 }
 
-// 广播消息响应
+// Broadcast message response
 message BroadcastMessageResponse {
     common.Status status = 1;
     int32 success_count = 2;
@@ -56,58 +56,58 @@ message BroadcastMessageResponse {
     repeated string failed_agents = 4;
 }
 
-// 获取代理列表请求
+// Get agents request
 message GetAgentsRequest {
     string filter = 1;
     int32 limit = 2;
     int32 offset = 3;
 }
 
-// 获取代理列表响应
+// Get agents response
 message GetAgentsResponse {
     common.Status status = 1;
     repeated common.ServiceInfo agents = 2;
     int32 total_count = 3;
 }
 
-// 注册代理请求
+// Register agent request
 message RegisterAgentRequest {
     common.ServiceInfo agent_info = 1;
     int32 heartbeat_interval = 2;
 }
 
-// 注册代理响应
+// Register agent response
 message RegisterAgentResponse {
     common.Status status = 1;
     string agent_id = 2;
     int64 registration_time = 3;
 }
 
-// 注销代理请求
+// Unregister agent request
 message UnregisterAgentRequest {
     string agent_id = 1;
     string reason = 2;
 }
 
-// 注销代理响应
+// Unregister agent response
 message UnregisterAgentResponse {
     common.Status status = 1;
     int64 unregistration_time = 2;
 }
 
-// 心跳请求
+// Heartbeat request
 message HeartbeatRequest {
     string agent_id = 1;
     common.ServiceInfo agent_info = 2;
 }
 
-// 心跳响应
+// Heartbeat response
 message HeartbeatResponse {
     common.Status status = 1;
     int64 server_time = 2;
 }
 
-// 查找代理请求（按标签/技能筛选）
+// Find agents request (filter by tag/skill)
 message FindAgentsRequest {
     string tag = 1;
     string skill = 2;
@@ -115,50 +115,50 @@ message FindAgentsRequest {
     int32 limit = 4;
 }
 
-// 查找代理响应
+// Find agents response
 message FindAgentsResponse {
     common.Status status = 1;
     repeated common.ServiceInfo agents = 2;
     int32 total_count = 3;
 }
 
-// 代理通信服务定义
+// Agent communication service
 service AgentCommunicationService {
-    // 简单RPC - 发送消息
+    // Unary RPC - send message
     rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
     
-    // 简单RPC - 接收消息
+    // Unary RPC - receive message
     rpc ReceiveMessage(ReceiveMessageRequest) returns (ReceiveMessageResponse);
     
-    // 简单RPC - 广播消息
+    // Unary RPC - broadcast message
     rpc BroadcastMessage(BroadcastMessageRequest) returns (BroadcastMessageResponse);
     
-    // 简单RPC - 获取代理列表
+    // Unary RPC - get agents
     rpc GetAgents(GetAgentsRequest) returns (GetAgentsResponse);
     
-    // 简单RPC - 按标签/技能查找代理
+    // Unary RPC - find agents by tag/skill
     rpc FindAgents(FindAgentsRequest) returns (FindAgentsResponse);
     
-    // 简单RPC - 注册代理
+    // Unary RPC - register agent
     rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
     
-    // 简单RPC - 注销代理
+    // Unary RPC - unregister agent
     rpc UnregisterAgent(UnregisterAgentRequest) returns (UnregisterAgentResponse);
     
-    // 简单RPC - 心跳
+    // Unary RPC - heartbeat
     rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
     
-    // 服务端流式RPC - 监听消息
+    // Server-streaming RPC - listen for messages
     rpc ListenMessages(ReceiveMessageRequest) returns (stream Message);
     
-    // 客户端流式RPC - 批量发送消息
+    // Client-streaming RPC - batch send messages
     rpc BatchSendMessages(stream SendMessageRequest) returns (SendMessageResponse);
     
-    // 双向流式RPC - 实时通信
+    // Bidirectional streaming RPC - real-time communication
     rpc RealTimeCommunication(stream Message) returns (stream Message);
 }
 
-// 健康检查服务
+// Health check service
 service HealthService {
     rpc Check(common.HealthCheckRequest) returns (common.HealthCheckResponse);
     rpc Watch(common.HealthCheckRequest) returns (stream common.HealthCheckResponse);

@@ -1,8 +1,6 @@
 /**
  * @file response_adapter.cpp
  * @brief Implementation of A2A to RPC response adapter
- * 
- * Requirements: 8.2, 8.3
  */
 
 #include "agent_rpc/a2a_adapter/response_adapter.h"

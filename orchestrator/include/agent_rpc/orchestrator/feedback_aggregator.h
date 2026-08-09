@@ -14,7 +14,7 @@ namespace orchestrator {
 /**
  * @brief Feedback aggregator for owner-scoped routing quality and metrics.
  *
- * PostgreSQL is the sole source of truth (PR-C3): feedback rows and the
+ * PostgreSQL is the sole source of truth: feedback rows and the
  * derived agent_route_quality / agent_invocations aggregates all live in PG
  * and are read/written through AgentRuntimeRepository (libpqxx parameter
  * binding). Redis is only refreshed as an optional metrics cache — there is
@@ -29,7 +29,7 @@ public:
     static void initialize(agent_rpc::common::RedisClient* redis);
 
     /**
-     * @brief Attach the durable PostgreSQL runtime repository (PR-C3).
+     * @brief Attach the durable PostgreSQL runtime repository.
      * @param repository Pointer owned by the caller (RpcServer)
      */
     static void setRuntimeRepository(agent_rpc::common::AgentRuntimeRepository* repository);

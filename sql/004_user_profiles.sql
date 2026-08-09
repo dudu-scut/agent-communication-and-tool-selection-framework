@@ -1,7 +1,5 @@
--- ============================================================================
--- U2: User Profile Storage
--- Batch 4: Unified Memory + Activity Feed + DAG Composition
--- ============================================================================
+-- User Profile Storage
+-- Unified Memory + Activity Feed + DAG Composition
 
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id VARCHAR(128) PRIMARY KEY,

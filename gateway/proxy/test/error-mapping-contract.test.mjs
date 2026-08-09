@@ -1,5 +1,5 @@
 /**
- * PR-F: Proxy gRPC error semantics — stable JSON/SSE error mapping,
+ * Proxy gRPC error semantics — stable JSON/SSE error mapping,
  * Authorization metadata propagation and browser abort → stream.cancel().
  *
  * Runtime coverage: a real in-process gRPC server (grpc-js, loaded from the
@@ -27,7 +27,7 @@ const loaderOptions = {
 };
 
 async function freePort() {
-  // Minor #3 hardening: listen(0) → close leaves a port-reclaim window in
+  // Hardening: listen(0) → close leaves a port-reclaim window in
   // which another process can grab the same port, making the suite flaky.
   // Probe the returned port by re-binding it immediately (SO_REUSEADDR-style
   // check) and retry with a fresh port when the probe fails.
@@ -57,19 +57,19 @@ async function freePort() {
   throw new Error('no reusable free port found');
 }
 
-// ── gRPC status codes under test (PR-F requirement) ──────────────────────
+// gRPC status codes under test
 const CASES = [
   { username: 'err-unauth', code: grpc.status.UNAUTHENTICATED, name: 'UNAUTHENTICATED', http: 401 },
   { username: 'err-perm', code: grpc.status.PERMISSION_DENIED, name: 'PERMISSION_DENIED', http: 403 },
   { username: 'err-notfound', code: grpc.status.NOT_FOUND, name: 'NOT_FOUND', http: 404 },
-  // Minor #2: ALREADY_EXISTS → 409 runtime contract (already in the mapping
+  // ALREADY_EXISTS → 409 runtime contract (already in the mapping
   // table; this case pins it through the real HTTP surface).
   { username: 'err-exists', code: grpc.status.ALREADY_EXISTS, name: 'ALREADY_EXISTS', http: 409 },
   { username: 'err-exhausted', code: grpc.status.RESOURCE_EXHAUSTED, name: 'RESOURCE_EXHAUSTED', http: 429 },
   { username: 'err-cancelled', code: grpc.status.CANCELLED, name: 'CANCELLED', http: 499 },
 ];
 
-// ── Mock gRPC backend (real grpc-js server over the repo protos) ─────────
+// Mock gRPC backend (real grpc-js server over the repo protos)
 const userDef = protoLoader.loadSync(path.join(PROTO_DIR, 'user.proto'), loaderOptions);
 const userProto = grpc.loadPackageDefinition(userDef);
 const agentDef = protoLoader.loadSync(path.join(PROTO_DIR, 'agent_service.proto'), loaderOptions);
@@ -136,7 +136,7 @@ function watchHandler(call) {
   });
 }
 
-// ── Boot mock backend + real proxy ────────────────────────────────────────
+// Boot mock backend + real proxy
 const grpcServer = new grpc.Server();
 grpcServer.addService(userProto.agent_communication.auth.UserService.service, {
   register: (call, cb) => cb(null, {
@@ -153,7 +153,7 @@ grpcServer.addService(agentProto.agent_communication.HealthService.service, {
   check: (call, cb) => cb(null, { status: 'SERVING' }),
   watch: watchHandler,
 });
-// Minor #3 hardening: retry the bind with a fresh port instead of failing
+// Hardening: retry the bind with a fresh port instead of failing
 // the whole suite on the rare reclaim race.
 let grpcPort;
 for (let attempt = 0; attempt < 5; attempt++) {
@@ -188,7 +188,7 @@ async function unary(pathname, body, headers = {}) {
   return { status: resp.status, body: parsed };
 }
 
-// ── 1. Unary: the five required gRPC codes map to stable JSON + HTTP ─────
+// 1. Unary: the five required gRPC codes map to stable JSON + HTTP
 
 for (const c of CASES) {
   test(`unary maps gRPC ${c.name} to HTTP ${c.http} with {error, code, details}`, async () => {
@@ -209,7 +209,7 @@ for (const c of CASES) {
   });
 }
 
-// ── 2. Authorization header reaches gRPC metadata untouched ───────────────
+// 2. Authorization header reaches gRPC metadata untouched
 
 test('Authorization header is forwarded to gRPC metadata', async () => {
   const { status, body } = await unary(
@@ -222,7 +222,7 @@ test('Authorization header is forwarded to gRPC metadata', async () => {
   assert.equal(body.username, 'Bearer pr-f-token-123');
 });
 
-// ── 3. SSE: stream errors become structured error events, then close ──────
+// 3. SSE: stream errors become structured error events, then close
 
 test('stream errors are relayed as structured SSE error events with code semantics', async () => {
   const resp = await fetch(`${BASE}/agent_communication.HealthService/Watch`, {
@@ -250,7 +250,7 @@ test('stream errors are relayed as structured SSE error events with code semanti
   assert.ok(streamState.sawErrorRequest);
 });
 
-// ── 4. Browser abort propagates to gRPC stream.cancel() ───────────────────
+// 4. Browser abort propagates to gRPC stream.cancel()
 
 test('client abort cancels the upstream gRPC stream', async () => {
   streamState.cancelled = false;
@@ -275,12 +275,12 @@ test('client abort cancels the upstream gRPC stream', async () => {
   assert.ok(streamState.cancelled, 'mock gRPC server must observe the cancellation');
 });
 
-// ── 5. Static guards on the mapping table ─────────────────────────────────
+// 5. Static guards on the mapping table
 
 test('proxy source pins the six required status mappings', () => {
   const server = fs.readFileSync(path.join(root, 'gateway/proxy/server.mjs'), 'utf8');
 
-  // Minor #1: the guards pin the GRPC_HTTP_STATUS mapping CODE, not a
+  // The guards pin the GRPC_HTTP_STATUS mapping CODE, not a
   // free-text comment that can drift from the table.
   assert.match(server, /\[grpc\.status\.UNAUTHENTICATED\]:\s*401/);
   assert.match(server, /\[grpc\.status\.PERMISSION_DENIED\]:\s*403/);

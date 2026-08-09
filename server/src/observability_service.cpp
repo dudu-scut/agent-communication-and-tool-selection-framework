@@ -2,7 +2,7 @@
  * @file observability_service.cpp
  * @brief ObservabilityService implementation — GetTraceDetail & GetCostReport
  *
- * Data flow (PR-C3):
+ * Data flow:
  *   - Trace payloads (including collected spans) live in PostgreSQL
  *     `traces.trace_payload` written by AIQueryServiceImpl's durable pipeline.
  *   - Daily costs are aggregated from `token_usage_ledger`.
@@ -28,10 +28,6 @@
 namespace agent_rpc {
 namespace server {
 
-// ============================================================================
-// Construction
-// ============================================================================
-
 ObservabilityServiceImpl::ObservabilityServiceImpl(common::RedisClient* redis_client)
     : redis_client_(redis_client) {
 }
@@ -45,10 +41,6 @@ void ObservabilityServiceImpl::setQueryDomainRepository(
     common::QueryDomainRepository* repository) {
     query_repository_ = repository;
 }
-
-// ============================================================================
-// Local helpers
-// ============================================================================
 
 namespace {
 
@@ -82,10 +74,6 @@ int daysBetween(const std::tm& from, const std::tm& to) {
 }
 
 } // anonymous namespace
-
-// ============================================================================
-// GetTraceDetail
-// ============================================================================
 
 grpc::Status ObservabilityServiceImpl::GetTraceDetail(
     grpc::ServerContext* context,
@@ -180,10 +168,6 @@ grpc::Status ObservabilityServiceImpl::GetTraceDetail(
              " spans for trace: " + trace->id);
     return grpc::Status::OK;
 }
-
-// ============================================================================
-// GetCostReport
-// ============================================================================
 
 grpc::Status ObservabilityServiceImpl::GetCostReport(
     grpc::ServerContext* context,

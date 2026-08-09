@@ -1,6 +1,6 @@
 /**
  * @file result_aggregator.cpp
- * @brief ResultAggregator implementation (P4-3)
+ * @brief ResultAggregator implementation
  */
 
 #include "agent_rpc/orchestrator/result_aggregator.h"

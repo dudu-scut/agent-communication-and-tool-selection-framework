@@ -35,15 +35,11 @@ namespace server {
  */
 struct QueryHelpers {
 
-    // ========================================================================
-    // Task Status Tracking (P2-1)
-    // ========================================================================
-    //
-    // [PR-G observation, final wrap-up] The in-memory task-status cache was
-    // deleted: it was write-only (GetQueryStatus reads the durable
-    // PostgreSQL query_logs row; nothing ever consumed the cache). The
-    // entry points below keep their signatures as no-op state-transition
-    // hooks so the Query pipeline call sites stay unchanged.
+    // The in-memory task-status cache was deleted: it was write-only
+    // (GetQueryStatus reads the durable PostgreSQL query_logs row; nothing
+    // ever consumed the cache). The entry points below keep their signatures
+    // as no-op state-transition hooks so the Query pipeline call sites stay
+    // unchanged.
 
     void updateTaskStatus(const std::string& task_id, const std::string& state,
                           const std::string& agent_id = "",
@@ -52,19 +48,11 @@ struct QueryHelpers {
 
     void cleanupExpiredTasks();
 
-    // ========================================================================
-    // Static helpers
-    // ========================================================================
-
     static void recordMetrics(const std::string& method, int64_t duration_ms, bool success);
     static std::string generateRequestId();
 
-    // Sanitize raw CURL errors into user-friendly messages (B-03)
+    // Sanitize raw CURL errors into user-friendly messages
     static std::string sanitizeErrorMessage(const std::string& msg);
-
-    // ========================================================================
-    // Agent Switch / Memory helpers
-    // ========================================================================
 
     std::mutex memory_llm_mutex;
     std::set<std::string> summary_in_progress;  // context_ids with ongoing summary generation

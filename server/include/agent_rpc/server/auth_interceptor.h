@@ -31,7 +31,7 @@ public:
     // Check if a method path is exempt from authentication
     static bool isWhitelisted(const std::string& method);
 
-    // ---- Thread-local auth state (set by interceptor, read by handlers) ----
+    // Thread-local auth state (set by interceptor, read by handlers)
 
     struct AuthContext {
         std::string user_id;
@@ -48,7 +48,7 @@ public:
     static std::string currentRole();
     static std::string currentTraceId();
 
-    // [PR-E] Copies an already-validated auth context onto the CALLING
+    // Copies an already-validated auth context onto the CALLING
     // thread's TLS. Server-spawned worker threads (e.g. the parallel compare
     // executors) never see the interceptor, so the serving thread propagates
     // its own currentAuth() snapshot before spawning them. The context is

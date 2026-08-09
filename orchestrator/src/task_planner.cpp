@@ -1,6 +1,6 @@
 /**
  * @file task_planner.cpp
- * @brief TaskPlanner implementation (P4-1)
+ * @brief TaskPlanner implementation
  */
 
 #include "agent_rpc/orchestrator/task_planner.h"
@@ -37,7 +37,7 @@ ExecutionPlan TaskPlanner::plan(
 
     std::string prompt = buildPlanningPrompt(query, available_skills);
 
-    // [Batch 1] Start planning trace span
+    // Start planning trace span
     auto* trace = agent_rpc::common::TraceContext::current();
     auto plan_start = std::chrono::steady_clock::now();
     if (trace) {
@@ -49,7 +49,7 @@ ExecutionPlan TaskPlanner::plan(
             "你是一个任务规划器，严格按照 JSON 格式返回结果，不要输出其他内容。",
             prompt);
 
-        // [Batch 1] End planning span and record token usage
+        // End planning span and record token usage
         if (trace) {
             trace->endSpan();
         }
@@ -70,7 +70,7 @@ ExecutionPlan TaskPlanner::plan(
 
         plan = parsePlanResponse(response, query);
     } catch (const std::exception&) {
-        // [Batch 1] End planning span on error
+        // End planning span on error
         if (trace) {
             trace->endSpan();
         }
@@ -239,7 +239,7 @@ void TaskPlanner::resolveAgents(ExecutionPlan& plan, AgentRouter& router) {
             task.preferred_agent_name = agent->name;
         }
 
-        // [Batch 4 U4] Populate Top-3 candidate agents per subtask
+        // Populate Top-3 candidate agents per subtask
         task.candidate_agents.clear();
         if (!task.required_skill.empty()) {
             auto candidates = router.findHealthyAgentsWithSkills(

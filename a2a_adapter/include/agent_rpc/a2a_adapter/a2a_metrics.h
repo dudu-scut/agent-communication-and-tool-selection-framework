@@ -1,9 +1,6 @@
 /**
  * @file a2a_metrics.h
  * @brief A2A specific metrics integration
- * 
- * Requirements: 10.5
- * Task 15: 日志和指标集成
  */
 
 #pragma once
@@ -25,10 +22,6 @@ class A2AMetrics {
 public:
     static A2AMetrics& getInstance();
     
-    // ========================================================================
-    // Query Metrics
-    // ========================================================================
-    
     /**
      * @brief Record an A2A query request
      */
@@ -46,10 +39,6 @@ public:
      */
     void recordQueryError(const std::string& agent_id, 
                          const std::string& error_type);
-    
-    // ========================================================================
-    // Task Metrics
-    // ========================================================================
     
     /**
      * @brief Record task creation
@@ -69,10 +58,6 @@ public:
     void recordTaskComplete(const std::string& task_id,
                            int64_t duration_ms,
                            bool success);
-    
-    // ========================================================================
-    // Agent Metrics
-    // ========================================================================
     
     /**
      * @brief Record agent registration
@@ -96,10 +81,6 @@ public:
                            const std::string& to_agent,
                            const std::string& skill);
     
-    // ========================================================================
-    // Connection Metrics
-    // ========================================================================
-    
     /**
      * @brief Record A2A connection attempt
      */
@@ -114,10 +95,6 @@ public:
      * @brief Record A2A message received
      */
     void recordMessageReceived(const std::string& message_type, size_t size_bytes);
-    
-    // ========================================================================
-    // Statistics
-    // ========================================================================
     
     /**
      * @brief Get total query count

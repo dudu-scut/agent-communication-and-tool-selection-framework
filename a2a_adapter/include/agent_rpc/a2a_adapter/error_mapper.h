@@ -1,8 +1,6 @@
 /**
  * @file error_mapper.h
  * @brief A2A error code to RPC status code mapper
- * 
- * Requirements: 8.4, 10.1
  */
 
 #pragma once

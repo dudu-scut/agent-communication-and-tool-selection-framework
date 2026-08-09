@@ -3,7 +3,7 @@
  * Hand-written as a replacement for protoc generation; keep in sync with proto definitions
  */
 
-// === common.proto ===
+// common.proto
 
 export interface Status {
   code: number
@@ -26,7 +26,7 @@ export interface ServiceInfo {
   a2a_version?: string
 }
 
-// === ai_query.proto ===
+// ai_query.proto
 
 export interface AgentPreference {
   preferred_skills: string[]
@@ -51,7 +51,7 @@ export interface AIQueryRequest {
   preference?: AgentPreference
   user_id?: string
   system_context?: SystemContext
-  // [PR-E] 沙箱执行标志（proto field 10）
+  // Sandbox execution flag (proto field 10)
   sandbox?: boolean
 }
 
@@ -87,7 +87,7 @@ export interface AIStreamEvent {
   intervention_required?: boolean // field 10: true when user action needed
 }
 
-// === agent_service.proto ===
+// agent_service.proto
 
 export interface GetAgentsRequest {
   filter: string
@@ -115,7 +115,7 @@ export interface FindAgentsResponse {
   total_count: number
 }
 
-// === Agent Metrics ===
+// Agent Metrics
 
 export interface AgentMetrics {
   agent_id: string
@@ -123,9 +123,9 @@ export interface AgentMetrics {
   avg_latency_ms: number
   p95_latency_ms?: number
   total_requests: number
-  approval_rate?: number      // 好评率
+  approval_rate?: number      // approval rate
 
-  // 以下字段后端可能不返回，标记为optional
+  // The backend may not return these fields; marked optional
   estimated_token_low?: number
   estimated_token_high?: number
   active_requests?: number
@@ -145,7 +145,7 @@ export interface GetAgentMetricsResponse {
   metrics: AgentMetrics
 }
 
-// === Budget ===
+// Budget
 
 export interface BudgetInfo {
   user_id: string
@@ -157,7 +157,7 @@ export interface BudgetInfo {
   reset_at: number
 }
 
-// === Multi-Agent Execution Plan ===
+// Multi-Agent Execution Plan
 
 export interface SubTaskInfo {
   id: string
@@ -174,7 +174,7 @@ export interface ExecutionPlan {
   tasks: SubTaskInfo[]
 }
 
-// === Activity Feed ===
+// Activity Feed
 
 export interface ActivityEntry {
   timestamp: number
@@ -186,7 +186,7 @@ export interface ActivityEntry {
   detail?: string
 }
 
-// === Trace Info ===
+// Trace Info
 
 export interface TraceInfo {
   trace_id: string
@@ -198,7 +198,7 @@ export interface TraceInfo {
   skill: string
 }
 
-// === user.proto (auth) ===
+// user.proto (auth)
 
 export interface RegisterRequest {
   username: string
@@ -210,7 +210,7 @@ export interface RegisterResponse {
   status: Status
   user_id: string
   username: string
-  role: string                    // USER | ADMIN（PR-C3）
+  role: string                    // USER | ADMIN
 }
 
 export interface LoginRequest {
@@ -224,7 +224,7 @@ export interface LoginResponse {
   username: string
   token: string
   expires_at: number
-  role: string                    // USER | ADMIN（PR-C3）
+  role: string                    // USER | ADMIN
 }
 
 export interface ValidateTokenRequest {
@@ -236,10 +236,10 @@ export interface ValidateTokenResponse {
   user_id: string
   username: string
   valid: boolean
-  role: string                    // USER | ADMIN（PR-C3）
+  role: string                    // USER | ADMIN
 }
 
-// === Sharing & Templates (sharing.proto, PR-D) ===
+// Sharing & Templates (sharing.proto)
 
 export interface ShareSessionRequest {
   context_id: string
@@ -327,7 +327,7 @@ export interface UseTemplateResponse {
   context_id: string
 }
 
-// === Replay & Export (orchestration.proto, PR-D) ===
+// Replay & Export (orchestration.proto)
 
 export interface ReplayQueryRequest {
   trace_id: string
@@ -353,7 +353,7 @@ export interface ExportConversationResponse {
   mime_type: string
 }
 
-// === Frontend internal types ===
+// Frontend internal types
 
 export interface ChatMessage {
   id: string
@@ -384,7 +384,7 @@ export interface AgentDisplayInfo {
   metrics?: AgentMetrics
 }
 
-// === observability.proto ===
+// observability.proto
 
 export interface TokenUsageRecord {
   trace_id: string
@@ -419,7 +419,7 @@ export interface CostRecord {
   total_prompt_tokens: number
   total_completion_tokens: number
   total_requests: number
-  estimated: boolean     // true when provider usage was unavailable (PR-C3)
+  estimated: boolean     // true when provider usage was unavailable
 }
 
 export interface GetTraceDetailResponse {
@@ -434,7 +434,7 @@ export interface GetCostReportResponse {
   total_cost_usd: number
 }
 
-// === Sandbox & Intervention (user_experience.proto, PR-E) ===
+// Sandbox & Intervention (user_experience.proto)
 
 export interface SandboxQueryRequest {
   query_text: string
@@ -464,7 +464,7 @@ export interface InterventionResponseResponse {
   executed_request_id: string
 }
 
-// === Compare / Autonomy / Undo (agent_lifecycle.proto, PR-E) ===
+// Compare / Autonomy / Undo (agent_lifecycle.proto)
 
 export interface CompareAgentsRequest {
   question: string
@@ -506,7 +506,7 @@ export interface GetAgentCompareResponse {
 }
 
 export interface SetAutonomyLevelRequest {
-  user_id?: string  // [PR-E] ignored — owner comes from the auth context
+  user_id?: string  // ignored — owner comes from the auth context
   agent_id: string
   level: number // 1..4
 }

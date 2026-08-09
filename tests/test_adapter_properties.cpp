@@ -31,11 +31,7 @@ rc::Gen<std::string> genNonEmptyValidString() {
     return rc::gen::nonEmpty(genValidString());
 }
 
-// ============================================================================
 // Property 1: Message Round-Trip Consistency
-// **Feature: a2a-integration, Property 1: Message Round-Trip Consistency**
-// **Validates: Requirements 5.1, 5.5, 8.1, 8.2, 8.3**
-// ============================================================================
 
 RC_GTEST_PROP(AdapterProperties, MessageRoundTrip_PreservesQuestion, ()) {
     auto question = *genValidString();
@@ -95,11 +91,7 @@ RC_GTEST_PROP(AdapterProperties, MessageRoundTrip_PreservesHistoryLength, ()) {
     RC_ASSERT(a2a_params.history_length().value() == history_length);
 }
 
-// ============================================================================
 // Property 7: Error Code Mapping Completeness
-// **Feature: a2a-integration, Property 7: Error Code Mapping Completeness**
-// **Validates: Requirements 8.4, 10.1**
-// ============================================================================
 
 RC_GTEST_PROP(AdapterProperties, ErrorMapping_AllA2ACodesMapToValidGrpc, ()) {
     // Test all known A2A error codes
@@ -162,11 +154,7 @@ RC_GTEST_PROP(AdapterProperties, ErrorMapping_IntegerCodesMapCorrectly, ()) {
     RC_ASSERT(grpc_code != grpc::StatusCode::DO_NOT_USE);
 }
 
-// ============================================================================
 // Property 10: Configuration Default Fallback
-// **Feature: a2a-integration, Property 10: Configuration Default Fallback**
-// **Validates: Requirements 9.5**
-// ============================================================================
 
 RC_GTEST_PROP(AdapterProperties, Config_InvalidPortUsesDefault, ()) {
     auto invalid_port = *rc::gen::oneOf(

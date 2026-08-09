@@ -26,7 +26,7 @@
 namespace agent_rpc {
 namespace server {
 
-// 前向声明
+// Forward declarations
 class AgentCommunicationServiceImpl;
 class HealthServiceImpl;
 class AIQueryServiceImpl;
@@ -36,49 +36,37 @@ class SharingServiceImpl;
 class UserExperienceServiceImpl;
 class ObservabilityServiceImpl;
 
-// RPC服务器类
+// RPC server class
 class RpcServer {
 public:
     RpcServer();
     ~RpcServer();
     
-    // 初始化服务器
     bool initialize(const common::RpcConfig& config);
     
-    // 启动服务器
     bool start();
     
-    // 停止服务器
     void stop();
     
-    // 等待服务器结束
     void wait();
     
-    // 获取服务实现
     std::shared_ptr<AgentCommunicationServiceImpl> getService();
     
-    // 获取健康检查服务
     std::shared_ptr<HealthServiceImpl> getHealthService();
     
-    // 获取AI查询服务
     std::shared_ptr<AIQueryServiceImpl> getAIQueryService();
 
-    // 获取认证服务
     std::shared_ptr<AuthServiceImpl> getAuthService();
 
-    // 获取 Redis 客户端 (PR-C3: liveness/metrics cache only)
+    // Redis client (liveness/metrics cache only)
     common::RedisClient* getRedisClient() { return redis_client_.get(); }
     
-    // 设置A2A配置
     void setA2AConfig(const a2a_adapter::A2AConfig& config);
     
-    // 是否运行中
     bool isRunning() const { return running_; }
     
-    // 获取服务器地址
     std::string getAddress() const { return address_; }
     
-    // MCP相关配置
     void setMCPServerPath(const std::string& path);
     void setMCPServerArgs(const std::vector<std::string>& args);
 
@@ -93,7 +81,7 @@ private:
     std::atomic<bool> running_{false};
     
     std::unique_ptr<grpc::Server> server_;
-    std::thread server_thread_;  // 服务器运行线程
+    std::thread server_thread_;
     std::shared_ptr<AgentCommunicationServiceImpl> service_impl_;
     std::shared_ptr<HealthServiceImpl> health_service_impl_;
     std::shared_ptr<AIQueryServiceImpl> ai_query_service_impl_;
@@ -112,10 +100,10 @@ private:
     // Owner-scoped runtime facts (registry/feedback/route quality/costs).
     std::unique_ptr<common::AgentRuntimeRepository> runtime_repository_;
     
-    // A2A配置
+    // A2A configuration
     a2a_adapter::A2AConfig a2a_config_;
     
-    // MCP配置 (预留接口，待实现MCP client)
+    // MCP config (reserved; MCP client not yet implemented)
     std::string mcp_server_path_;
     std::vector<std::string> mcp_server_args_;
 

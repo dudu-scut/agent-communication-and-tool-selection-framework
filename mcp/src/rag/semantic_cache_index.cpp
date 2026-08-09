@@ -1,8 +1,6 @@
 /**
  * @file semantic_cache_index.cpp
  * @brief Implementation of SemanticCacheIndex
- *
- * Batch 3 — Task 1: Semantic Cache Index
  */
 
 #include "agent_rpc/mcp/rag/semantic_cache_index.h"
@@ -19,10 +17,6 @@ namespace mcp {
 
 SemanticCacheIndex::SemanticCacheIndex(rag::EmbeddingService* embedding)
     : embedding_(embedding) {}
-
-// -----------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------
 
 std::string SemanticCacheIndex::vectorToKey(const std::vector<float>& v) {
     // Produce a deterministic hex string from the vector's data.
@@ -51,10 +45,6 @@ static float cosineSimilarity(const std::vector<float>& a,
     double denom = std::sqrt(norm_a) * std::sqrt(norm_b);
     return (denom < 1e-12) ? 0.0f : static_cast<float>(dot / denom);
 }
-
-// -----------------------------------------------------------------------
-// Public API
-// -----------------------------------------------------------------------
 
 std::optional<CachedResponse>
 SemanticCacheIndex::lookup(const std::vector<float>& query_vector) {

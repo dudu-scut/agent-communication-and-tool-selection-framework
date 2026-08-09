@@ -9,11 +9,13 @@ namespace agent_rpc {
 namespace common {
 
 /**
- * @brief 记忆服务：管理多层记忆系统 (Redis-backed)
+ * Multi-tier memory service (Redis-backed).
  *
- * Tier 1 — 对话历史：按 (context_id, agent_id) 分片存储 (Redis list)
- * Tier 2 — 用户长期记忆：按 user_id 存储 (Redis hash)
- * 跨Agent摘要：Agent切换时生成的上下文摘要 (Redis string)
+ * Tier 1 — conversation history: sharded by (context_id, agent_id), stored as
+ *           a Redis list of JSON-encoded messages.
+ * Tier 2 — user long-term memory: stored per user_id in a Redis hash.
+ * Cross-agent summary: context summary produced on agent switch, stored as a
+ *           Redis string.
  */
 class MemoryService {
 public:
@@ -26,44 +28,44 @@ public:
         int64_t timestamp;
     };
 
-    /** 追加一条消息到对话历史 */
+    /** Appends one message to the conversation history */
     void appendMessage(const std::string& context_id,
                        const std::string& agent_id,
                        const std::string& role,
                        const std::string& content);
 
-    /** 获取指定 (context_id, agent_id) 的对话历史，格式化为文本 */
+    /** Returns the (context_id, agent_id) conversation history formatted as text */
     std::string getConversationHistory(const std::string& context_id,
                                        const std::string& agent_id,
                                        int max_messages = 10) const;
 
-    /** 获取指定 context_id 下最后一次使用的 agent_id */
+    /** Returns the last agent_id used for this context_id */
     std::string getLastAgent(const std::string& context_id) const;
 
-    /** 记录当前 agent 为该 context_id 的最后活跃 agent */
+    /** Records the current agent as the last active agent for this context_id */
     void setLastAgent(const std::string& context_id, const std::string& agent_id);
 
-    /** 设置用户记忆的单个键值对 */
+    /** Sets a single key-value pair in the user's long-term memory */
     void setUserMemory(const std::string& user_id,
                        const std::string& key,
                        const std::string& value);
 
-    /** 获取用户所有长期记忆，格式化为文本 */
+    /** Returns all user long-term memory formatted as text */
     std::string getUserMemory(const std::string& user_id) const;
 
-    /** 从 Agent 上报的 memory_hints 批量更新用户记忆 */
+    /** Batch-updates user memory from agent-reported memory hints */
     void updateUserMemoryFromHints(
         const std::string& user_id,
         const std::map<std::string, std::string>& hints);
 
-    /** 设置跨Agent切换摘要 */
+    /** Sets the cross-agent switch summary */
     void setCrossAgentSummary(const std::string& context_id,
                                const std::string& summary);
 
-    /** 获取跨Agent切换摘要 */
+    /** Gets the cross-agent switch summary */
     std::string getCrossAgentSummary(const std::string& context_id) const;
 
-    /** 构建完整的 SystemContext 用于注入到 AIQueryRequest */
+    /** Builds the full SystemContext for injection into AIQueryRequest */
     agent_communication::SystemContext buildSystemContext(
         const std::string& user_id,
         const std::string& context_id,
@@ -106,7 +108,7 @@ private:
 
     static constexpr int kMaxHistoryPerAgent = 50;
 
-    std::shared_ptr<RedisClient> redis_;  // Fix #12: shared ownership prevents use-after-free
+    std::shared_ptr<RedisClient> redis_;  // shared ownership prevents use-after-free
 
     static std::string formatHistory(const std::vector<std::string>& raw_messages,
                                       int max_messages);

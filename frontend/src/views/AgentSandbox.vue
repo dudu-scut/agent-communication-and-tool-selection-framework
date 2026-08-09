@@ -134,7 +134,7 @@ const sandboxRequestId = ref('')
 const pendingInterventionId = ref('')
 const deciding = ref(false)
 const decisionInfo = ref('')
-// PR-F: MODIFY decision carries replacement text; backend supports all four
+// MODIFY decision carries replacement text; backend supports all four
 // decisions (PROCEED / MODIFY / SKIP / ABORT).
 const modifyInputVisible = ref(false)
 const modificationText = ref('')

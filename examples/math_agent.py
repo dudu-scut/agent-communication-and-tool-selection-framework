@@ -22,14 +22,14 @@ import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
 
-# ── 配置 ─────────────────────────────────────────────────────────────────
+# 配置
 AGENT_NAME = "math-agent"
 AGENT_VERSION = "1.0.0"
 AGENT_HOST = os.environ.get("AGENT_HOST", "127.0.0.1")
 AGENT_PORT = 9091
 NEXUSAI_PROXY = "http://127.0.0.1:8081"
 HEARTBEAT_INTERVAL = 15
-MAX_CONTENT_LENGTH = 1 * 1024 * 1024  # Fix #37: 1MB limit to prevent DoS
+MAX_CONTENT_LENGTH = 1 * 1024 * 1024  # 1MB limit to prevent DoS
 
 AGENT_CARD = {
     "name": AGENT_NAME,
@@ -42,17 +42,17 @@ AGENT_CARD = {
     ],
 }
 
-# ── Logging ──────────────────────────────────────────────────────────────
+# Logging
 logging.basicConfig(level=logging.INFO,
                     format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(AGENT_NAME)
 
-# ── HTTP 工具 ────────────────────────────────────────────────────────────
+# HTTP 工具
 
 def http_post_json(url, data, timeout=10):
     """Simple POST with JSON body, returns parsed JSON response.
 
-    Fix #33: Uses 'with' statement to ensure response is properly closed.
+    Uses 'with' statement to ensure response is properly closed.
     """
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     req = Request(url, data=body, headers={"Content-Type": "application/json"})
@@ -60,11 +60,11 @@ def http_post_json(url, data, timeout=10):
         return json.loads(resp.read().decode("utf-8"))
 
 
-# ── 注册 ─────────────────────────────────────────────────────────────────
+# 注册
 
 _agent_id = None
-_heartbeat_running = threading.Event()  # Fix #35: use threading.Event for thread safety
-_shutdown_requested = threading.Event()  # Fix #31: signal handler only sets flag
+_heartbeat_running = threading.Event()  # use threading.Event for thread safety
+_shutdown_requested = threading.Event()  # signal handler only sets flag
 
 
 def register():
@@ -90,12 +90,12 @@ def register():
         logger.info(f"注册成功, agent_id={_agent_id}")
         return True
     except Exception as e:
-        logger.warning(f"注册失败: {e}")  # Fix #34
+        logger.warning(f"注册失败: {e}")
         return False
 
 
 def _heartbeat_loop():
-    while _heartbeat_running.is_set():  # Fix #35
+    while _heartbeat_running.is_set():
         time.sleep(HEARTBEAT_INTERVAL)
         if not _heartbeat_running.is_set() or not _agent_id:
             break
@@ -111,11 +111,11 @@ def _heartbeat_loop():
         except ConnectionError:
             logger.warning("心跳失败: 无法连接到 NexusAI")
         except Exception as e:
-            logger.warning(f"心跳失败: {e}")  # Fix #34
+            logger.warning(f"心跳失败: {e}")
 
 
 def unregister():
-    _heartbeat_running.clear()  # Fix #35
+    _heartbeat_running.clear()
     if _agent_id:
         try:
             http_post_json(
@@ -127,12 +127,12 @@ def unregister():
         except ConnectionError:
             logger.warning("注销请求失败: 无法连接到 NexusAI")
         except Exception as e:
-            logger.warning(f"注销失败: {e}")  # Fix #34
+            logger.warning(f"注销失败: {e}")
 
 
-# ── 安全的算术表达式求值 ─────────────────────────────────────────────────
+# 安全的算术表达式求值
 
-# Fix #29: Replace eval() with AST-based safe evaluation.
+# Replace eval() with AST-based safe evaluation.
 # Whitelist approach: only allow basic arithmetic operations.
 _SAFE_OPS = {
     ast.Add: operator.add,
@@ -172,7 +172,7 @@ def _safe_eval_ast(node):
 def safe_eval_math(expr_str):
     """Safely evaluate a mathematical expression using AST whitelist.
 
-    Fix #29: Replaces dangerous eval() with AST-based whitelist approach.
+    Replaces dangerous eval() with AST-based whitelist approach.
     No arbitrary code execution possible — only literal numbers and basic
     arithmetic operators are permitted.
     """
@@ -184,12 +184,12 @@ def safe_eval_math(expr_str):
     return _safe_eval_ast(tree)
 
 
-# ── 安全的方程求解 ───────────────────────────────────────────────────────
+# 安全的方程求解
 
 def solve_equation_safe(text):
     """Safely attempt equation solving.
 
-    Fix #30: Replaces sympify() (which can execute arbitrary code) with
+    Replaces sympify() (which can execute arbitrary code) with
     a safe sympy parsing approach when sympy is available, falling back
     to a simple linear solver for basic equations.
     """
@@ -212,7 +212,7 @@ def solve_equation_safe(text):
 
         if '=' in expr_text:
             lhs, rhs = expr_text.split('=', 1)
-            # Fix #30: Use parse_expr instead of sympify for safe parsing
+            # Use parse_expr instead of sympify for safe parsing
             eq = Eq(parse_expr(lhs.strip(), transformations=transformations),
                     parse_expr(rhs.strip(), transformations=transformations))
             solutions = sym_solve(eq, x)
@@ -241,7 +241,7 @@ def solve_equation_safe(text):
     return "sympy 未安装且方程超出简单线性求解范围。请先安装: pip install sympy"
 
 
-# ── 数学计算逻辑 ─────────────────────────────────────────────────────────
+# 数学计算逻辑
 
 def solve_math(text):
     """尝试解析并计算用户输入的数学表达式"""
@@ -272,7 +272,7 @@ def solve_math(text):
     )
 
 
-# ── A2A HTTP 接口 ────────────────────────────────────────────────────────
+# A2A HTTP 接口
 
 class A2AHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -285,14 +285,14 @@ class A2AHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        # Fix #32: JSON parse error handling
+        # JSON parse error handling
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except (ValueError, TypeError):
             self.send_error(400, "Invalid Content-Length")
             return
 
-        # Fix #37: Content-Length upper bound check
+        # Content-Length upper bound check
         if content_length > MAX_CONTENT_LENGTH:
             self.send_error(413, "Payload Too Large")
             return
@@ -383,19 +383,19 @@ class A2AHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-# ── 主程序 ────────────────────────────────────────────────────────────────
+# 主程序
 
 def main():
     logger.info(f"[{AGENT_NAME}] 启动...")
     if not register():
         sys.exit(1)
 
-    _heartbeat_running.set()  # Fix #35
+    _heartbeat_running.set()
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
     server = HTTPServer(("0.0.0.0", AGENT_PORT), A2AHandler)
 
-    # Fix #31: Signal handler only sets flag — no HTTP I/O in signal context
+    # Signal handler only sets flag — no HTTP I/O in signal context
     def shutdown(sig, frame):
         logger.info(f"[{AGENT_NAME}] 收到信号 {sig}，关闭中...")
         _shutdown_requested.set()
@@ -410,7 +410,7 @@ def main():
         while not _shutdown_requested.is_set():
             server.handle_request()
     finally:
-        # Fix #36: Properly release socket
+        # Properly release socket
         unregister()
         server.server_close()
         logger.info(f"[{AGENT_NAME}] 已关闭")

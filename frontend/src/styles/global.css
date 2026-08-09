@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "./design-tokens.css";
 
-/* === 全局重置 === */
+/* 全局重置 */
 *,
 *::before,
 *::after {
@@ -28,7 +28,7 @@ body {
   min-height: 100vh;
 }
 
-/* === 自定义滚动条 === */
+/* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -54,7 +54,7 @@ body {
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
 
-/* === 动画 Keyframes === */
+/* 动画 Keyframes */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -124,7 +124,7 @@ body {
   }
 }
 
-/* === 工具类 === */
+/* 工具类 */
 .glass {
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur));
@@ -188,7 +188,7 @@ body {
   animation: shimmer 3s ease-in-out infinite;
 }
 
-/* === Reduced Motion === */
+/* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

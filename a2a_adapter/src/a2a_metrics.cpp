@@ -1,9 +1,6 @@
 /**
  * @file a2a_metrics.cpp
  * @brief A2A metrics implementation
- * 
- * Requirements: 10.5
- * Task 15: 日志和指标集成
  */
 
 #include "agent_rpc/a2a_adapter/a2a_metrics.h"
@@ -146,7 +143,7 @@ double A2AMetrics::getAverageQueryLatency() const {
     return static_cast<double>(total_query_latency_ms_.load()) / total;
 }
 
-// Fix #28: This method provides an APPROXIMATE snapshot. While the mutex is held
+// This method provides an APPROXIMATE snapshot. While the mutex is held
 // during export, the individual record*() methods use lock-free atomic operations.
 // The counters may reflect partially updated state at the instant of reading.
 std::string A2AMetrics::exportJson() const {

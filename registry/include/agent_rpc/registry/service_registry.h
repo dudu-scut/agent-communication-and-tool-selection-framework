@@ -16,9 +16,7 @@
 namespace agent_rpc {
 namespace registry {
 
-// ========================================================================
-// Agent Live Metrics Types (Batch 5 — Health Dashboard)
-// ========================================================================
+// Agent Live Metrics Types
 
 /** Per-agent health metrics tracked in the registry module. */
 struct AgentLiveMetrics {
@@ -33,33 +31,31 @@ struct AgentLiveMetrics {
 /** Health classification returned by evaluateHealth(). */
 enum class HealthStatus { HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN };
 
-// 服务注册中心接口
+// Service registry interface
 class ServiceRegistry {
 public:
     virtual ~ServiceRegistry() = default;
     
-    // 注册服务
+    // Register a service
     virtual bool registerService(const common::ServiceEndpoint& endpoint) = 0;
     
-    // 注销服务
+    // Unregister a service
     virtual bool unregisterService(const std::string& service_id) = 0;
     
-    // 发现服务
+    // Discover services
     virtual std::vector<common::ServiceEndpoint> discoverServices(const std::string& service_name) = 0;
     
-    // 获取服务健康状态
+    // Get service health status
     virtual bool isServiceHealthy(const std::string& service_id) = 0;
     
-    // 更新服务心跳
+    // Update service heartbeat
     virtual bool updateHeartbeat(const std::string& service_id) = 0;
     
-    // 监听服务变化
+    // Watch service changes
     virtual void watchServices(const std::string& service_name,
                               std::function<void(const std::vector<common::ServiceEndpoint>&)> callback) = 0;
 
-    // ========================================================================
-    // Agent Live Metrics (Batch 5 — Health Dashboard)
-    // ========================================================================
+    // Agent Live Metrics
 
     /**
      * @brief Record one agent call outcome for live metrics.
@@ -89,16 +85,16 @@ public:
     static ServiceRegistry& instance();
 };
 
-// 基于Consul的服务注册中心实现
+// Consul-based service registry implementation
 class ConsulServiceRegistry : public ServiceRegistry {
 public:
     ConsulServiceRegistry();
     ~ConsulServiceRegistry();
     
-    // 初始化
+    // Initialization
     bool initialize(const std::string& consul_address);
     
-    // 实现接口方法
+    // Interface method implementations
     bool registerService(const common::ServiceEndpoint& endpoint) override;
     bool unregisterService(const std::string& service_id) override;
     std::vector<common::ServiceEndpoint> discoverServices(const std::string& service_name) override;
@@ -107,11 +103,11 @@ public:
     void watchServices(const std::string& service_name,
                       std::function<void(const std::vector<common::ServiceEndpoint>&)> callback) override;
     
-    // 健康检查
+    // Health check
     void startHealthCheck();
     void stopHealthCheck();
     
-    // 获取服务ID
+    // Get the service ID
     std::string getServiceId(const common::ServiceEndpoint& endpoint) const;
 
 private:
@@ -134,16 +130,16 @@ private:
     mutable std::mutex watchers_mutex_;
 };
 
-// 基于etcd的服务注册中心实现
+// Etcd-based service registry implementation
 class EtcdServiceRegistry : public ServiceRegistry {
 public:
     EtcdServiceRegistry();
     ~EtcdServiceRegistry();
     
-    // 初始化
+    // Initialization
     bool initialize(const std::string& etcd_address);
     
-    // 实现接口方法
+    // Interface method implementations
     bool registerService(const common::ServiceEndpoint& endpoint) override;
     bool unregisterService(const std::string& service_id) override;
     std::vector<common::ServiceEndpoint> discoverServices(const std::string& service_name) override;
@@ -171,13 +167,13 @@ private:
     mutable std::mutex watchers_mutex_;
 };
 
-// 内存服务注册中心实现（用于测试）
+// In-memory service registry implementation (for testing)
 class MemoryServiceRegistry : public ServiceRegistry {
 public:
     MemoryServiceRegistry() = default;
     ~MemoryServiceRegistry() = default;
     
-    // 实现接口方法
+    // Interface method implementations
     bool registerService(const common::ServiceEndpoint& endpoint) override;
     bool unregisterService(const std::string& service_id) override;
     std::vector<common::ServiceEndpoint> discoverServices(const std::string& service_name) override;

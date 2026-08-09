@@ -2,9 +2,6 @@
  * @file test_proto_roundtrip.cpp
  * @brief Property-based tests for Protobuf serialization round-trip
  * 
- * **Feature: a2a-integration, Property 11: Protobuf Serialization Round-Trip**
- * **Validates: Requirements 11.5**
- * 
  * For any AIQueryRequest or AIQueryResponse, serializing to protobuf binary
  * format and deserializing SHALL produce an equivalent message.
  */
@@ -38,14 +35,8 @@ protected:
     void TearDown() override {}
 };
 
-// ============================================================================
 // Property Tests - AIQueryRequest Round-Trip
-// ============================================================================
 
-/**
- * **Feature: a2a-integration, Property 11: Protobuf Serialization Round-Trip**
- * **Validates: Requirements 11.5**
- */
 RC_GTEST_PROP(ProtoRoundTrip, AIQueryRequest_PreservesRequestId, ()) {
     auto request_id = *genNonEmptyValidString();
     
@@ -168,9 +159,7 @@ RC_GTEST_PROP(ProtoRoundTrip, AIQueryRequest_FullMessage, ()) {
     RC_ASSERT(deserialized.timeout_seconds() == original.timeout_seconds());
 }
 
-// ============================================================================
 // Property Tests - AIQueryResponse Round-Trip
-// ============================================================================
 
 RC_GTEST_PROP(ProtoRoundTrip, AIQueryResponse_PreservesAnswer, ()) {
     auto answer = *genValidString();
@@ -223,9 +212,7 @@ RC_GTEST_PROP(ProtoRoundTrip, AIQueryResponse_PreservesProcessingTime, ()) {
     RC_ASSERT(deserialized.processing_time_ms() == original.processing_time_ms());
 }
 
-// ============================================================================
 // Property Tests - AIStreamEvent Round-Trip
-// ============================================================================
 
 RC_GTEST_PROP(ProtoRoundTrip, AIStreamEvent_PreservesContent, ()) {
     auto event_id = *genNonEmptyValidString();
@@ -252,9 +239,7 @@ RC_GTEST_PROP(ProtoRoundTrip, AIStreamEvent_PreservesContent, ()) {
     RC_ASSERT(deserialized.timestamp() == original.timestamp());
 }
 
-// ============================================================================
 // Property Tests - Artifact Round-Trip
-// ============================================================================
 
 RC_GTEST_PROP(ProtoRoundTrip, Artifact_PreservesData, ()) {
     auto name = *genNonEmptyValidString();

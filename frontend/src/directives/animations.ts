@@ -1,7 +1,7 @@
 import type { Directive, DirectiveBinding } from 'vue'
 
 /**
- * v-fade-in: 元素进入视口时淡入
+ * v-fade-in: fade in when the element enters the viewport
  */
 export const vFadeIn: Directive = {
   mounted(el: HTMLElement) {
@@ -25,7 +25,7 @@ export const vFadeIn: Directive = {
 }
 
 /**
- * v-stagger: 列表子元素交错入场
+ * v-stagger: staggered entry for list children
  */
 export const vStagger: Directive = {
   mounted(el: HTMLElement, binding: DirectiveBinding) {

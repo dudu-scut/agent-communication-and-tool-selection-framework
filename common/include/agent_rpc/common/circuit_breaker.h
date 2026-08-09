@@ -11,24 +11,24 @@
 namespace agent_rpc {
 namespace common {
 
-// 熔断器状态
+// Circuit breaker states
 enum class CircuitState {
-    CLOSED,     // 关闭状态 - 正常请求
-    OPEN,       // 开启状态 - 熔断，拒绝请求
-    HALF_OPEN   // 半开状态 - 尝试恢复
+    CLOSED,     // normal request flow
+    OPEN,       // tripped, requests rejected
+    HALF_OPEN   // probing recovery
 };
 
-// 熔断器配置
+// Circuit breaker configuration
 struct CircuitBreakerConfig {
-    int failure_threshold = 5;           // 失败阈值
-    int success_threshold = 3;           // 半开状态下的成功阈值
-    std::chrono::milliseconds timeout = std::chrono::milliseconds(60000); // 熔断超时时间
-    std::chrono::milliseconds half_open_timeout = std::chrono::milliseconds(30000); // 半开超时时间
-    double failure_rate_threshold = 0.5; // 失败率阈值
-    int min_request_count = 10;          // 最小请求数量（用于计算失败率）
+    int failure_threshold = 5;           // failures before tripping
+    int success_threshold = 3;           // successes in half-open before closing
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(60000); // open timeout
+    std::chrono::milliseconds half_open_timeout = std::chrono::milliseconds(30000); // half-open timeout
+    double failure_rate_threshold = 0.5; // failure rate threshold
+    int min_request_count = 10;          // minimum samples before computing failure rate
 };
 
-// 熔断器统计信息
+// Circuit breaker statistics
 struct CircuitBreakerStats {
     int total_requests = 0;
     int successful_requests = 0;
@@ -39,41 +39,33 @@ struct CircuitBreakerStats {
     double current_failure_rate = 0.0;
 };
 
-// 熔断器类
+// Circuit breaker with failure tracking and state transitions
 class CircuitBreaker {
 public:
     explicit CircuitBreaker(const CircuitBreakerConfig& config = CircuitBreakerConfig{});
     ~CircuitBreaker() = default;
     
-    // 执行请求
     template<typename Func>
     auto execute(Func&& func) -> decltype(func());
     
-    // 记录成功
     void recordSuccess();
     
-    // 记录失败
     void recordFailure();
     
-    // 检查是否允许请求
     bool isRequestAllowed();
     
-    // 获取当前状态（持锁读取以确保与统计数据一致）
+    // Current state, read under lock to stay consistent with stats
     CircuitState getState() const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         return state_;
     }
     
-    // 获取统计信息
     CircuitBreakerStats getStats() const;
     
-    // 重置熔断器
     void reset();
     
-    // 更新配置
     void updateConfig(const CircuitBreakerConfig& config);
     
-    // 获取配置
     const CircuitBreakerConfig& getConfig() const { return config_; }
 
 private:
@@ -90,24 +82,18 @@ private:
     std::chrono::steady_clock::time_point last_state_change_;
 };
 
-// 熔断器管理器
 class CircuitBreakerManager {
 public:
     static CircuitBreakerManager& getInstance();
     
-    // 获取或创建熔断器
     std::shared_ptr<CircuitBreaker> getCircuitBreaker(const std::string& service_name);
     
-    // 移除熔断器
     void removeCircuitBreaker(const std::string& service_name);
     
-    // 获取所有熔断器状态
     std::map<std::string, CircuitState> getAllStates() const;
     
-    // 重置所有熔断器
     void resetAll();
     
-    // 更新配置
     void updateConfig(const std::string& service_name, const CircuitBreakerConfig& config);
 
 private:
@@ -120,7 +106,7 @@ private:
     std::map<std::string, std::shared_ptr<CircuitBreaker>> circuit_breakers_;
 };
 
-// 熔断器装饰器
+// Decorator adding circuit-breaking around an arbitrary callable
 template<typename T>
 class CircuitBreakerDecorator {
 public:

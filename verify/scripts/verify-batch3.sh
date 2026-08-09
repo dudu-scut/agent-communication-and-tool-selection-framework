@@ -1,17 +1,15 @@
 #!/bin/bash
-# ============================================================================
-# Batch 3 Verification: Cache + Control
+# Verification: Cache + Control
 #  3.1 — Semantic cache hit
 #  3.2 — Context compression trigger
 #  3.3 — L1 autonomy (read-only suggestion)
 #  3.4 — L2 autonomy (intervention required)
-# ============================================================================
 
 source "$(dirname "$0")/helpers.sh"
 
 precheck_services
 
-# ----- 3.1: Semantic cache hit ----------------------------------------------
+# 3.1: Semantic cache hit
 scenario "3.1 — Semantic Cache Hit"
 
 step "First query (cache miss)"
@@ -35,7 +33,7 @@ else
     verify_warn "Cache speedup not observed ($ELAPSED1 ms vs $ELAPSED2 ms)" false
 fi
 
-# ----- 3.2: Context compression trigger -------------------------------------
+# 3.2: Context compression trigger
 scenario "3.2 — Context Compression Trigger"
 
 step "Send 15 long messages to trigger compression"
@@ -48,7 +46,7 @@ step "Check trace_spans for compression marker"
 verify "Trace spans contain context_compressed marker" \
     assert_pg_row_exists "trace_spans" "metadata::text LIKE '%context_compressed%'"
 
-# ----- 3.3: L1 Autonomy — read-only suggestion ------------------------------
+# 3.3: L1 Autonomy — read-only suggestion
 scenario "3.3 — L1 Autonomy — Read-Only Suggestion"
 
 step "Send query with autonomy hint (via metadata field)"
@@ -57,7 +55,7 @@ RESP_L1=$(query_grpc "modify the config file to change the port" "verify-user-3-
 verify "L1 response is suggestion mode (not executing tool call)" \
     assert_not_contains "$RESP_L1" "tool_call_executed"
 
-# ----- 3.4: L2 Autonomy — intervention required -----------------------------
+# 3.4: L2 Autonomy — intervention required
 scenario "3.4 — L2 Autonomy — Intervention Required"
 
 step "Send query at L2 autonomy (via metadata)"
@@ -72,6 +70,6 @@ INT_RESP=$(send_grpc "agent_communication.UserExperienceService/InterventionResp
 verify "InterventionResponse returns OK" \
     assert_contains "$INT_RESP" "OK"
 
-# ----- Report ----------------------------------------------------------------
+# Report
 print_batch_report "Batch 3 — Cache + Control"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

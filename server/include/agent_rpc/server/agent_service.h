@@ -28,16 +28,12 @@ namespace orchestrator {
 namespace agent_rpc {
 namespace server {
 
-// Agent通信服务 gRPC 实现
+// Agent communication service gRPC implementation
 class AgentCommunicationServiceImpl final
     : public agent_communication::AgentCommunicationService::Service {
 public:
     AgentCommunicationServiceImpl();
     ~AgentCommunicationServiceImpl();
-
-    // ========================================================================
-    // gRPC Service Methods (11 个 RPC)
-    // ========================================================================
 
     grpc::Status SendMessage(
         grpc::ServerContext* context,
@@ -94,16 +90,12 @@ public:
         grpc::ServerReaderWriter<agent_communication::Message,
                                  agent_communication::Message>* stream) override;
 
-    // ========================================================================
-    // Internal methods
-    // ========================================================================
-
     void setMessageHandler(common::MessageHandler handler);
     void setErrorHandler(common::ErrorHandler handler);
     void setHealthCheckHandler(common::HealthCheckHandler handler);
 
     /**
-     * @brief Set AgentRouter for P0-2 registry unification
+     * @brief Set AgentRouter for registry unification
      *
      * When set, RegisterAgent/UnregisterAgent/Heartbeat will sync
      * agent state to the orchestrator's AgentRouter.
@@ -111,7 +103,7 @@ public:
     void setAgentRouter(orchestrator::AgentRouter* router);
 
     /**
-     * @brief PR-C3: durable registry + liveness cache wiring.
+     * @brief Durable registry + liveness cache wiring.
      *
      * RegisterAgent/UnregisterAgent/Heartbeat persist agent_registry rows
      * through the runtime repository (PostgreSQL is the source of truth);
@@ -137,7 +129,7 @@ private:
     // never below 5 minutes); Heartbeat reuses it so both paths stay aligned.
     std::unordered_map<std::string, int> agent_liveness_ttl_;
 
-    // 标签/技能倒排索引（agent_id 集合），加速 FindAgents 查询
+    // Tag/skill inverted index (agent_id sets) for fast FindAgents queries
     std::unordered_map<std::string, std::set<std::string>> tags_index_;
     std::unordered_map<std::string, std::set<std::string>> skills_index_;
 
@@ -149,15 +141,15 @@ private:
     std::thread cleanup_thread_;
     std::atomic<bool> cleanup_running_{false};
 
-    // P0-2: Optional pointer to orchestrator's AgentRouter for registration sync
+    // Optional pointer to the orchestrator's AgentRouter for registration sync
     orchestrator::AgentRouter* router_ = nullptr;
 
-    // PR-C3: durable registry persistence (PostgreSQL) + Redis liveness cache
+    // Durable registry persistence (PostgreSQL) + Redis liveness cache
     common::AgentRuntimeRepository* runtime_repository_ = nullptr;
     common::RedisClient* redis_ = nullptr;
 };
 
-// 健康检查服务 gRPC 实现
+// Health check service gRPC implementation
 class HealthServiceImpl final
     : public agent_communication::HealthService::Service {
 public:

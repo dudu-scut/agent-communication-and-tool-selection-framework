@@ -6,7 +6,6 @@
 namespace agent_rpc {
 namespace mcp {
 
-// MCPToolManager 实现
 MCPToolManager::MCPToolManager(std::shared_ptr<IMCPClient> mcp_client)
     : mcp_client_(mcp_client)
     , alive_flag_(std::make_shared<std::atomic<bool>>(true)) {
@@ -27,7 +26,7 @@ bool MCPToolManager::initialize() {
         return false;
     }
     
-    // 刷新可用工具列表
+    // Refresh the available tool list
     refreshTools();
     
     initialized_ = true;
@@ -123,7 +122,7 @@ bool MCPToolManager::validateToolArguments(const std::string& tool_name, const s
     const MCPTool& tool = it->second;
     
     try {
-        // 解析工具的参数schema
+        // Parse the tool's parameter schema
         Json::Value schema;
         Json::Reader reader;
         if (!reader.parse(tool.input_schema, schema)) {
@@ -131,14 +130,14 @@ bool MCPToolManager::validateToolArguments(const std::string& tool_name, const s
             return false;
         }
         
-        // 解析提供的参数
+        // Parse the provided arguments
         Json::Value args;
         if (!reader.parse(arguments, args)) {
             LOG_WARN("Invalid JSON arguments for tool: " + tool_name);
             return false;
         }
         
-        // 基本验证：检查必需字段
+        // Basic validation: check required fields
         if (schema.isMember("required")) {
             const Json::Value& required = schema["required"];
             for (const auto& field : required) {
@@ -150,7 +149,7 @@ bool MCPToolManager::validateToolArguments(const std::string& tool_name, const s
             }
         }
         
-        // 基本验证：检查字段类型
+        // Basic validation: check field types
         if (schema.isMember("properties")) {
             const Json::Value& properties = schema["properties"];
             for (const auto& prop_name : properties.getMemberNames()) {
@@ -216,17 +215,14 @@ void MCPToolManager::refreshTools() {
 void MCPToolManager::processNotification(const std::string& plugin_name, const std::string& notification) {
     LOG_INFO("Received notification from plugin " + plugin_name + ": " + notification);
     
-    // 如果通知表明工具列表已更改，刷新工具列表
+    // Refresh tools if the notification indicates the tool list changed
     if (notification.find("tools_changed") != std::string::npos ||
         notification.find("tools_updated") != std::string::npos) {
         refreshTools();
     }
 }
 
-// MCPServiceIntegrator 实现
-MCPServiceIntegrator::MCPServiceIntegrator() {
-    // Logger 使用全局宏，不需要实例化
-}
+MCPServiceIntegrator::MCPServiceIntegrator() {}
 
 MCPServiceIntegrator::~MCPServiceIntegrator() {
     shutdown();
@@ -242,26 +238,26 @@ bool MCPServiceIntegrator::initialize(const std::string& mcp_server_path,
     mcp_server_path_ = mcp_server_path;
     mcp_args_ = mcp_args;
     
-    // 创建MCP客户端
+    // Create the MCP client
     mcp_client_ = std::make_shared<MCPClient>();
     
-    // 设置通知回调
+    // Set the notification callback
     mcp_client_->setNotificationCallback([this](const std::string& plugin_name, const std::string& notification) {
         if (tool_manager_) {
             tool_manager_->processNotification(plugin_name, notification);
         }
     });
     
-    // 连接到MCP服务器
+    // Connect to the MCP server
     if (!mcp_client_->connect(mcp_server_path_, mcp_args_)) {
         LOG_ERROR("Failed to connect to MCP server: " + mcp_server_path_);
         return false;
     }
     
-    // 创建工具管理器
+    // Create the tool manager
     tool_manager_ = std::make_shared<MCPToolManager>(mcp_client_);
     
-    // 初始化工具管理器
+    // Initialize the tool manager
     if (!tool_manager_->initialize()) {
         LOG_ERROR("Failed to initialize MCP tool manager");
         mcp_client_->disconnect();
@@ -338,8 +334,7 @@ void MCPServiceIntegrator::setMCPServerArgs(const std::vector<std::string>& args
 }
 
 void MCPServiceIntegrator::setLogLevel(common::LogLevel level) {
-    // 使用全局日志系统，不需要单独设置
-    (void)level;  // 避免未使用参数警告
+    (void)level;  // Avoid unused parameter warning
 }
 
 } // namespace mcp

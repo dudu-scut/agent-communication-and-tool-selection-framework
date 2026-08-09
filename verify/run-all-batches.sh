@@ -1,8 +1,6 @@
 #!/bin/bash
-# ============================================================================
 # Run all 8 verification batches sequentially
 # Usage: bash verify/run-all-batches.sh
-# ============================================================================
 
 set -euo pipefail
 
@@ -19,7 +17,7 @@ echo " 时间: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "========================================="
 echo ""
 
-# ---- Start services ----
+# Start services
 echo "--- 启动服务 ---"
 
 # Redis
@@ -54,7 +52,7 @@ echo -n "Redis: "; redis-cli ping 2>/dev/null || echo "DOWN"
 echo -n "Mock Agent: "; curl -s -o /dev/null -w "%{http_code}" http://localhost:5100/health 2>/dev/null; echo ""
 echo ""
 
-# ---- Run batches ----
+# Run batches
 declare -a BATCH_NAMES=(
     "Batch 1 — 基础设施"
     "Batch 2 — 韧性 + 反馈"
@@ -99,7 +97,7 @@ for i in 1 2 3 4 5 6 7 8; do
     echo ""
 done
 
-# ---- Summary ----
+# Summary
 echo "========================================="
 echo " NexusAI 验证测试报告"
 echo " 完成时间: $(date '+%Y-%m-%d %H:%M:%S')"

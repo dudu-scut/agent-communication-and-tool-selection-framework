@@ -1,14 +1,6 @@
 /**
  * @file test_task_manager_properties.cpp
  * @brief Property-based tests for Task Manager
- * 
- * Task 6.2, 6.4, 6.6: Property tests for task management
- * 
- * **Feature: a2a-integration**
- * **Property 2: Task ID Uniqueness**
- * **Property 3: Task State Machine Consistency**
- * **Property 6: Context ID Preservation**
- * **Validates: Requirements 3.2, 3.5, 4.2, 5.5, 6.1-6.6**
  */
 
 #include <gtest/gtest.h>
@@ -29,9 +21,7 @@
 
 using namespace agent_rpc::a2a_adapter;
 
-// ============================================================================
 // Test Fixtures
-// ============================================================================
 
 class TaskManagerPropertyTest : public ::testing::Test {
 protected:
@@ -47,9 +37,7 @@ protected:
     std::unique_ptr<TaskManagerWrapper> wrapper_;
 };
 
-// ============================================================================
 // Helper Generators
-// ============================================================================
 
 namespace rc {
 
@@ -100,10 +88,7 @@ Gen<a2a::TaskState> genValidTransitionFromRunning() {
 
 } // namespace rc
 
-// ============================================================================
 // Property 2: Task ID Uniqueness
-// **Validates: Requirements 3.2, 4.2, 6.1**
-// ============================================================================
 
 /**
  * Property 2.1: All created task IDs are unique
@@ -187,10 +172,7 @@ TEST_F(TaskManagerPropertyTest, ConcurrentTaskCreationUniqueness) {
     EXPECT_EQ(all_ids.size(), static_cast<size_t>(num_threads * tasks_per_thread));
 }
 
-// ============================================================================
 // Property 3: Task State Machine Consistency
-// **Validates: Requirements 6.1, 6.2, 6.3, 6.4, 6.5**
-// ============================================================================
 
 /**
  * Property 3.1: Valid state transitions succeed
@@ -325,10 +307,7 @@ TEST_F(TaskManagerPropertyTest, StateValidatorCorrectness) {
         a2a::TaskState::Canceled, a2a::TaskState::Running));
 }
 
-// ============================================================================
 // Property 6: Context ID Preservation
-// **Validates: Requirements 3.5, 5.5, 6.6**
-// ============================================================================
 
 /**
  * Property 6.1: Context ID is preserved across task operations
@@ -479,9 +458,7 @@ RC_GTEST_FIXTURE_PROP(TaskManagerPropertyTest, ContextHistoriesIsolated, ()) {
     RC_ASSERT(history2[0].get_text() == "Message for context 2");
 }
 
-// ============================================================================
 // Additional Unit Tests
-// ============================================================================
 
 TEST_F(TaskManagerPropertyTest, InitializeAndShutdown) {
     TaskManagerWrapper wrapper;
@@ -558,9 +535,7 @@ TEST_F(TaskManagerPropertyTest, ActiveTaskCount) {
     EXPECT_EQ(wrapper_->getActiveTaskCount(), 0u);
 }
 
-// ============================================================================
 // Main
-// ============================================================================
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

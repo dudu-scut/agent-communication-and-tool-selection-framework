@@ -1,9 +1,6 @@
 /**
  * @file tool_validator.cpp
- * @brief ToolValidator 实现
- * 
- * Requirements: 5.1, 5.2, 5.3, 5.4
- * Task 8: 实现 ToolValidator
+ * @brief ToolValidator implementation
  */
 
 #include "agent_rpc/mcp/rag/tool_validator.h"
@@ -30,24 +27,24 @@ ValidationResult ToolValidator::validate(const RetrievedTool& tool) {
     auto start_time = std::chrono::steady_clock::now();
     
     if (!tool_call_func_) {
-        // 没有设置工具调用函数，默认视为有效
+        // No tool call function set; treat as valid by default
         result.is_valid = true;
         return result;
     }
     
     try {
-        // 生成测试查询
+        // Generate test queries
         auto test_queries = generateTestQueries(tool);
         
         if (test_queries.empty()) {
-            // 无法生成测试查询，默认视为有效
+            // Cannot generate test queries; treat as valid by default
             result.is_valid = true;
             return result;
         }
         
-        // 执行测试查询（带超时）
+        // Execute test queries (with timeout)
         for (const auto& query : test_queries) {
-            // 使用 async 实现超时
+            // Use async to implement the timeout
             auto future = std::async(std::launch::async, [this, &tool, &query]() {
                 return executeTestQuery(tool.name, query);
             });
@@ -123,17 +120,17 @@ std::vector<RetrievedTool> ToolValidator::filterInvalid(
 std::vector<std::string> ToolValidator::generateTestQueries(const RetrievedTool& tool) {
     std::vector<std::string> queries;
     
-    // 尝试从 input_schema 生成测试查询
+    // Try to generate test queries from the input_schema
     if (!tool.input_schema.empty()) {
         try {
             json schema = json::parse(tool.input_schema);
             
-            // 生成一个简单的测试参数
+            // Generate a simple test parameter object
             json test_params = json::object();
             
             if (schema.contains("properties")) {
                 for (auto& [key, value] : schema["properties"].items()) {
-                    // 根据类型生成测试值
+                    // Generate a test value based on the type
                     std::string type = value.value("type", "string");
                     
                     if (type == "string") {
@@ -148,7 +145,7 @@ std::vector<std::string> ToolValidator::generateTestQueries(const RetrievedTool&
                         test_params[key] = json::object();
                     }
                     
-                    // 限制参数数量
+                    // Limit the number of parameters
                     if (test_params.size() >= 3) {
                         break;
                     }
@@ -160,15 +157,15 @@ std::vector<std::string> ToolValidator::generateTestQueries(const RetrievedTool&
             }
             
         } catch (...) {
-            // 解析失败，使用空参数
+            // Parse failed; use empty arguments
             queries.push_back("{}");
         }
     } else {
-        // 没有 schema，使用空参数
+        // No schema; use empty arguments
         queries.push_back("{}");
     }
     
-    // 限制查询数量
+    // Limit the number of queries
     if (static_cast<int>(queries.size()) > config_.max_test_queries) {
         queries.resize(config_.max_test_queries);
     }
@@ -184,8 +181,8 @@ bool ToolValidator::executeTestQuery(const std::string& tool_name, const std::st
     try {
         auto result = tool_call_func_(tool_name, query);
         
-        // 只要不是严重错误就认为有效
-        // 参数错误等可能是测试查询不完整导致的
+        // Treat as valid unless the error is severe; parameter errors may be
+        // caused by incomplete test queries
         return result.success || 
                result.error.find("parameter") != std::string::npos ||
                result.error.find("argument") != std::string::npos;

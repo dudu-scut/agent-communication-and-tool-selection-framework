@@ -9,7 +9,7 @@
  *   2. End-to-end workflows against a real RpcServer + real PostgreSQL +
  *      real Redis + embedded mock A2A HTTP agent (no repository mocks).
  *
- * Mandatory coverage (TODO 3.5 / PR-E):
+ * Mandatory coverage:
  *   - Sandbox: real execution persists sandbox_runs + query/trace/cost;
  *     long-term memory untouched; cross-owner/unauthenticated refused.
  *   - Compare: up to 3 agents; per-agent results persisted independently;
@@ -85,9 +85,7 @@ std::string uniqueSuffix() {
     return std::to_string(ticks) + "-" + std::to_string(counter.fetch_add(1));
 }
 
-// ============================================================================
 // 1. Static source guards
-// ============================================================================
 
 TEST(WorkflowControlContractTest, NoRandomUuidFakeSuccessInUserExperienceService) {
     const std::string source =
@@ -148,9 +146,7 @@ TEST(WorkflowControlContractTest, PrEViewsCallRealRpcsWithoutPlaceholders) {
     EXPECT_NE(compare.find("compareAgents"), std::string::npos);
 }
 
-// ============================================================================
 // 2. Embedded mock A2A agent (same shape as the durable pipeline tests)
-// ============================================================================
 
 class MockA2AHttpServer {
 public:
@@ -261,9 +257,7 @@ private:
     std::thread thread_;
 };
 
-// ============================================================================
 // 3. End-to-end fixture: real RpcServer + PG + Redis + mock A2A
-// ============================================================================
 
 class WorkflowControlE2ETest : public ::testing::Test {
 protected:
@@ -499,9 +493,7 @@ protected:
     std::unique_ptr<agent_communication::UserExperienceService::Stub> ux_stub_;
 };
 
-// ============================================================================
 // Auth gate
-// ============================================================================
 
 TEST_F(WorkflowControlE2ETest, UnauthenticatedWorkflowControlCallsAreRejected) {
     startServer();
@@ -559,9 +551,7 @@ TEST_F(WorkflowControlE2ETest, UnauthenticatedWorkflowControlCallsAreRejected) {
     }
 }
 
-// ============================================================================
 // Sandbox
-// ============================================================================
 
 TEST_F(WorkflowControlE2ETest, SandboxExecutesThroughPipelineAndPersists) {
     startServer();
@@ -629,9 +619,7 @@ TEST_F(WorkflowControlE2ETest, SandboxValidationRejectsEmptyInput) {
     EXPECT_EQ(countRows("sandbox_runs", "owner_id", user.id), 0);
 }
 
-// ============================================================================
 // Autonomy + intervention linkage
-// ============================================================================
 
 TEST_F(WorkflowControlE2ETest, AutonomyLevelValidationAndSpoofedUserIdIgnored) {
     startServer();
@@ -709,9 +697,7 @@ TEST_F(WorkflowControlE2ETest, AutonomyLevelDecidesWhetherInterventionIsCreated)
     EXPECT_EQ(countRows("sandbox_runs", "owner_id", user.id), 1);
 }
 
-// ============================================================================
 // Intervention CAS
-// ============================================================================
 
 TEST_F(WorkflowControlE2ETest, InterventionProceedExecutesDeferredSandboxRun) {
     startServer();
@@ -899,9 +885,7 @@ TEST_F(WorkflowControlE2ETest, InterventionRejectsForeignUnknownAndInvalidInput)
               "pending");
 }
 
-// ============================================================================
 // Undo
-// ============================================================================
 
 TEST_F(WorkflowControlE2ETest, UndoRestoresInterventionExactlyOnce) {
     startServer();
@@ -1067,8 +1051,6 @@ TEST_F(WorkflowControlE2ETest, UndoInverseFailureKeepsActionRetryable) {
         EXPECT_EQ(repeat_status.error_code(), grpc::StatusCode::ALREADY_EXISTS);
     }
 }
-
-// ============================================================================
 
 TEST_F(WorkflowControlE2ETest, ComparePersistsIndependentPerAgentResults) {
     startServer();

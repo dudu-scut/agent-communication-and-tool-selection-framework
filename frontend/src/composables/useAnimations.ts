@@ -2,9 +2,9 @@ import { ref, onMounted, onUnmounted, type Ref } from 'vue'
 import { CountUp } from 'countup.js'
 
 /**
- * 列表项交错入场动画
- * 使用 IntersectionObserver 监听容器进入视口，
- * 进入后为每个子元素添加交错的 animation-delay
+ * Staggered entry animation for list children
+ * Uses IntersectionObserver to watch the container enter the viewport,
+ * then adds staggered animation-delay to each child
  */
 export function useStaggerAnimation(containerRef: Ref<HTMLElement | null>, delay = 80) {
   const isVisible = ref(false)
@@ -45,8 +45,8 @@ export function useStaggerAnimation(containerRef: Ref<HTMLElement | null>, delay
 }
 
 /**
- * 数字滚动动画（封装 countup.js）
- * 数字从0滚动到目标值，在元素进入视口时启动
+ * Count-up number animation (wraps countup.js)
+ * Rolls the number from 0 to the target value when the element enters the viewport
  */
 export function useCountUp(
   targetRef: Ref<HTMLElement | null>,
@@ -97,8 +97,8 @@ export function useCountUp(
 }
 
 /**
- * 发光效果控制
- * mouseenter 时添加发光 box-shadow，mouseleave 时移除
+ * Glow effect control
+ * Adds a glowing box-shadow on mouseenter and removes it on mouseleave
  */
 export function useGlowEffect(elementRef: Ref<HTMLElement | null>, color = 'rgba(99, 102, 241, 0.4)') {
   const isHovered = ref(false)

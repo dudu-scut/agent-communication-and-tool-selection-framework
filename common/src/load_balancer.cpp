@@ -9,7 +9,6 @@
 namespace agent_rpc {
 namespace common {
 
-// RoundRobinLoadBalancer 实现
 RoundRobinLoadBalancer::RoundRobinLoadBalancer() = default;
 
 ServiceEndpoint RoundRobinLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
@@ -46,7 +45,6 @@ void RoundRobinLoadBalancer::markEndpointStatus(const std::string& endpoint_id, 
     }
 }
 
-// RandomLoadBalancer 实现
 RandomLoadBalancer::RandomLoadBalancer() : gen_(rd_()) {}
 
 ServiceEndpoint RandomLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
@@ -76,7 +74,6 @@ void RandomLoadBalancer::markEndpointStatus(const std::string& endpoint_id, bool
     }
 }
 
-// LeastConnectionsLoadBalancer 实现
 LeastConnectionsLoadBalancer::LeastConnectionsLoadBalancer() = default;
 
 ServiceEndpoint LeastConnectionsLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
@@ -139,7 +136,6 @@ void LeastConnectionsLoadBalancer::decrementConnections(const std::string& endpo
     if (it != connection_counts_.end() && it->second > 0) it->second--;
 }
 
-// WeightedRoundRobinLoadBalancer 实现
 WeightedRoundRobinLoadBalancer::WeightedRoundRobinLoadBalancer() = default;
 
 ServiceEndpoint WeightedRoundRobinLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
@@ -190,7 +186,6 @@ void WeightedRoundRobinLoadBalancer::markEndpointStatus(const std::string& endpo
     }
 }
 
-// ConsistentHashLoadBalancer 实现
 ConsistentHashLoadBalancer::ConsistentHashLoadBalancer(int virtual_nodes) : virtual_nodes_(virtual_nodes) {}
 
 ServiceEndpoint ConsistentHashLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
@@ -265,7 +260,6 @@ ServiceEndpoint ConsistentHashLoadBalancer::findEndpoint(uint64_t hash_value) {
     return it->endpoint;
 }
 
-// LeastResponseTimeLoadBalancer 实现
 LeastResponseTimeLoadBalancer::LeastResponseTimeLoadBalancer() = default;
 
 ServiceEndpoint LeastResponseTimeLoadBalancer::selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) {
@@ -279,7 +273,7 @@ ServiceEndpoint LeastResponseTimeLoadBalancer::selectEndpoint(const std::vector<
         std::string id = ep.host + ":" + std::to_string(ep.port);
         auto it = endpoint_stats_.find(id);
         if (it == endpoint_stats_.end()) {
-            // Unknown endpoint — prefer it to explore new endpoints
+            // Prefer unknown endpoints (exploration), fallback to fastest known
             if (best_unknown_id.empty()) best_unknown_id = id;
         } else {
             auto rt = calculateAverageResponseTime(id);
@@ -289,7 +283,6 @@ ServiceEndpoint LeastResponseTimeLoadBalancer::selectEndpoint(const std::vector<
             }
         }
     }
-    // Prefer unknown endpoints (exploration), fallback to fastest known
     if (!best_unknown_id.empty()) {
         for (const auto& ep : endpoints) {
             if (ep.host + ":" + std::to_string(ep.port) == best_unknown_id) return ep;
@@ -326,8 +319,7 @@ void LeastResponseTimeLoadBalancer::updateResponseTime(const std::string& endpoi
     auto& stats = endpoint_stats_[endpoint_id];
     stats.request_count++;
     stats.last_update = std::chrono::steady_clock::now();
-    // Use latest response time for immediate selection accuracy;
-    // also maintain EMA for smoothed monitoring.
+    // Use latest response time for immediate selection accuracy
     stats.avg_response_time = response_time;
 }
 
@@ -337,7 +329,6 @@ std::chrono::milliseconds LeastResponseTimeLoadBalancer::calculateAverageRespons
     return it->second.avg_response_time;
 }
 
-// LoadBalancerFactory 实现
 std::unique_ptr<LoadBalancer> LoadBalancerFactory::createLoadBalancer(LoadBalanceStrategy strategy) {
     switch (strategy) {
         case LoadBalanceStrategy::ROUND_ROBIN: return std::make_unique<RoundRobinLoadBalancer>();
@@ -354,7 +345,6 @@ std::vector<std::string> LoadBalancerFactory::getAvailableStrategies() {
     return {"RoundRobin", "Random", "LeastConnections", "WeightedRoundRobin", "ConsistentHash", "LeastResponseTime"};
 }
 
-// LoadBalancerManager 实现
 LoadBalancerManager::LoadBalancerManager(LoadBalanceStrategy initial_strategy)
     : current_strategy_(initial_strategy),
       load_balancer_(LoadBalancerFactory::createLoadBalancer(initial_strategy)) {}

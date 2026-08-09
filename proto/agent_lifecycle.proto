@@ -23,13 +23,13 @@ message GetAgentCompareRequest {
 message GetAgentCompareResponse {
     common.Status status = 1;
     repeated common.AgentMetrics agents = 2;
-    // [PR-E] Real summary of the owner's persisted compare_runs rows
+    // Real summary of the owner's persisted compare_runs rows
     // (PostgreSQL is the source of truth; empty list is the true empty
     // state, never fabricated metrics).
     repeated CompareRunSummary runs = 3;
 }
 
-// [PR-E] One persisted compare run (compare_runs table).
+// One persisted compare run (compare_runs table).
 message CompareRunSummary {
     string run_id = 1;
     string request_text = 2;
@@ -39,7 +39,7 @@ message CompareRunSummary {
 }
 
 message SetAutonomyLevelRequest {
-    string user_id = 1; // [PR-E] ignored — owner comes from the auth context
+    string user_id = 1; // Ignored — owner comes from the auth context
     string agent_id = 2;
     int32 level = 3;    // 1..4 only
 }
@@ -51,7 +51,7 @@ message SetAutonomyLevelResponse {
 message UndoActionRequest {
     string trace_id = 1;  // legacy; superseded by action_id
     int32 step_index = 2; // legacy
-    // [PR-E] undo_actions.id of the reversible action to revert.
+    // undo_actions.id of the reversible action to revert.
     string action_id = 3;
 }
 
@@ -61,7 +61,7 @@ message UndoActionResponse {
     string message = 3;
 }
 
-// [PR-E] Parallel comparison of at most 3 healthy agents. Each agent runs
+// Parallel comparison of at most 3 healthy agents. Each agent runs
 // the same question through the durable pipeline with an independent
 // request_id/conversation; per-agent failures stay visible and never get
 // masked by an overall success.
@@ -91,6 +91,6 @@ service AgentLifecycleService {
     rpc GetAgentCompare(GetAgentCompareRequest) returns (GetAgentCompareResponse);
     rpc SetAutonomyLevel(SetAutonomyLevelRequest) returns (SetAutonomyLevelResponse);
     rpc UndoAction(UndoActionRequest) returns (UndoActionResponse);
-    // [PR-E] Real compare execution (see CompareAgentsRequest notes).
+    // Real compare execution (see CompareAgentsRequest notes).
     rpc CompareAgents(CompareAgentsRequest) returns (CompareAgentsResponse);
 }

@@ -6,7 +6,7 @@
 
 namespace a2a {
 
-// Fix #27: RAII wrappers for CURL resources to prevent leaks on exception paths.
+// RAII wrappers for CURL resources to prevent leaks on exception paths.
 // These ensure curl_easy handles and slist are cleaned up even when exceptions
 // are thrown between init and cleanup calls.
 struct CurlHandle {
@@ -32,19 +32,22 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
 }
 
 /**
- * @brief SSE流式数据处理上下文
- * 
- * 解决问题：CURL按网络包边界切分数据，可能在UTF-8多字节字符中间切断
- * 解决方案：按SSE事件边界（双换行符）切分，确保完整的JSON事件
+ * @brief Streaming context that handles UTF-8 boundary issues
+ *
+ * CURL may split data at network packet boundaries, potentially cutting
+ * multi-byte UTF-8 characters in half. Splitting on SSE event boundaries
+ * (double newlines) guarantees complete JSON events.
  */
 struct StreamContext {
     std::function<void(const std::string&)>* callback;
-    std::string buffer;  // 累积缓冲区，存储不完整的事件数据
-    std::string last_error;  // 存储最后一个错误
+    std::string buffer;  // Accumulates incomplete event data
+    std::string last_error;  // Stores the last error message
     
     /**
-     * @brief 检查字符串是否是有效的 UTF-8
-     * 如果字符串末尾有不完整的 UTF-8 序列，返回有效部分的长度
+     * @brief Returns the length of the valid UTF-8 prefix of a string
+     *
+     * If the string ends with an incomplete UTF-8 sequence, returns the
+     * length of the valid portion.
      */
     static size_t find_valid_utf8_end(const std::string& str) {
         if (str.empty()) return 0;
@@ -52,15 +55,15 @@ struct StreamContext {
         size_t len = str.length();
         size_t i = len;
         
-        // 从末尾向前查找，检查是否有不完整的 UTF-8 序列
-        // UTF-8 编码规则：
-        // - 单字节: 0xxxxxxx (0x00-0x7F)
-        // - 双字节起始: 110xxxxx (0xC0-0xDF)
-        // - 三字节起始: 1110xxxx (0xE0-0xEF)
-        // - 四字节起始: 11110xxx (0xF0-0xF7)
-        // - 后续字节: 10xxxxxx (0x80-0xBF)
+        // Scan backwards for an incomplete UTF-8 sequence.
+        // UTF-8 encoding rules:
+        // - Single byte: 0xxxxxxx (0x00-0x7F)
+        // - Two-byte lead: 110xxxxx (0xC0-0xDF)
+        // - Three-byte lead: 1110xxxx (0xE0-0xEF)
+        // - Four-byte lead: 11110xxx (0xF0-0xF7)
+        // - Continuation byte: 10xxxxxx (0x80-0xBF)
         
-        // 向前查找最多 4 个字节（UTF-8 最大长度）
+        // Scan back at most 4 bytes (maximum UTF-8 sequence length)
         size_t check_start = (len > 4) ? len - 4 : 0;
         
         for (i = len; i > check_start; ) {
@@ -68,52 +71,52 @@ struct StreamContext {
             unsigned char c = static_cast<unsigned char>(str[i]);
             
             if ((c & 0x80) == 0) {
-                // 单字节字符 (ASCII)，之后的都是有效的
+                // Single-byte character (ASCII); everything before is valid
                 return len;
             } else if ((c & 0xC0) == 0x80) {
-                // 后续字节，继续向前查找起始字节
+                // Continuation byte; keep scanning for the lead byte
                 continue;
             } else if ((c & 0xE0) == 0xC0) {
-                // 双字节起始，检查是否完整
+                // Two-byte lead; check whether the sequence is complete
                 size_t expected_len = 2;
                 size_t actual_len = len - i;
                 if (actual_len >= expected_len) {
-                    return len;  // 完整
+                    return len;  // Complete
                 } else {
-                    return i;  // 不完整，返回起始位置之前
+                    return i;  // Incomplete; return the position before the lead byte
                 }
             } else if ((c & 0xF0) == 0xE0) {
-                // 三字节起始，检查是否完整
+                // Three-byte lead; check whether the sequence is complete
                 size_t expected_len = 3;
                 size_t actual_len = len - i;
                 if (actual_len >= expected_len) {
-                    return len;  // 完整
+                    return len;  // Complete
                 } else {
-                    return i;  // 不完整
+                    return i;  // Incomplete
                 }
             } else if ((c & 0xF8) == 0xF0) {
-                // 四字节起始，检查是否完整
+                // Four-byte lead; check whether the sequence is complete
                 size_t expected_len = 4;
                 size_t actual_len = len - i;
                 if (actual_len >= expected_len) {
-                    return len;  // 完整
+                    return len;  // Complete
                 } else {
-                    return i;  // 不完整
+                    return i;  // Incomplete
                 }
             }
         }
         
-        return len;  // 默认返回全部
+        return len;  // Default: return everything
     }
     
     /**
-     * @brief 安全调用回调，捕获所有异常
+     * @brief Invoke the callback safely, swallowing all exceptions
      */
     void safe_callback(const std::string& data) {
         try {
             (*callback)(data);
         } catch (const std::exception& e) {
-            // 记录错误但不传播异常
+            // Record the error without propagating the exception
             last_error = e.what();
         } catch (...) {
             last_error = "Unknown exception in callback";
@@ -121,39 +124,39 @@ struct StreamContext {
     }
     
     /**
-     * @brief 处理接收到的数据块
-     * 
-     * SSE格式: "data: {...}\n\n"
-     * 按双换行符切分，确保每次回调传递完整的事件
+     * @brief Process an incoming data chunk
+     *
+     * SSE format: "data: {...}\n\n". Splitting on double newlines
+     * ensures each callback receives a complete event.
      */
     void process_chunk(const char* data, size_t size) {
         buffer.append(data, size);
         
-        // 按双换行符 (\n\n) 切分，处理完整的 SSE 事件
+        // Split on double newlines to extract complete SSE events
         size_t pos = 0;
         while (pos < buffer.size()) {
-            // 查找双换行符（SSE 事件分隔符）
+            // Find the SSE event delimiter (double newline)
             size_t event_end = buffer.find("\n\n", pos);
             if (event_end == std::string::npos) {
-                // 没有找到完整的事件，保留剩余数据
+                // No complete event yet; keep the remaining data
                 break;
             }
             
-            // 提取完整的事件（包含第一个换行符）
+            // Extract the complete event (including the first newline)
             std::string event = buffer.substr(pos, event_end - pos + 1);
             
-            // 验证 UTF-8 完整性
+            // Validate UTF-8 completeness
             size_t valid_end = find_valid_utf8_end(event);
             if (valid_end == event.length()) {
-                // UTF-8 完整，传递给回调
+                // UTF-8 is complete; forward to the callback
                 safe_callback(event);
             }
-            // 如果 UTF-8 不完整，跳过这个事件（不应该发生，因为我们按事件边界切分）
+            // Skip if UTF-8 is incomplete (should not happen since we split on event boundaries)
             
-            pos = event_end + 2;  // 跳过双换行符
+            pos = event_end + 2;  // Skip the double newline
         }
         
-        // 保留未处理的不完整数据
+        // Keep unprocessed incomplete data
         if (pos < buffer.size()) {
             buffer = buffer.substr(pos);
         } else {
@@ -162,11 +165,11 @@ struct StreamContext {
     }
     
     /**
-     * @brief 刷新剩余缓冲区（流结束时调用）
+     * @brief Flush the remaining buffer (called when the stream ends)
      */
     void flush() {
         if (!buffer.empty()) {
-            // 验证 UTF-8 完整性
+            // Validate UTF-8 completeness
             size_t valid_end = find_valid_utf8_end(buffer);
             if (valid_end > 0) {
                 std::string valid_data = buffer.substr(0, valid_end);
@@ -188,18 +191,18 @@ static size_t stream_callback(void* contents, size_t size, size_t nmemb, void* u
 }
 
 // curl_global_init is now called once in server/src/main.cpp.
-// This module no longer calls it independently (fixes #23).
+// This module no longer calls it independently.
 
 // PIMPL implementation
 class HttpClient::Impl {
 public:
-    Impl() : timeout_(120L) {  // 流式AI响应需要更长超时（120秒）
-        // curl_global_init is now centralized in server/src/main.cpp
+    Impl() : timeout_(120L) {  // Streaming AI responses need a longer timeout (120s)
+        // curl_global_init is centralized in server/src/main.cpp
     }
     
     ~Impl() {
-        // 不在这里调用 curl_global_cleanup()
-        // 由 CurlGlobalInit 单例在程序结束时处理
+        // Do not call curl_global_cleanup() here; the CurlGlobalInit
+        // singleton handles it at process exit.
     }
     
     long timeout_;
@@ -323,7 +326,7 @@ void HttpClient::post_stream(const std::string& url,
         throw A2AException("Failed to initialize CURL", ErrorCode::InternalError);
     }
     
-    // 创建流式处理上下文，处理UTF-8边界问题
+    // Create a streaming context to handle UTF-8 boundary issues
     StreamContext ctx;
     ctx.callback = &callback;
     
@@ -332,13 +335,13 @@ void HttpClient::post_stream(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, body.length());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);  // 传递上下文而非直接传递callback
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);  // Pass the context instead of the callback
     
-    // 流式请求：使用可配置的总超时防止无限连接（默认300s），
-    // 同时保留低速超时作为活性检测（60秒无数据则断开）
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);  // 总超时 300s，防止恶意服务器无限保持连接
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);  // 最低速度 1 byte/s
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);  // 60秒内低于最低速度则超时
+    // Total timeout prevents indefinite connections (default 300s);
+    // low-speed timeout acts as a liveness check (disconnect after 60s of no data)
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);  // Total timeout: prevent a malicious server from holding the connection forever
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);  // Minimum speed: 1 byte/s
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);  // Timeout if below minimum speed for 60s
     
     // Set headers
     struct curl_slist* header_list = nullptr;
@@ -354,7 +357,7 @@ void HttpClient::post_stream(const std::string& url,
     
     CURLcode res = curl_easy_perform(curl);
     
-    // 刷新剩余缓冲区
+    // Flush any remaining buffered data
     ctx.flush();
     
     curl_slist_free_all(header_list);

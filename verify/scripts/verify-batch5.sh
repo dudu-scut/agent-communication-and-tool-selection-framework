@@ -1,11 +1,9 @@
 #!/bin/bash
-# ============================================================================
-# Batch 5 Verification: Ops Tooling
+# Verification: Ops Tooling
 #  5.1 — Health dashboard data
 #  5.2 — Budget exceeded rejection
 #  5.3 — Query replay (exact mode)
 #  5.4 — Query replay (route mode)
-# ============================================================================
 
 source "$(dirname "$0")/helpers.sh"
 
@@ -14,7 +12,7 @@ precheck_services
 register_mock_agent "mock-general" "general" "1.0" "STABLE"
 sleep 1
 
-# ----- 5.1: Health dashboard data -------------------------------------------
+# 5.1: Health dashboard data
 scenario "5.1 — Health Dashboard Data"
 
 step "Send request then query agent metrics"
@@ -35,7 +33,7 @@ else
         assert_contains "$METRICS" "metrics"
 fi
 
-# ----- 5.2: Budget exceeded rejection ---------------------------------------
+# 5.2: Budget exceeded rejection
 scenario "5.2 — Budget Exceeded Rejection"
 
 step "Set user daily budget to effectively zero"
@@ -52,7 +50,7 @@ verify "Response indicates budget exceeded (RESOURCE_EXHAUSTED)" \
 
 cleanup_redis_keys "budget:*:verify-user-5-2:*"
 
-# ----- 5.3: Query replay (exact mode) ---------------------------------------
+# 5.3: Query replay (exact mode)
 scenario "5.3 — Query Replay — Exact Mode"
 
 step "Create a query to replay"
@@ -79,7 +77,7 @@ else
     verify_warn "Could not extract request_id (may need Orchestrator) — skipping exact replay" false
 fi
 
-# ----- 5.4: Query replay (route mode) ---------------------------------------
+# 5.4: Query replay (route mode)
 scenario "5.4 — Query Replay — Route Mode"
 
 if [ -n "$REPLAY_TRACE_ID" ]; then
@@ -91,6 +89,6 @@ else
     verify_warn "Could not extract request_id — skipping route replay" false
 fi
 
-# ----- Report ----------------------------------------------------------------
+# Report
 print_batch_report "Batch 5 — Ops Tooling"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

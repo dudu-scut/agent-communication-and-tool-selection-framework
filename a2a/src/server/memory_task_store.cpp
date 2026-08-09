@@ -58,7 +58,7 @@ std::vector<AgentMessage> MemoryTaskStore::get_history(const std::string& contex
                                                         int max_length) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // 查找对应的 task
+    // Look up the task
     auto it = tasks_.find(context_id);
     if (it == tasks_.end()) {
         return {};
@@ -66,12 +66,12 @@ std::vector<AgentMessage> MemoryTaskStore::get_history(const std::string& contex
     
     const auto& history = it->second.history();
     
-    // 如果 max_length <= 0 或大于历史长度，返回全部
+    // Return everything if max_length is not positive or exceeds history size
     if (max_length <= 0 || static_cast<size_t>(max_length) >= history.size()) {
         return history;
     }
     
-    // 返回最近的 max_length 条消息
+    // Return the most recent max_length messages
     return std::vector<AgentMessage>(
         history.end() - max_length,
         history.end()

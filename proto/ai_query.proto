@@ -4,54 +4,52 @@ package agent_communication;
 
 import "common.proto";
 
-// ============================================================================
 // AI Query Messages
-// ============================================================================
 
-// Agent Metrics request (Batch 2 - AgentCard transparency)
+// Agent Metrics request
 message GetAgentMetricsRequest {
     string agent_id = 1;
 }
 
-// Agent Metrics response (Batch 2 - AgentCard transparency)
+// Agent Metrics response
 message GetAgentMetricsResponse {
     common.Status status = 1;
     common.AgentMetrics metrics = 2;
 }
 
-// Agent偏好设置
+// Agent preferences
 message AgentPreference {
-    repeated string preferred_skills = 1;  // 偏好技能
-    repeated string preferred_agents = 2;  // 偏好Agent ID
-    bool allow_fallback = 3;               // 允许回退到其他Agent
+    repeated string preferred_skills = 1;  // Preferred skills
+    repeated string preferred_agents = 2;  // Preferred agent IDs
+    bool allow_fallback = 3;               // Allow fallback to other agents
 }
 
-// 系统上下文: 平台注入的记忆和对话历史
+// System context: platform-injected memory and conversation history
 message SystemContext {
-    string user_id = 1;                    // 用户ID
-    string user_memory = 2;                // Tier 2: 用户长期记忆 (格式化文本)
-    string conversation_history = 3;       // Tier 1: 当前Agent对话历史
-    string cross_agent_summary = 4;        // 跨Agent切换时的上下文摘要
+    string user_id = 1;                    // User ID
+    string user_memory = 2;                // Tier 2: long-term user memory (formatted text)
+    string conversation_history = 3;       // Tier 1: current agent conversation history
+    string cross_agent_summary = 4;        // Context summary when switching agents
 }
 
-// AI查询请求
+// AI query request
 message AIQueryRequest {
-    string request_id = 1;           // 请求唯一ID
-    string question = 2;             // 用户问题
-    string context_id = 3;           // 上下文ID (用于多轮对话)
-    int32 history_length = 4;        // 历史消息长度限制
-    int32 timeout_seconds = 5;       // 超时时间
-    map<string, string> metadata = 6; // 元数据
-    AgentPreference preference = 7;   // Agent偏好设置
-    string user_id = 8;              // 用户ID (登录后注入)
-    SystemContext system_context = 9; // 平台注入的系统上下文 (记忆+历史)
-    // [PR-E] 沙箱执行标志：复用同一 durable pipeline，但跳过长期记忆
-    // (memory hints / agent-switch 摘要) 写入路径；预算/owner/trace/cost
-    // 等六步流程与正常查询完全一致。
+    string request_id = 1;
+    string question = 2;
+    string context_id = 3;           // Context ID (multi-turn)
+    int32 history_length = 4;        // History length limit
+    int32 timeout_seconds = 5;
+    map<string, string> metadata = 6;
+    AgentPreference preference = 7;
+    string user_id = 8;              // User ID (injected after login)
+    SystemContext system_context = 9; // Platform-injected system context (memory + history)
+    // Sandbox execution flag: reuses the same durable pipeline but skips the
+    // long-term memory (memory hints / agent-switch summary) write path;
+    // budget/owner/trace/cost processing matches a normal query exactly.
     bool sandbox = 10;
 }
 
-// 产物
+// Artifact
 message Artifact {
     string name = 1;
     string mime_type = 2;
@@ -59,48 +57,48 @@ message Artifact {
     map<string, string> metadata = 4;
 }
 
-// AI查询响应
+// AI query response
 message AIQueryResponse {
-    string request_id = 1;           // 请求ID
-    common.Status status = 2;        // 状态
-    string answer = 3;               // AI回答
-    string agent_id = 4;             // 处理的Agent ID
-    string agent_name = 5;           // 处理的Agent名称
-    string task_id = 6;              // A2A任务ID
-    string context_id = 7;           // 上下文ID
-    repeated Artifact artifacts = 8;  // 产物列表
-    int64 processing_time_ms = 9;    // 处理时间
-    map<string, string> memory_hints = 10; // Agent报告的用户记忆 (方式二: Agent上报, 平台存储)
+    string request_id = 1;
+    common.Status status = 2;
+    string answer = 3;
+    string agent_id = 4;
+    string agent_name = 5;
+    string task_id = 6;
+    string context_id = 7;
+    repeated Artifact artifacts = 8;
+    int64 processing_time_ms = 9;
+    map<string, string> memory_hints = 10; // Agent-reported user memory (agent reports, platform stores)
 }
 
-// 流式事件
+// Stream event
 message AIStreamEvent {
     string event_id = 1;
-    // event_type 取值:
-    //   "partial"           — 流式内容片段 (content: 文本片段)
-    //   "status"            — 状态变更 (content: 描述信息)
-    //   "complete"          — 请求完成
-    //   "error"             — 错误 (content: 错误信息)
-    //   "plan"              — 多 Agent 执行计划 (content: ExecutionPlan JSON)
-    //   "subtask_start"     — 子任务开始 (task_state: subtask_id)
-    //   "subtask_complete"  — 子任务完成 (task_state: subtask_id, content: 结果摘要)
+    // event_type values:
+    //   "partial"           — streaming content fragment (content: text chunk)
+    //   "status"            — status change (content: description)
+    //   "complete"          — request completed
+    //   "error"             — error (content: error message)
+    //   "plan"              — multi-agent execution plan (content: ExecutionPlan JSON)
+    //   "subtask_start"     — subtask started (task_state: subtask_id)
+    //   "subtask_complete"  — subtask completed (task_state: subtask_id, content: result summary)
     string event_type = 2;
     string content = 3;
     string task_state = 4;
     string context_id = 5;
     int64 timestamp = 6;
-    string trace_summary = 8;      // [NEW Batch1] trace summary on 'complete' events
-    string activity_json = 9;      // [Batch4 U3] JSON activity record for feed
-    bool intervention_required = 10; // [Batch4 U3] true when user action needed
+    string trace_summary = 8;      // Trace summary on 'complete' events
+    string activity_json = 9;      // JSON activity record for feed
+    bool intervention_required = 10; // True when user action is needed
 }
 
-// 查询状态请求
+// Query status request
 message QueryStatusRequest {
     string task_id = 1;
     string context_id = 2;
 }
 
-// Agent消息 (用于历史)
+// Agent message (for history)
 message AgentHistoryMessage {
     string message_id = 1;
     string role = 2;                 // "user", "agent", "system"
@@ -108,28 +106,26 @@ message AgentHistoryMessage {
     int64 timestamp = 4;
 }
 
-// 查询状态响应
+// Query status response
 message QueryStatusResponse {
     common.Status status = 1;
     string task_state = 2;
     repeated AgentHistoryMessage history = 3;
 }
 
-// ============================================================================
 // AI Query Service
-// ============================================================================
 
-// AI查询服务
+// AI query service
 service AIQueryService {
-    // 同步查询
+    // Synchronous query
     rpc Query(AIQueryRequest) returns (AIQueryResponse);
 
-    // 流式查询
+    // Streaming query
     rpc QueryStream(AIQueryRequest) returns (stream AIStreamEvent);
 
-    // 获取查询状态
+    // Get query status
     rpc GetQueryStatus(QueryStatusRequest) returns (QueryStatusResponse);
 
-    // 获取Agent运行时指标 (Batch 2 - AgentCard透明度)
+    // Get agent runtime metrics
     rpc GetAgentMetrics(GetAgentMetricsRequest) returns (GetAgentMetricsResponse);
 }

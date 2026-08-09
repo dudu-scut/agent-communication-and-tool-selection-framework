@@ -1,6 +1,6 @@
 /**
  * @file Calculator.cpp
- * @brief MCP Calculator Plugin - 数学计算工具
+ * @brief MCP Calculator Plugin - math calculation tool
  */
 
 #include <cmath>
@@ -14,7 +14,7 @@
 
 using json = nlohmann::json;
 
-// 表达式解析器
+// Expression parser
 class ExpressionParser {
 public:
     static double evaluate(const std::string& expr) {
@@ -148,7 +148,7 @@ static long long factorial(int n) {
     return result;
 }
 
-// 工具定义
+// Tool definitions
 static PluginTool methods[] = {
     {"calculator", "Evaluates a mathematical expression", 
      "{\"type\":\"object\",\"properties\":{\"expression\":{\"type\":\"string\",\"description\":\"Math expression\"}},\"required\":[\"expression\"]}"},

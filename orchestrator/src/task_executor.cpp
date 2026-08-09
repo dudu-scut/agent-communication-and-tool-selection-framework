@@ -1,6 +1,6 @@
 /**
  * @file task_executor.cpp
- * @brief TaskExecutor — DAG execution engine implementation (P4-2)
+ * @brief TaskExecutor — DAG execution engine implementation
  */
 
 #include "agent_rpc/orchestrator/task_executor.h"
@@ -110,7 +110,7 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
             // Multiple subtasks — execute in parallel via std::async
             std::vector<std::pair<std::string, std::future<SubTaskResult>>> futures;
 
-            // [Batch 1] Capture parent trace context for subtask thread propagation
+            // Capture parent trace context for subtask thread propagation
             std::string parent_trace_id;
             std::string parent_user_id;
             auto* parent_trace = agent_rpc::common::TraceContext::current();
@@ -136,7 +136,7 @@ std::unordered_map<std::string, SubTaskResult> TaskExecutor::execute(
                     std::async(std::launch::async,
                         [this, &st, p = std::move(prompt), &call_agent,
                          parent_trace_id, parent_user_id]() {
-                            // [Batch 1] Propagate trace context to subtask thread
+                            // Propagate trace context to subtask thread
                             agent_rpc::common::TraceContext::init(parent_user_id, "");
                             auto* trace = agent_rpc::common::TraceContext::current();
                             trace->startSpan("subtask_" + st.id, "executor");

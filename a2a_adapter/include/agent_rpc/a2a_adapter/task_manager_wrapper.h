@@ -1,9 +1,6 @@
 /**
  * @file task_manager_wrapper.h
  * @brief Task Manager Wrapper - integrates A2A TaskManager with RPC framework
- * 
- * Task 6.1: 集成TaskManager任务管理器
- * Requirements: 6.1, 9.4
  */
 
 #pragma once
@@ -111,8 +108,6 @@ public:
      */
     void shutdown();
     
-    // === Task Operations ===
-    
     /**
      * @brief Create a new task with unique ID
      * @param context_id Optional context ID (generated if empty)
@@ -146,8 +141,6 @@ public:
      */
     a2a::AgentTask cancelTask(const std::string& task_id);
     
-    // === State Management ===
-    
     /**
      * @brief Update task state with validation
      * @param task_id Task identifier
@@ -175,8 +168,6 @@ public:
      */
     void setStateChangeCallback(TaskStateCallback callback);
     
-    // === Message & History ===
-    
     /**
      * @brief Add message to task history
      * @param task_id Task identifier
@@ -202,8 +193,6 @@ public:
      */
     std::vector<std::string> getTasksByContext(const std::string& context_id);
     
-    // === Message Processing ===
-    
     /**
      * @brief Set message handler callback
      */
@@ -216,16 +205,12 @@ public:
      */
     a2a::A2AResponse processMessage(const a2a::MessageSendParams& params);
     
-    // === Artifact Management ===
-    
     /**
      * @brief Add artifact to task
      * @param task_id Task identifier
      * @param artifact Artifact to add
      */
     void addArtifact(const std::string& task_id, const a2a::Artifact& artifact);
-    
-    // === Statistics ===
     
     /**
      * @brief Get total number of tasks created

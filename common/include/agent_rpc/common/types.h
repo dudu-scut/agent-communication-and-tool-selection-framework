@@ -15,13 +15,10 @@
 namespace agent_rpc {
 namespace common {
 
-// 前向声明
 class Logger;
 class Metrics;
 
-// 配置结构
 struct RpcConfig {
-    // RPC Server配置
     std::string server_address = "0.0.0.0:50051";
     int max_message_size = 4 * 1024 * 1024;  // 4MB
     int max_receive_message_size = 4 * 1024 * 1024;  // 4MB
@@ -32,7 +29,7 @@ struct RpcConfig {
     bool enable_service_registry = false;
     std::string registry_address = "localhost:8500";
     
-    // A2A配置 (Requirements: 9.1)
+    // A2A configuration
     std::string orchestrator_url = "http://localhost:5000";
     int orchestrator_port = 5000;
     std::string agent_registry_url = "http://localhost:8500";
@@ -43,7 +40,6 @@ struct RpcConfig {
     int a2a_history_length = 10;
 };
 
-// 服务信息
 struct ServiceEndpoint {
     std::string host;
     int port;
@@ -57,7 +53,6 @@ struct ServiceEndpoint {
     std::chrono::steady_clock::time_point last_heartbeat;
 };
 
-// 消息队列
 template<typename T>
 class MessageQueue {
 public:
@@ -93,7 +88,6 @@ private:
     std::condition_variable condition_;
 };
 
-// 回调函数类型定义
 using MessageHandler = std::function<void(const std::string&)>;
 using ErrorHandler = std::function<void(const std::string&, int)>;
 using HealthCheckHandler = std::function<bool()>;

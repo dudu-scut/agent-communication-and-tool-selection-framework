@@ -1,4 +1,4 @@
--- Batch 1: Shared infrastructure tables
+-- Shared infrastructure tables
 -- Run: psql -U <user> -d <dbname> -f sql/001_shared_tables.sql
 
 -- Table 1: agent_calls — every Agent HTTP call recorded by a2a_adapter

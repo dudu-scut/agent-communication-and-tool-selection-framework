@@ -12,10 +12,7 @@ namespace common {
 MemoryService::MemoryService(std::shared_ptr<RedisClient> redis)
     : redis_(std::move(redis)) {}
 
-// ============================================================================
-// Tier 1: 对话历史 (Redis list, JSON-encoded messages)
-// ============================================================================
-
+// Tier 1: conversation history (Redis list, JSON-encoded messages)
 void MemoryService::appendMessage(const std::string& context_id,
                                     const std::string& agent_id,
                                     const std::string& role,
@@ -33,7 +30,6 @@ void MemoryService::appendMessage(const std::string& context_id,
 
     // Trim to max size
     redis_->ltrim(key, -kMaxHistoryPerAgent, -1);
-
     // Update last active agent
     redis_->set(lastAgentKey(context_id), agent_id);
 }
@@ -60,10 +56,7 @@ void MemoryService::setLastAgent(const std::string& context_id,
     redis_->set(lastAgentKey(context_id), agent_id);
 }
 
-// ============================================================================
-// Tier 2: 用户长期记忆 (Redis hash)
-// ============================================================================
-
+// Tier 2: user long-term memory (Redis hash)
 void MemoryService::setUserMemory(const std::string& user_id,
                                     const std::string& key,
                                     const std::string& value) {
@@ -96,10 +89,7 @@ void MemoryService::updateUserMemoryFromHints(
     }
 }
 
-// ============================================================================
-// 跨Agent摘要 (Redis string)
-// ============================================================================
-
+// Cross-agent summary (Redis string)
 void MemoryService::setCrossAgentSummary(const std::string& context_id,
                                             const std::string& summary) {
     redis_->set(summaryKey(context_id), summary);
@@ -112,10 +102,7 @@ std::string MemoryService::getCrossAgentSummary(
     return summary;
 }
 
-// ============================================================================
-// SystemContext 构建
-// ============================================================================
-
+// SystemContext construction
 agent_communication::SystemContext MemoryService::buildSystemContext(
     const std::string& user_id,
     const std::string& context_id,
@@ -125,7 +112,7 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
     agent_communication::SystemContext ctx;
     ctx.set_user_id(user_id);
 
-    // Batch 4 U2: Build user profile summary
+    // Build user profile summary
     std::string profile_prefix;
     if (!user_id.empty()) {
         std::string profile_raw;
@@ -145,24 +132,19 @@ agent_communication::SystemContext MemoryService::buildSystemContext(
         }
     }
 
-    // Tier 2: User long-term memory (prepend profile if available)
+    // Tier 2: user long-term memory, prefixed with the profile summary when available
     ctx.set_user_memory(profile_prefix + getUserMemory(user_id));
 
-    // Tier 1: 当前Agent对话历史 (路由前agent_id为空，跳过)
+    // Tier 1: current agent conversation history (skip when agent_id is empty, i.e. pre-routing)
     if (!agent_id.empty()) {
         ctx.set_conversation_history(
             getConversationHistory(context_id, agent_id, max_history));
     }
 
-    // 跨Agent摘要
     ctx.set_cross_agent_summary(getCrossAgentSummary(context_id));
 
     return ctx;
 }
-
-// ============================================================================
-// 格式化
-// ============================================================================
 
 std::string MemoryService::formatHistory(
     const std::vector<std::string>& raw_messages,

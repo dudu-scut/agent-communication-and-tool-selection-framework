@@ -3,7 +3,6 @@
  * @brief AI Query Service implementation for gRPC
  * 
  * Requirements: 2.1, 2.2, 2.5
- * Task 13: RPC服务扩展
  *
  * Architecture: This class composes three helper modules:
  *   - OrchestrationServiceImpl  (ExecutePlan, ReplayQuery, ExportConversation)
@@ -106,10 +105,6 @@ public:
      */
     bool isAvailable() const;
     
-    // ========================================================================
-    // AIQueryService gRPC Methods
-    // ========================================================================
-    
     grpc::Status Query(
         grpc::ServerContext* context,
         const agent_communication::AIQueryRequest* request,
@@ -130,10 +125,6 @@ public:
         const agent_communication::GetAgentMetricsRequest* request,
         agent_communication::GetAgentMetricsResponse* response) override;
 
-    // ========================================================================
-    // OrchestrationService gRPC Methods (delegated to OrchestrationServiceImpl)
-    // ========================================================================
-
     grpc::Status ExecutePlan(
         grpc::ServerContext* context,
         const agent_communication::ExecutePlanRequest* request,
@@ -149,10 +140,6 @@ public:
         const agent_communication::ExportConversationRequest* request,
         agent_communication::ExportConversationResponse* response) override;
     
-    // ========================================================================
-    // Accessors
-    // ========================================================================
-    
     a2a_adapter::A2AAdapter* getA2AAdapter() { return a2a_adapter_.get(); }
 
     orchestrator::AgentRouter* getAgentRouter() { return agent_router_.get(); }
@@ -165,9 +152,6 @@ public:
     common::MemoryService* getMemoryService() { return memory_service_.get(); }
 
 private:
-    // ========================================================================
-    // Core dependencies
-    // ========================================================================
     std::unique_ptr<a2a_adapter::A2AAdapter> a2a_adapter_;
     std::shared_ptr<common::CircuitBreaker> circuit_breaker_;
     common::RpcConfig rpc_config_;
@@ -175,9 +159,7 @@ private:
     std::unique_ptr<common::MemoryService> memory_service_;
     common::RedisClient* redis_client_ = nullptr;
 
-    // ========================================================================
     // Durable pipeline dependencies (non-owning; RpcServer owns the objects)
-    // ========================================================================
     common::PostgresStore* store_ = nullptr;
     common::QueryDomainRepository* domain_repo_ = nullptr;
     common::PostgresBudgetRepository* budget_repo_ = nullptr;
@@ -228,9 +210,7 @@ private:
     // Non-owning; RpcServer owns the repository.
     common::AgentRuntimeRepository* invocation_repository_ = nullptr;
 
-    // ========================================================================
-    // Multi-Agent Orchestration (P4-4)
-    // ========================================================================
+    // Multi-agent orchestration
     std::unique_ptr<orchestrator::AgentRouter> agent_router_;
     std::unique_ptr<orchestrator::TaskPlanner> task_planner_;
     std::unique_ptr<orchestrator::TaskExecutor> task_executor_;
@@ -240,9 +220,6 @@ private:
     // Memory: LLM client for cross-agent summary generation
     std::unique_ptr<LLMClient> memory_llm_client_;
 
-    // ========================================================================
-    // Composed modules
-    // ========================================================================
     std::unique_ptr<OrchestrationServiceImpl> orchestration_impl_;
     std::unique_ptr<MultiAgentHandler> multi_agent_handler_;
     QueryHelpers helpers_;

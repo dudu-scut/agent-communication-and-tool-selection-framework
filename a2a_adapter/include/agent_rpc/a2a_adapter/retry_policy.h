@@ -1,9 +1,6 @@
 /**
  * @file retry_policy.h
  * @brief Retry policy for A2A operations
- * 
- * Requirements: 10.2
- * Task 15: 日志和指标集成 - 重试策略
  */
 
 #pragma once

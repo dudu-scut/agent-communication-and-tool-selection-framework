@@ -1,17 +1,15 @@
 #!/bin/bash
-# ============================================================================
-# Batch 1 Verification: Infrastructure
+# Verification: Infrastructure
 #  1.1 — Full trace propagation
 #  1.2 — Background scheduler self-check
 #  1.3 — Token cost metering
 #  1.4 — Thread safety isolation
-# ============================================================================
 
 source "$(dirname "$0")/helpers.sh"
 
 precheck_services
 
-# ----- 1.1: Full trace propagation ------------------------------------------
+# 1.1: Full trace propagation
 scenario "1.1 — Full Trace Propagation"
 
 step "Send QueryStream request"
@@ -39,7 +37,7 @@ if [ -n "$TRACE_ID" ]; then
         assert_pg_row_exists "trace_spans" "trace_id = '$TRACE_ID'"
 fi
 
-# ----- 1.2: Background scheduler self-check ---------------------------------
+# 1.2: Background scheduler self-check
 scenario "1.2 — Background Scheduler Self-Check"
 
 step "Wait 6s for scheduler tick"
@@ -54,7 +52,7 @@ else
     verify_warn "Server log file not found at $LOG_FILE" false
 fi
 
-# ----- 1.3: Token cost metering ---------------------------------------------
+# 1.3: Token cost metering
 scenario "1.3 — Token Cost Metering"
 
 cleanup_redis_keys "cost:verify-user-2:*" || true
@@ -72,7 +70,7 @@ verify_warn "Redis cost key exists (CostTracker active; value may be 0 without O
 verify_warn "PG token_usage table has new row (requires psql)" \
     assert_pg_row_exists "token_usage" "user_id = 'verify-user-2'"
 
-# ----- 1.4: Thread safety isolation ------------------------------------------
+# 1.4: Thread safety isolation
 scenario "1.4 — Thread Safety Isolation"
 
 step "Send 3 concurrent requests with different user_ids"
@@ -112,6 +110,6 @@ fi
 
 rm -rf "$TEMP_DIR"
 
-# ----- Report ----------------------------------------------------------------
+# Report
 print_batch_report "Batch 1 — Infrastructure"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

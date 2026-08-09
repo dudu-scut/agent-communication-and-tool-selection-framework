@@ -1,4 +1,4 @@
-# 查找Google Test
+# Find Google Test
 find_package(GTest REQUIRED)
 
 add_executable(test_rpc_framework test_rpc_framework.cpp)
@@ -12,10 +12,10 @@ target_include_directories(test_rpc_framework PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
 )
 
-# 序列化测试
+# Serialization tests
 add_executable(test_serialization test_serialization.cpp)
 
-# 链接库
+# Link libraries
 target_link_libraries(test_serialization 
     agent_rpc_common
     proto_lib
@@ -27,13 +27,13 @@ target_link_libraries(test_serialization
     ${UUID_LIB}
 )
 
-# 包含目录
+# Include directories
 target_include_directories(test_serialization PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_BINARY_DIR}/../proto
 )
 
-# A2A集成测试
+# A2A integration tests
 add_executable(test_a2a_integration test_a2a_integration.cpp)
 
 target_link_libraries(test_a2a_integration 
@@ -49,15 +49,13 @@ target_include_directories(test_a2a_integration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
 )
 
-# 添加测试
+# Register tests
 enable_testing()
 add_test(NAME RpcFrameworkTest COMMAND test_rpc_framework)
 add_test(NAME SerializationTest COMMAND test_serialization)
 add_test(NAME A2AIntegrationTest COMMAND test_a2a_integration)
 
-# Proto序列化往返属性测试
-# **Feature: a2a-integration, Property 11: Protobuf Serialization Round-Trip**
-# **Validates: Requirements 11.5**
+# Protobuf serialization round-trip property tests
 find_package(rapidcheck REQUIRED)
 
 add_executable(test_proto_roundtrip test_proto_roundtrip.cpp)
@@ -78,9 +76,7 @@ target_include_directories(test_proto_roundtrip PRIVATE
 
 add_test(NAME ProtoRoundTripTest COMMAND test_proto_roundtrip)
 
-# A2A适配器属性测试
-# **Feature: a2a-integration, Property 1, 7, 10**
-# **Validates: Requirements 5.1, 5.5, 8.1-8.4, 9.5, 10.1**
+# A2A adapter property tests
 add_executable(test_adapter_properties test_adapter_properties.cpp)
 
 target_link_libraries(test_adapter_properties 
@@ -105,9 +101,7 @@ target_include_directories(test_adapter_properties PRIVATE
 
 add_test(NAME AdapterPropertiesTest COMMAND test_adapter_properties)
 
-# Task Manager属性测试
-# **Feature: a2a-integration, Property 2, 3, 6**
-# **Validates: Requirements 3.2, 3.5, 4.2, 5.5, 6.1-6.6**
+# Task Manager property tests
 add_executable(test_task_manager_properties test_task_manager_properties.cpp)
 
 target_link_libraries(test_task_manager_properties 
@@ -132,9 +126,7 @@ target_include_directories(test_task_manager_properties PRIVATE
 
 add_test(NAME TaskManagerPropertiesTest COMMAND test_task_manager_properties)
 
-# Agent Router属性测试
-# **Feature: a2a-integration, Property 4, 8**
-# **Validates: Requirements 2.3, 3.4, 4.5, 10.3**
+# Agent Router property tests
 add_executable(test_agent_router_properties test_agent_router_properties.cpp)
 
 target_link_libraries(test_agent_router_properties 
@@ -169,15 +161,13 @@ target_link_libraries(test_orchestrator_common_link
 )
 add_test(NAME OrchestratorCommonLinkTest COMMAND test_orchestrator_common_link)
 
-# 安装测试
+# Install tests
 install(TARGETS test_serialization
     RUNTIME DESTINATION bin
 )
 
 
-# AI Query集成测试
-# **Feature: a2a-integration, Task 17: 集成测试**
-# **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 9.5, 10.2, 10.5**
+# AI Query integration tests
 add_executable(test_ai_query_integration test_ai_query_integration.cpp)
 
 target_link_libraries(test_ai_query_integration 
@@ -209,9 +199,7 @@ target_include_directories(test_ai_query_integration PRIVATE
 add_test(NAME AIQueryIntegrationTest COMMAND test_ai_query_integration)
 
 if(ENABLE_MCP)
-# MCP Agent集成测试
-# **Feature: a2a-integration, Task 20: MCP 集成测试**
-# **Validates: Requirements 12.1, 12.3, 12.5**
+# MCP Agent integration tests
 add_executable(test_mcp_integration test_mcp_integration.cpp)
 
 target_link_libraries(test_mcp_integration
@@ -230,9 +218,7 @@ target_include_directories(test_mcp_integration PRIVATE
 
 add_test(NAME MCPIntegrationTest COMMAND test_mcp_integration)
 
-# RAG-MCP 属性测试
-# **Feature: rag-mcp, Property 1-8**
-# **Validates: Requirements 1.3, 3.2, 3.3, 3.4, 4.1, 4.3, 7.2, 7.3**
+# RAG-MCP property tests
 add_executable(test_rag_mcp_properties test_rag_mcp_properties.cpp)
 
 target_link_libraries(test_rag_mcp_properties
@@ -305,7 +291,7 @@ target_include_directories(test_background_scheduler PRIVATE
 )
 add_test(NAME BackgroundSchedulerTest COMMAND test_background_scheduler)
 
-# TraceContext 单元测试
+# TraceContext unit tests
 add_executable(test_trace_context test_trace_context.cpp)
 target_link_libraries(test_trace_context
     agent_rpc_common
@@ -318,7 +304,7 @@ target_include_directories(test_trace_context PRIVATE
 )
 add_test(NAME TraceContextTest COMMAND test_trace_context)
 
-# CostTracker 单元测试
+# CostTracker unit tests
 add_executable(test_cost_tracker test_cost_tracker.cpp)
 target_link_libraries(test_cost_tracker
     agent_rpc_common
@@ -331,8 +317,8 @@ target_include_directories(test_cost_tracker PRIVATE
 )
 add_test(NAME CostTrackerTest COMMAND test_cost_tracker)
 
-# Redis 集成测试 (MemoryService + RedisClient)
-# 需要运行中的 Redis 实例，不可用时自动跳过
+# Redis integration tests (MemoryService + RedisClient)
+# Requires a running Redis instance; skipped automatically when unavailable
 add_executable(test_redis_services test_redis_services.cpp)
 target_link_libraries(test_redis_services
     agent_rpc_server
@@ -356,7 +342,7 @@ target_include_directories(test_redis_services PRIVATE
 )
 add_test(NAME RedisServicesTest COMMAND test_redis_services)
 
-# LoadBalancer 高级测试 (WeightedRoundRobin / ConsistentHash / LeastResponseTime / Manager)
+# LoadBalancer advanced tests (WeightedRoundRobin / ConsistentHash / LeastResponseTime / Manager)
 add_executable(test_load_balancer_advanced test_load_balancer_advanced.cpp)
 target_link_libraries(test_load_balancer_advanced
     agent_rpc_common
@@ -369,7 +355,7 @@ target_include_directories(test_load_balancer_advanced PRIVATE
 )
 add_test(NAME LoadBalancerAdvancedTest COMMAND test_load_balancer_advanced)
 
-# CircuitBreaker 边缘情况测试（bug-hunt: 状态转换、并发、配置验证）
+# CircuitBreaker edge case tests (bug-hunt: state transitions, concurrency, config validation)
 add_executable(test_circuit_breaker_edge test_circuit_breaker_edge.cpp)
 target_link_libraries(test_circuit_breaker_edge
     agent_rpc_common
@@ -382,7 +368,7 @@ target_include_directories(test_circuit_breaker_edge PRIVATE
 )
 add_test(NAME CircuitBreakerEdgeTest COMMAND test_circuit_breaker_edge)
 
-# TaskStateValidator 一致性测试（bug-hunt: isValidTransition ↔ getValidNextStates 一致性）
+# TaskStateValidator consistency tests (bug-hunt: isValidTransition <-> getValidNextStates consistency)
 add_executable(test_task_state_validator test_task_state_validator.cpp)
 target_link_libraries(test_task_state_validator
     a2a_adapter
@@ -398,7 +384,7 @@ target_include_directories(test_task_state_validator PRIVATE
 )
 add_test(NAME TaskStateValidatorTest COMMAND test_task_state_validator)
 
-# LoadBalancer 边缘情况测试（bug-hunt: const_cast、ConsistentHash 回归、空列表）
+# LoadBalancer edge case tests (bug-hunt: const_cast, ConsistentHash regression, empty lists)
 add_executable(test_load_balancer_edges test_load_balancer_edges.cpp)
 target_link_libraries(test_load_balancer_edges
     agent_rpc_common
@@ -411,7 +397,7 @@ target_include_directories(test_load_balancer_edges PRIVATE
 )
 add_test(NAME LoadBalancerEdgesTest COMMAND test_load_balancer_edges)
 
-# AgentInfo 边缘情况测试（bug-hunt: hasSkill/hasAnySkill 空输入语义、getSkillDescription 区分度）
+# AgentInfo edge case tests (bug-hunt: empty-input semantics of hasSkill/hasAnySkill, getSkillDescription specificity)
 add_executable(test_agent_info_edges test_agent_info_edges.cpp)
 target_link_libraries(test_agent_info_edges
     GTest::gtest
@@ -423,7 +409,7 @@ target_include_directories(test_agent_info_edges PRIVATE
 )
 add_test(NAME AgentInfoEdgesTest COMMAND test_agent_info_edges)
 
-# ErrorMapper 边缘情况测试（bug-hunt: 错误码映射完整性、网络异常分类）
+# ErrorMapper edge case tests (bug-hunt: error code mapping completeness, network error classification)
 add_executable(test_error_mapper test_error_mapper.cpp)
 target_link_libraries(test_error_mapper
     a2a_adapter
@@ -611,7 +597,7 @@ target_compile_definitions(test_query_domain_repository_contract PRIVATE
 )
 add_test(NAME QueryDomainRepositoryContractTest COMMAND test_query_domain_repository_contract)
 
-# PR-C2: Query/QueryStream durable pipeline（静态契约 + 真实 PG/Redis/gRPC 集成）
+# Query/QueryStream durable pipeline (static contract + real PG/Redis/gRPC integration)
 add_executable(test_durable_query_pipeline test_durable_query_pipeline.cpp)
 target_link_libraries(test_durable_query_pipeline
     agent_rpc_server
@@ -644,7 +630,7 @@ target_compile_definitions(test_durable_query_pipeline PRIVATE
 )
 add_test(NAME DurableQueryPipelineTest COMMAND test_durable_query_pipeline)
 
-# PR-D: Replay/Export/Share/Template 最小真实闭环（静态守卫 + 真实 PG/Redis/gRPC 集成）
+# Replay/Export/Share/Template minimal real end-to-end (static guards + real PG/Redis/gRPC integration)
 add_executable(test_durable_workflows_contract test_durable_workflows_contract.cpp)
 target_link_libraries(test_durable_workflows_contract
     agent_rpc_server
@@ -677,7 +663,7 @@ target_compile_definitions(test_durable_workflows_contract PRIVATE
 )
 add_test(NAME DurableWorkflowsContractTest COMMAND test_durable_workflows_contract)
 
-# PR-E: Sandbox/Compare/Intervention/Undo/Autonomy（静态守卫 + 真实 PG/Redis/gRPC 集成）
+# Sandbox/Compare/Intervention/Undo/Autonomy (static guards + real PG/Redis/gRPC integration)
 add_executable(test_workflow_control_contract test_workflow_control_contract.cpp)
 target_link_libraries(test_workflow_control_contract
     agent_rpc_server
@@ -710,7 +696,7 @@ target_compile_definitions(test_workflow_control_contract PRIVATE
 )
 add_test(NAME WorkflowControlContractTest COMMAND test_workflow_control_contract)
 
-# PR-C3: PG 可观测性、反馈与 Agent 生命周期（静态契约 + 真实 PG/Redis/gRPC 集成）
+# PG observability, feedback and agent lifecycle (static contract + real PG/Redis/gRPC integration)
 add_executable(test_agent_runtime_repository_contract test_agent_runtime_repository_contract.cpp)
 target_link_libraries(test_agent_runtime_repository_contract
     agent_rpc_server

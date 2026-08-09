@@ -1,4 +1,4 @@
--- Batch 7 U6: Session Sharing
+-- Session Sharing
 -- Run: psql -U <user> -d <dbname> -f sql/009_sharing.sql
 
 CREATE TABLE IF NOT EXISTS shared_sessions (

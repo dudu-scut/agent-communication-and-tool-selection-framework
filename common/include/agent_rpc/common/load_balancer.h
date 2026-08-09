@@ -14,35 +14,29 @@
 namespace agent_rpc {
 namespace common {
 
-// 负载均衡策略枚举
+// Load balancing strategies
 enum class LoadBalanceStrategy {
-    ROUND_ROBIN,        // 轮询
-    RANDOM,             // 随机
-    LEAST_CONNECTIONS,  // 最少连接
-    WEIGHTED_ROUND_ROBIN, // 加权轮询
-    CONSISTENT_HASH,    // 一致性哈希
-    LEAST_RESPONSE_TIME // 最少响应时间
+    ROUND_ROBIN,        // round robin
+    RANDOM,             // random
+    LEAST_CONNECTIONS,  // least connections
+    WEIGHTED_ROUND_ROBIN, // weighted round robin
+    CONSISTENT_HASH,    // consistent hash
+    LEAST_RESPONSE_TIME // least response time
 };
 
-// 负载均衡器接口
 class LoadBalancer {
 public:
     virtual ~LoadBalancer() = default;
     
-    // 选择服务端点
     virtual ServiceEndpoint selectEndpoint(const std::vector<ServiceEndpoint>& endpoints) = 0;
     
-    // 更新服务端点列表
     virtual void updateEndpoints(const std::vector<ServiceEndpoint>& endpoints) = 0;
     
-    // 标记服务端点状态
     virtual void markEndpointStatus(const std::string& endpoint_id, bool healthy) = 0;
     
-    // 获取策略名称
     virtual std::string getStrategyName() const = 0;
 };
 
-// 轮询负载均衡器
 class RoundRobinLoadBalancer : public LoadBalancer {
 public:
     RoundRobinLoadBalancer();
@@ -60,7 +54,6 @@ private:
     std::map<std::string, bool> endpoint_health_;
 };
 
-// 随机负载均衡器
 class RandomLoadBalancer : public LoadBalancer {
 public:
     RandomLoadBalancer();
@@ -78,7 +71,6 @@ private:
     mutable std::mt19937 gen_;
 };
 
-// 最少连接负载均衡器
 class LeastConnectionsLoadBalancer : public LoadBalancer {
 public:
     LeastConnectionsLoadBalancer();
@@ -89,7 +81,6 @@ public:
     void markEndpointStatus(const std::string& endpoint_id, bool healthy) override;
     std::string getStrategyName() const override { return "LeastConnections"; }
 
-    // 连接管理
     void incrementConnections(const std::string& endpoint_id);
     void decrementConnections(const std::string& endpoint_id);
 
@@ -99,7 +90,6 @@ private:
     std::map<std::string, int> connection_counts_;
 };
 
-// 加权轮询负载均衡器
 class WeightedRoundRobinLoadBalancer : public LoadBalancer {
 public:
     WeightedRoundRobinLoadBalancer();
@@ -122,7 +112,6 @@ private:
     std::atomic<size_t> current_index_{0};
 };
 
-// 一致性哈希负载均衡器
 class ConsistentHashLoadBalancer : public LoadBalancer {
 public:
     ConsistentHashLoadBalancer(int virtual_nodes = 250);
@@ -133,7 +122,7 @@ public:
     void markEndpointStatus(const std::string& endpoint_id, bool healthy) override;
     std::string getStrategyName() const override { return "ConsistentHash"; }
 
-    // 根据键选择端点
+        // Select an endpoint by key
     ServiceEndpoint selectEndpointByKey(const std::string& key,
                                        const std::vector<ServiceEndpoint>& endpoints);
 
@@ -154,7 +143,6 @@ private:
     std::map<std::string, ServiceEndpoint> endpoints_;
 };
 
-// 最少响应时间负载均衡器
 class LeastResponseTimeLoadBalancer : public LoadBalancer {
 public:
     LeastResponseTimeLoadBalancer();
@@ -165,7 +153,6 @@ public:
     void markEndpointStatus(const std::string& endpoint_id, bool healthy) override;
     std::string getStrategyName() const override { return "LeastResponseTime"; }
 
-    // 更新响应时间
     void updateResponseTime(const std::string& endpoint_id,
                            std::chrono::milliseconds response_time);
 
@@ -182,35 +169,30 @@ private:
     std::chrono::milliseconds calculateAverageResponseTime(const std::string& endpoint_id);
 };
 
-// 负载均衡器工厂
+// Factory creating load balancers by strategy
 class LoadBalancerFactory {
 public:
     static std::unique_ptr<LoadBalancer> createLoadBalancer(LoadBalanceStrategy strategy);
     static std::vector<std::string> getAvailableStrategies();
 };
 
-// 负载均衡管理器 - 支持运行时策略切换
+// Load balancer manager with runtime strategy switching
 class LoadBalancerManager {
 public:
     explicit LoadBalancerManager(LoadBalanceStrategy initial_strategy = LoadBalanceStrategy::ROUND_ROBIN);
     ~LoadBalancerManager() = default;
 
-    // 运行时切换负载均衡策略（线程安全）
+    // Switch strategy at runtime (thread-safe)
     void setStrategy(LoadBalanceStrategy strategy);
 
-    // 获取当前策略
     LoadBalanceStrategy getCurrentStrategy() const;
 
-    // 获取当前策略名称
     std::string getCurrentStrategyName() const;
 
-    // 选择端点（委托给当前负载均衡器）
     ServiceEndpoint selectEndpoint(const std::vector<ServiceEndpoint>& endpoints);
 
-    // 更新端点列表
     void updateEndpoints(const std::vector<ServiceEndpoint>& endpoints);
 
-    // 标记端点状态
     void markEndpointStatus(const std::string& endpoint_id, bool healthy);
 
 private:

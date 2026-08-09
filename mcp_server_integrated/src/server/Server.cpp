@@ -218,9 +218,9 @@ namespace vx::mcp {
     }
 
     void Server::Stop() {
-        if (isSyncCleaned_.exchange(true)) return; // 确保清理逻辑只执行一次
+        if (isSyncCleaned_.exchange(true)) return; // Ensure the cleanup logic runs only once
 
-        isStopping_ = true; // 同时确保循环退出
+        isStopping_ = true; // Also ensure the loop exits
 
         LOG(INFO) << "Stopping server..." << std::endl;
 

@@ -15,7 +15,7 @@ export const useAuthStore = defineStore('auth', () => {
   const username = ref<string | null>(null)
   const token = ref<string | null>(null)
   const expiresAt = ref<number>(0)
-  // PR-F: role returned by Login/ValidateToken (PR-C3). Used only to hide
+  // Role returned by Login/ValidateToken. Used only to hide
   // admin entry points — the server enforces admin checks independently.
   const role = ref<string>('USER')
 

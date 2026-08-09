@@ -1,9 +1,6 @@
 /**
  * @file embedding_cache.h
- * @brief LRU 缓存，避免重复 API 调用
- * 
- * Requirements: 7.1, 7.2, 7.3, 7.4
- * Task 3: 实现 EmbeddingCache
+ * @brief LRU cache to avoid duplicate API calls
  */
 
 #pragma once
@@ -21,22 +18,22 @@ namespace mcp {
 namespace rag {
 
 /**
- * @brief 缓存配置
+ * @brief Cache configuration
  */
 struct CacheConfig {
-    size_t max_size = 1000;           ///< 最大缓存条目
-    int ttl_seconds = 3600;           ///< 缓存过期时间 (秒)
-    bool enabled = true;              ///< 是否启用缓存
+    size_t max_size = 1000;           ///< Maximum cache entries
+    int ttl_seconds = 3600;           ///< Cache TTL (seconds)
+    bool enabled = true;              ///< Whether the cache is enabled
 };
 
 /**
- * @brief 缓存统计信息
+ * @brief Cache statistics
  */
 struct CacheStats {
-    size_t hits = 0;                  ///< 缓存命中次数
-    size_t misses = 0;                ///< 缓存未命中次数
-    size_t evictions = 0;             ///< 驱逐次数
-    size_t size = 0;                  ///< 当前缓存大小
+    size_t hits = 0;                  ///< Cache hit count
+    size_t misses = 0;                ///< Cache miss count
+    size_t evictions = 0;             ///< Eviction count
+    size_t size = 0;                  ///< Current cache size
     
     float hitRate() const {
         size_t total = hits + misses;
@@ -45,75 +42,75 @@ struct CacheStats {
 };
 
 /**
- * @brief LRU Embedding 缓存
+ * @brief LRU embedding cache
  * 
- * 使用 LRU (Least Recently Used) 策略管理缓存。
- * 支持：
- * - 可配置的最大缓存大小
- * - TTL 过期机制
- * - 线程安全
+ * Manages the cache with the LRU (Least Recently Used) strategy.
+ * Supports:
+ * - Configurable maximum cache size
+ * - TTL expiration
+ * - Thread safety
  */
 class EmbeddingCache {
 public:
     explicit EmbeddingCache(const CacheConfig& config);
     ~EmbeddingCache() = default;
     
-    // 禁止拷贝
+    // Disable copy
     EmbeddingCache(const EmbeddingCache&) = delete;
     EmbeddingCache& operator=(const EmbeddingCache&) = delete;
     
     /**
-     * @brief 获取缓存的向量
-     * @param text 文本键
-     * @return 如果存在且未过期返回向量，否则返回 nullopt
+     * @brief Get a cached embedding
+     * @param text Text key
+     * @return The embedding if present and not expired, otherwise nullopt
      */
     std::optional<std::vector<float>> get(const std::string& text);
     
     /**
-     * @brief 存入缓存
-     * @param text 文本键
-     * @param embedding 向量值
+     * @brief Store in the cache
+     * @param text Text key
+     * @param embedding Embedding value
      */
     void put(const std::string& text, const std::vector<float>& embedding);
     
     /**
-     * @brief 检查键是否存在（不更新 LRU 顺序）
+     * @brief Check whether a key exists (without updating LRU order)
      */
     bool contains(const std::string& text) const;
     
     /**
-     * @brief 移除指定键
-     * @return 如果键存在并被移除返回 true
+     * @brief Remove a key
+     * @return true if the key existed and was removed
      */
     bool remove(const std::string& text);
     
     /**
-     * @brief 清空缓存
+     * @brief Clear the cache
      */
     void clear();
     
     /**
-     * @brief 获取当前缓存大小
+     * @brief Get the current cache size
      */
     size_t size() const;
     
     /**
-     * @brief 获取缓存统计
+     * @brief Get cache statistics
      */
     CacheStats getStats() const;
     
     /**
-     * @brief 重置统计信息
+     * @brief Reset statistics
      */
     void resetStats();
     
     /**
-     * @brief 获取配置
+     * @brief Get the configuration
      */
     const CacheConfig& getConfig() const { return config_; }
     
     /**
-     * @brief 获取最近被驱逐的键（用于测试）
+     * @brief Get the most recently evicted key (for testing)
      */
     std::string getLastEvictedKey() const { return last_evicted_key_; }
 
@@ -127,26 +124,26 @@ private:
     using CacheMap = std::unordered_map<std::string, CacheList::iterator>;
     
     /**
-     * @brief 检查条目是否过期
+     * @brief Check whether an entry is expired
      */
     bool isExpired(const CacheEntry& entry) const;
     
     /**
-     * @brief 驱逐最久未使用的条目
+     * @brief Evict the least recently used entry
      */
     void evictLRU();
     
     /**
-     * @brief 移动条目到列表头部（最近使用）
+     * @brief Move an entry to the list front (most recently used)
      */
     void moveToFront(CacheMap::iterator it);
     
     CacheConfig config_;
-    CacheList cache_list_;            ///< 双向链表，头部是最近使用
-    CacheMap cache_map_;              ///< 哈希表，快速查找
+    CacheList cache_list_;            ///< Doubly linked list; front is most recently used
+    CacheMap cache_map_;              ///< Hash map for fast lookup
     mutable std::mutex mutex_;
     
-    // 统计信息
+    // Statistics
     mutable CacheStats stats_;
     std::string last_evicted_key_;
 };

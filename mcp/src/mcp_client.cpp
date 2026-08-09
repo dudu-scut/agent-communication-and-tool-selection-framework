@@ -14,9 +14,8 @@
 namespace agent_rpc {
 namespace mcp {
 
-// MCPClient 实现
 MCPClient::MCPClient() {
-    // Logger 使用全局宏，不需要实例化
+    // Logger uses global macros; no instance needed
 }
 
 MCPClient::~MCPClient() {
@@ -24,7 +23,7 @@ MCPClient::~MCPClient() {
 }
 
 bool MCPClient::connect(const std::string& server_path, const std::vector<std::string>& args) {
-    // 使用 STDIO 模式连接
+    // Connect via STDIO transport
     MCPConnectionConfig config;
     config.transport = MCPTransportType::STDIO;
     config.server_path = server_path;
@@ -55,7 +54,7 @@ bool MCPClient::connect(const MCPConnectionConfig& config) {
         connected_ = true;
         running_ = true;
 
-        // 启动通知处理线程
+        // Start the notification processing thread
         notification_thread_ = std::thread([this]() {
             processNotificationsStdio();
         });
@@ -75,7 +74,7 @@ bool MCPClient::connect(const MCPConnectionConfig& config) {
         success = true;
     }
 
-    // Fix #50: Send MCP initialize handshake as required by the protocol
+    // Send the MCP initialize handshake as required by the protocol
     if (success) {
         MCPRequest init_req;
         init_req.method = "initialize";
@@ -124,7 +123,7 @@ void MCPClient::disconnect() {
     running_ = false;
     connected_ = false;
     
-    // 停止通知线程
+    // Stop the notification thread
     if (notification_thread_.joinable()) {
         notification_thread_.join();
     }
@@ -165,7 +164,7 @@ std::vector<MCPTool> MCPClient::listTools() {
         return tools;
     }
     
-    // 解析响应
+    // Parse the response
     try {
         Json::Value root;
         Json::Reader reader;
@@ -200,7 +199,7 @@ MCPResponse MCPClient::callTool(const std::string& tool_name, const std::string&
     request.method = "tools/call";
     request.id = "call_tool_" + std::to_string(std::time(nullptr));
     
-    // 构建参数
+    // Build the parameters
     Json::Value params;
     params["name"] = tool_name;
     
@@ -212,7 +211,7 @@ MCPResponse MCPClient::callTool(const std::string& tool_name, const std::string&
         params["arguments"] = Json::Value(Json::objectValue);
     }
     
-    // 只设置 params 部分，不要包含 method 和 id
+    // Set only the params section, without method and id
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
     request.params = Json::writeString(builder, params);
@@ -256,7 +255,7 @@ std::vector<MCPPrompt> MCPClient::listPrompts() {
         return prompts;
     }
     
-    // 解析响应
+    // Parse the response
     try {
         Json::Value root;
         Json::Reader reader;
@@ -291,8 +290,8 @@ MCPResponse MCPClient::getPrompt(const std::string& prompt_name, const std::stri
     request.method = "prompts/get";
     request.id = "get_prompt_" + std::to_string(std::time(nullptr));
 
-    // 构建参数 (fix #49: only set params, not the full JSON-RPC envelope —
-    // buildJSONRPCRequest will construct the proper JSON-RPC wrapper)
+    // Set only params, not the full JSON-RPC envelope —
+    // buildJSONRPCRequest constructs the proper JSON-RPC wrapper
     Json::Value params;
     params["name"] = prompt_name;
 
@@ -347,7 +346,7 @@ std::vector<MCPResource> MCPClient::listResources() {
         return resources;
     }
     
-    // 解析响应
+    // Parse the response
     try {
         Json::Value root;
         Json::Reader reader;
@@ -383,7 +382,7 @@ MCPResponse MCPClient::readResource(const std::string& uri) {
     request.method = "resources/read";
     request.id = "read_resource_" + std::to_string(std::time(nullptr));
 
-    // 构建参数 (fix #49: only set params, not the full JSON-RPC envelope)
+    // Set only params, not the full JSON-RPC envelope
     Json::Value params;
     params["uri"] = uri;
 
@@ -428,7 +427,7 @@ bool MCPClient::sendRequestStdio(const MCPRequest& request) {
     }
 
     std::string json_request = buildJSONRPCRequest(request);
-    json_request += "\n";  // MCP协议使用换行符分隔消息
+    json_request += "\n";  // MCP protocol separates messages with newlines
 
     ssize_t written = write(stdin_pipe_, json_request.c_str(), json_request.length());
     if (written != static_cast<ssize_t>(json_request.length())) {
@@ -446,7 +445,7 @@ bool MCPClient::sendRequestStdio(const MCPRequest& request) {
 MCPResponse MCPClient::receiveResponse() {
     std::unique_lock<std::mutex> lock(queue_mutex_);
     
-    // 等待响应，最多等待30秒
+    // Wait for a response, up to 30 seconds
     if (queue_cv_.wait_for(lock, std::chrono::seconds(30), [this] { return !response_queue_.empty(); })) {
         MCPResponse response = response_queue_.front();
         response_queue_.pop();
@@ -483,7 +482,7 @@ void MCPClient::processNotificationsStdio() {
             buffer[bytes_read] = '\0';
             line += buffer;
 
-            // 处理完整的行
+            // Process complete lines
             size_t pos = 0;
             while ((pos = line.find('\n')) != std::string::npos) {
                 std::string message = line.substr(0, pos);
@@ -492,11 +491,11 @@ void MCPClient::processNotificationsStdio() {
                 if (!message.empty()) {
                     MCPResponse response = parseJSONRPCResponse(message);
 
-                    // 检查是否是通知
+                    // Check whether it is a notification
                     if (response.id.empty()) {
-                        // 这是一个通知（MCP notifications have no id, with or without error）
+                        // This is a notification (MCP notifications have no id, with or without error)
                         if (notification_callback_) {
-                            // 解析通知内容
+                            // Parse the notification content
                             try {
                                 Json::Value root;
                                 Json::Reader reader;
@@ -514,7 +513,7 @@ void MCPClient::processNotificationsStdio() {
                             }
                         }
                     } else {
-                        // 这是一个响应
+                        // This is a response
                         std::lock_guard<std::mutex> lock(queue_mutex_);
                         response_queue_.push(response);
                         queue_cv_.notify_one();
@@ -522,10 +521,10 @@ void MCPClient::processNotificationsStdio() {
                 }
             }
         } else if (bytes_read == 0) {
-            // 管道关闭
+            // Pipe closed
             break;
         } else {
-            // 读取错误
+            // Read error
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
                 LOG_ERROR("Error reading from MCP server stdout");
                 break;
@@ -537,7 +536,7 @@ void MCPClient::processNotificationsStdio() {
 
 bool MCPClient::startMCPServer() {
 #ifndef _WIN32
-    // 创建管道
+    // Create pipes
     int stdin_pipe_fd[2];
     int stdout_pipe_fd[2];
 
@@ -546,7 +545,7 @@ bool MCPClient::startMCPServer() {
         return false;
     }
 
-    // 创建子进程
+    // Fork the child process
     server_pid_ = fork();
     if (server_pid_ == -1) {
         LOG_ERROR("Failed to fork process for MCP server");
@@ -554,15 +553,15 @@ bool MCPClient::startMCPServer() {
     }
 
     if (server_pid_ == 0) {
-        // 子进程：运行MCP服务器
-        close(stdin_pipe_fd[1]);  // 关闭写端
-        close(stdout_pipe_fd[0]); // 关闭读端
+        // Child process: run the MCP server
+        close(stdin_pipe_fd[1]);  // Close the write end
+        close(stdout_pipe_fd[0]); // Close the read end
 
-        // 重定向stdin和stdout
+        // Redirect stdin and stdout
         dup2(stdin_pipe_fd[0], STDIN_FILENO);
         dup2(stdout_pipe_fd[1], STDOUT_FILENO);
 
-        // 准备参数
+        // Prepare arguments
         std::vector<char*> argv;
         argv.push_back(const_cast<char*>(server_path_.c_str()));
 
@@ -571,24 +570,24 @@ bool MCPClient::startMCPServer() {
         }
         argv.push_back(nullptr);
 
-        // 执行MCP服务器
+        // Execute the MCP server
         execv(server_path_.c_str(), argv.data());
 
-        // 如果execv失败
+        // execv failed
         LOG_ERROR("Failed to execute MCP server: " + server_path_);
         exit(1);
     } else {
-        // 父进程
-        close(stdin_pipe_fd[0]);  // 关闭读端
-        close(stdout_pipe_fd[1]); // 关闭写端
+        // Parent process
+        close(stdin_pipe_fd[0]);  // Close the read end
+        close(stdout_pipe_fd[1]); // Close the write end
 
         stdin_pipe_ = stdin_pipe_fd[1];
         stdout_pipe_ = stdout_pipe_fd[0];
 
-        // 设置非阻塞模式
+        // Set non-blocking mode
         fcntl(stdout_pipe_, F_SETFL, O_NONBLOCK);
 
-        // 等待服务器启动
+        // Wait for the server to start
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         return true;
@@ -663,9 +662,7 @@ MCPResponse MCPClient::parseJSONRPCResponse(const std::string& response) {
     return mcp_response;
 }
 
-// ============================================================================
-// SSE (Server-Sent Events) 传输实现
-// ============================================================================
+// SSE (Server-Sent Events) transport implementation
 
 bool MCPClient::connectSSE() {
     // curl_global_init is called once in server/src/main.cpp
@@ -676,10 +673,10 @@ bool MCPClient::connectSSE() {
         return false;
     }
     
-    // 发送初始化请求获取 session ID
+    // Send the initialization request to obtain a session ID
     CURL* curl = static_cast<CURL*>(curl_handle_);
     
-    // 构建初始化 URL
+    // Build the initialization URL
     std::string init_url = config_.sse_url;
     if (init_url.back() != '/') {
         init_url += "/";
@@ -694,7 +691,7 @@ bool MCPClient::connectSSE() {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, config_.connect_timeout_ms / 1000);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, config_.connect_timeout_ms / 1000);
     
-    // 设置 API Key（如果有）
+    // Set API key if provided
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Accept: text/event-stream");
     headers = curl_slist_append(headers, "Cache-Control: no-cache");
@@ -704,13 +701,13 @@ bool MCPClient::connectSSE() {
     }
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     
-    // SSL 验证
+    // SSL verification
     if (!config_.verify_ssl) {
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     }
     
-    // 执行请求获取 session
+    // Perform the request to obtain the session
     {
         std::lock_guard<std::mutex> lock(sse_buffer_mutex_);
         sse_response_buffer_.clear();
@@ -726,9 +723,9 @@ bool MCPClient::connectSSE() {
         return false;
     }
     
-    // 解析 session ID
+    // Parse the session ID
     if (sse_session_id_.empty()) {
-        // 尝试从响应中解析
+        // Try parsing from the response
         std::lock_guard<std::mutex> lock(sse_buffer_mutex_);
         try {
             Json::Value root;
@@ -739,11 +736,11 @@ bool MCPClient::connectSSE() {
                 }
             }
         } catch (...) {
-            // 忽略解析错误
+            // Ignore parse errors
         }
     }
     
-    // 启动 SSE 事件监听线程
+    // Start the SSE event listener thread
     sse_event_thread_ = std::thread([this]() {
         processNotificationsSSE();
     });
@@ -776,26 +773,26 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
         return false;
     }
     
-    // 创建新的 CURL handle 用于 POST 请求
+    // Create a new CURL handle for the POST request
     CURL* curl = curl_easy_init();
     if (!curl) {
         LOG_ERROR("Failed to create CURL handle for SSE request");
         return false;
     }
     
-    // 构建请求 URL
+    // Build the request URL
     std::string post_url = config_.sse_url;
     if (post_url.back() != '/') {
         post_url += "/";
     }
     post_url += "message";
     
-    // 如果有 session ID，添加到 URL
+    // Append the session ID to the URL if present
     if (!sse_session_id_.empty()) {
         post_url += "?sessionId=" + sse_session_id_;
     }
     
-    // 构建 JSON-RPC 请求
+    // Build the JSON-RPC request
     std::string json_request = buildJSONRPCRequest(request);
     
     curl_easy_setopt(curl, CURLOPT_URL, post_url.c_str());
@@ -804,7 +801,7 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, json_request.length());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, config_.request_timeout_ms / 1000);
     
-    // 设置响应回调
+    // Set the response callback
     std::string response_data;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, 
         +[](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
@@ -814,7 +811,7 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
         });
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
     
-    // 设置请求头
+    // Set request headers
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     if (!config_.api_key.empty()) {
@@ -823,13 +820,13 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
     }
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     
-    // SSL 验证
+    // SSL verification
     if (!config_.verify_ssl) {
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     }
     
-    // 执行请求
+    // Perform the request
     CURLcode res = curl_easy_perform(curl);
     
     curl_slist_free_all(headers);
@@ -840,7 +837,7 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
         return false;
     }
     
-    // 解析响应并放入队列
+    // Parse the response and enqueue it
     if (!response_data.empty()) {
         MCPResponse response = parseJSONRPCResponse(response_data);
         std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -854,7 +851,7 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
 MCPResponse MCPClient::receiveResponseSSE() {
     std::unique_lock<std::mutex> lock(queue_mutex_);
     
-    // 等待响应
+    // Wait for a response
     int timeout_ms = config_.request_timeout_ms > 0 ? config_.request_timeout_ms : 30000;
     if (queue_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), 
                           [this] { return !response_queue_.empty(); })) {
@@ -874,14 +871,14 @@ void MCPClient::processNotificationsSSE() {
         return;
     }
     
-    // 创建 SSE 监听连接
+    // Create the SSE listening connection
     CURL* curl = curl_easy_init();
     if (!curl) {
         LOG_ERROR("Failed to create CURL handle for SSE events");
         return;
     }
     
-    // 构建 SSE 事件 URL
+    // Build the SSE event URL
     std::string sse_url = config_.sse_url;
     if (sse_url.back() != '/') {
         sse_url += "/";
@@ -894,9 +891,9 @@ void MCPClient::processNotificationsSSE() {
     curl_easy_setopt(curl, CURLOPT_URL, sse_url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sseWriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, this);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);  // 无超时，持续监听
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);  // No timeout; keep listening
     
-    // 设置请求头
+    // Set request headers
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Accept: text/event-stream");
     headers = curl_slist_append(headers, "Cache-Control: no-cache");
@@ -906,18 +903,18 @@ void MCPClient::processNotificationsSSE() {
     }
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     
-    // SSL 验证
+    // SSL verification
     if (!config_.verify_ssl) {
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     }
     
-    // 执行 SSE 监听（阻塞直到连接关闭或 running_ 变为 false）
+    // Listen for SSE events (blocks until the connection closes or running_ is false)
     while (running_) {
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK && running_) {
             LOG_WARN("SSE connection interrupted: " + std::string(curl_easy_strerror(res)));
-            // 短暂等待后重连
+            // Wait briefly before reconnecting
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
@@ -938,7 +935,7 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
         client->sse_response_buffer_ += data;
     }
 
-    // 解析 SSE 事件 (processing under lock for thread safety)
+    // Parse SSE events (processing under lock for thread safety)
     size_t pos = 0;
     {
         std::lock_guard<std::mutex> lock(client->sse_buffer_mutex_);
@@ -946,20 +943,20 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
             std::string event = client->sse_response_buffer_.substr(0, pos);
             client->sse_response_buffer_.erase(0, pos + 2);
 
-        // 解析事件数据
+        // Parse event data
         std::string event_data;
         std::istringstream iss(event);
         std::string line;
         while (std::getline(iss, line)) {
             if (line.substr(0, 5) == "data:") {
                 event_data = line.substr(5);
-                // 去除前导空格
+                // Strip leading whitespace
                 size_t start = event_data.find_first_not_of(" ");
                 if (start != std::string::npos) {
                     event_data = event_data.substr(start);
                 }
             } else if (line.substr(0, 3) == "id:") {
-                // 更新 session ID
+                // Update the session ID
                 client->sse_session_id_ = line.substr(3);
                 size_t start = client->sse_session_id_.find_first_not_of(" ");
                 if (start != std::string::npos) {
@@ -969,11 +966,11 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
         }
         
         if (!event_data.empty()) {
-            // 解析 JSON-RPC 响应或通知
+            // Parse the JSON-RPC response or notification
             MCPResponse response = client->parseJSONRPCResponse(event_data);
             
             if (response.id.empty()) {
-                // 这是一个通知
+                // This is a notification
                 if (client->notification_callback_) {
                     try {
                         Json::Value root;
@@ -992,7 +989,7 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
                     }
                 }
             } else {
-                // 这是一个响应
+                // This is a response
                 std::lock_guard<std::mutex> lock(client->queue_mutex_);
                 client->response_queue_.push(response);
                 client->queue_cv_.notify_one();
@@ -1005,7 +1002,7 @@ size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* u
 }
 
 size_t MCPClient::sseHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
-    // 可以在这里解析响应头
+    // Response headers could be parsed here
     return size * nitems;
 }
 

@@ -1,5 +1,5 @@
 /**
- * PR-C2: Query/QueryStream durable pipeline — gateway & server contracts.
+ * Query/QueryStream durable pipeline — gateway & server contracts.
  *
  * Static contract assertions over the proxy, the C++ query service and the
  * multi-agent handler. Runtime coverage lives in
@@ -15,13 +15,13 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
 const countMatches = (text, regex) => (text.match(regex) || []).length;
 
-// ── Node proxy: single terminal event per stream ─────────────────────────
+// Node proxy: single terminal event per stream
 
 test('proxy streamCall tracks completeSeen and relays terminal events', () => {
   const server = read('gateway/proxy/server.mjs');
   const start = server.indexOf('function streamCall(');
   assert.ok(start >= 0, 'missing streamCall');
-  const streamCall = server.slice(start, server.indexOf('\n// ── HTTP Request Handler'));
+  const streamCall = server.slice(start, server.indexOf('\n// HTTP Request Handler'));
 
   assert.match(streamCall, /let completeSeen = false;/);
   assert.match(streamCall, /event_type === 'complete' \|\| event\.event_type === 'error'/);
@@ -49,7 +49,7 @@ test('proxy cancels the gRPC stream when the browser/SSE connection closes', () 
   assert.match(closeBlock, /stream\.cancel\(\);/);
 });
 
-// ── C++ service: authenticated owner, durable pipeline, single terminal ──
+// C++ service: authenticated owner, durable pipeline, single terminal
 
 test('query service resolves the owner exclusively from the auth interceptor', () => {
   const service = read('server/src/ai_query_service.cpp');
@@ -105,7 +105,7 @@ test('query stream emits the terminal event exactly once through an atomic flag'
   );
 });
 
-// ── Multi-agent handler: no terminal emission ────────────────────────────
+// Multi-agent handler: no terminal emission
 
 test('multi-agent handler never emits terminal complete/error events', () => {
   const handler = read('server/src/multi_agent_handler.cpp');
@@ -118,7 +118,7 @@ test('multi-agent handler never emits terminal complete/error events', () => {
   assert.match(handler, /context->IsCancelled\(\)/);
 });
 
-// ── RpcServer: fail-closed dependency injection ──────────────────────────
+// RpcServer: fail-closed dependency injection
 
 test('rpc server owns the durable repositories and refuses partial startup', () => {
   const rpcServer = read('server/src/rpc_server.cpp');

@@ -1,6 +1,6 @@
 /**
  * @file agent_auto_registrar.h
- * @brief Agent lifecycle manager — gRPC Register/Heartbeat/Unregister (P0-2)
+ * @brief Agent lifecycle manager - gRPC Register/Heartbeat/Unregister
  *
  * Encapsulates the full gRPC registration lifecycle for an Agent:
  *   start()  → RegisterAgent() + background heartbeat thread

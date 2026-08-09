@@ -96,8 +96,6 @@ class AgentRuntimeRepository final {
 public:
     explicit AgentRuntimeRepository(PostgresStore& store);
 
-    // --- agent registry (platform-scoped rows use owner_id "system") -------
-
     bool upsertAgentRegistry(const AgentRegistryRecord& record);
     // Upsert semantics: refreshes last_heartbeat/health when the row exists and
     // heals a missing row (minimal system-owned placeholder) when it does not,
@@ -106,8 +104,6 @@ public:
     bool markAgentStatus(const std::string& agent_id, const std::string& health_status);
     std::optional<AgentRegistryRecord> getAgent(const std::string& agent_id);
     std::vector<AgentRegistryRecord> listAgents();
-
-    // --- feedback & owner-scoped route quality ------------------------------
 
     bool insertFeedback(const RuntimeFeedbackRecord& feedback);
 
@@ -131,8 +127,6 @@ public:
                                                              const std::string& skill_name);
     std::vector<FeedbackKey> listFeedbackKeys();
 
-    // --- invocation facts ----------------------------------------------------
-
     // NOTE: production writer is the Query/QueryStream pipeline —
     // AIQueryServiceImpl records one owner-scoped fact per request on the
     // single-agent A2A path, MultiAgentHandler records per-call facts on
@@ -140,8 +134,6 @@ public:
     bool recordInvocation(const AgentInvocationRecord& invocation);
     std::vector<AgentInvocationRecord> listInvocationsByOwner(const std::string& owner_id);
     std::vector<InvocationMetricsRecord> aggregateInvocationMetrics();
-
-    // --- cost reporting (token_usage_ledger) ---------------------------------
 
     std::vector<DailyCostRecord> dailyCostReport(const std::string& owner_id,
                                                  const std::string& start_date,

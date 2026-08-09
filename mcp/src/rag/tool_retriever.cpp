@@ -1,9 +1,6 @@
 /**
  * @file tool_retriever.cpp
- * @brief ToolRetriever 实现
- * 
- * Requirements: 1.1, 1.3, 1.4, 4.1, 4.2, 4.3, 5.1
- * Task 7: 实现 ToolRetriever
+ * @brief ToolRetriever implementation
  */
 
 #include "agent_rpc/mcp/rag/tool_retriever.h"
@@ -35,16 +32,16 @@ bool ToolRetriever::initialize() {
     }
     
     try {
-        // 创建 Embedding 服务
+        // Create the embedding service
         embedding_service_ = std::make_unique<EmbeddingService>(config_.embedding_config);
         
-        // 创建缓存
+        // Create the cache
         cache_ = std::make_unique<EmbeddingCache>(config_.cache_config);
         
-        // 创建索引
+        // Create the index
         index_ = std::make_unique<VectorIndex>();
         
-        // 尝试加载索引
+        // Try to load the index
         if (!config_.index_path.empty()) {
             if (!index_->loadFromFile(config_.index_path)) {
                 LOG_INFO("Creating new vector index");
@@ -66,7 +63,7 @@ void ToolRetriever::shutdown() {
         return;
     }
     
-    // 保存索引
+    // Save the index
     if (config_.auto_save_index && !config_.index_path.empty()) {
         saveIndex();
     }
@@ -101,13 +98,13 @@ void ToolRetriever::addTool(const ToolInfo& tool) {
     }
     
     try {
-        // 构建工具文本
+        // Build the tool text
         std::string tool_text = buildToolText(tool);
         
-        // 生成向量
+        // Generate the embedding
         std::vector<float> embedding = getEmbedding(tool_text);
         
-        // 添加到索引
+        // Add to the index
         IndexedTool indexed_tool;
         indexed_tool.name = tool.name;
         indexed_tool.description = tool.description;
@@ -135,13 +132,13 @@ void ToolRetriever::refreshIndex() {
         return;
     }
     
-    // 获取所有工具
+    // Get all tools
     auto tools = index_->getAllTools();
     
-    // 清空索引
+    // Clear the index
     index_->clear();
     
-    // 重新索引
+    // Re-index
     for (const auto& tool : tools) {
         ToolInfo info;
         info.name = tool.name;
@@ -181,16 +178,16 @@ std::vector<RetrievedTool> ToolRetriever::retrieve(const std::string& query, int
     }
     
     try {
-        // 获取查询向量
+        // Get the query embedding
         std::vector<float> query_embedding = getEmbedding(query);
         
-        // 搜索
+        // Search
         auto search_results = index_->search(
             query_embedding, 
             top_k, 
             config_.similarity_threshold);
         
-        // 转换结果
+        // Convert results
         std::vector<RetrievedTool> results;
         results.reserve(search_results.size());
         
@@ -229,7 +226,7 @@ std::vector<RetrievedTool> ToolRetriever::getAllTools() const {
         rt.name = tool.name;
         rt.description = tool.description;
         rt.input_schema = tool.input_schema;
-        rt.relevance_score = 1.0f;  // 全部返回时相关性为 1
+        rt.relevance_score = 1.0f;  // Relevance is 1 when returning all tools
         results.push_back(rt);
     }
     
@@ -245,7 +242,7 @@ std::string ToolRetriever::toFunctionCallingFormat(const std::vector<RetrievedTo
             {"description", tool.description}
         };
         
-        // 解析 input_schema
+        // Parse the input_schema
         if (!tool.input_schema.empty()) {
             try {
                 func["parameters"] = json::parse(tool.input_schema);
@@ -277,7 +274,7 @@ CacheStats ToolRetriever::getCacheStats() const {
 }
 
 std::vector<float> ToolRetriever::getEmbedding(const std::string& text) {
-    // 先检查缓存
+    // Check the cache first
     if (cache_) {
         auto cached = cache_->get(text);
         if (cached.has_value()) {
@@ -285,10 +282,10 @@ std::vector<float> ToolRetriever::getEmbedding(const std::string& text) {
         }
     }
     
-    // 调用 API
+    // Call the API
     std::vector<float> embedding = embedding_service_->embed(text);
     
-    // 存入缓存
+    // Store in the cache
     if (cache_) {
         cache_->put(text, embedding);
     }
@@ -301,7 +298,7 @@ std::string ToolRetriever::buildToolText(const ToolInfo& tool) {
     oss << "Tool: " << tool.name << "\n";
     oss << "Description: " << tool.description << "\n";
     
-    // 简化 input_schema 用于向量化
+    // Simplify input_schema for embedding
     if (!tool.input_schema.empty()) {
         try {
             json schema = json::parse(tool.input_schema);
@@ -316,7 +313,7 @@ std::string ToolRetriever::buildToolText(const ToolInfo& tool) {
                 }
             }
         } catch (...) {
-            // 忽略解析错误
+            // Ignore parse errors
         }
     }
     

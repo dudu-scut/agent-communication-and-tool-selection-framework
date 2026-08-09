@@ -11,7 +11,7 @@ class QueryDomainRepository;
 namespace server {
 
 /**
- * @brief Session sharing & workflow templates (PR-D: durable, PG-backed).
+ * @brief Session sharing & workflow templates (durable, PG-backed).
  *
  * Shares are read-only ("view") bearer links. The raw high-entropy token is
  * returned exactly once at creation; PostgreSQL stores only its SHA-256
@@ -51,13 +51,13 @@ public:
         const agent_communication::UseTemplateRequest* request,
         agent_communication::UseTemplateResponse* response) override;
 
-    // PR-D: restricted public read by raw token (no auth; sanitized).
+    // Restricted public read by raw token (no auth; sanitized).
     grpc::Status ReadSharedConversation(
         grpc::ServerContext* context,
         const agent_communication::ReadSharedConversationRequest* request,
         agent_communication::ReadSharedConversationResponse* response) override;
 
-    // PR-D: owner-side share management.
+    // Owner-side share management.
     grpc::Status ListShares(
         grpc::ServerContext* context,
         const agent_communication::ListSharesRequest* request,
@@ -68,7 +68,7 @@ public:
         const agent_communication::RevokeShareRequest* request,
         agent_communication::RevokeShareResponse* response) override;
 
-    // PR-D: template listing / detail.
+    // Template listing / detail.
     grpc::Status ListTemplates(
         grpc::ServerContext* context,
         const agent_communication::ListTemplatesRequest* request,

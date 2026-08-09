@@ -1,4 +1,4 @@
--- Batch 5: Agent Health Dashboard — alerts table
+-- Agent Health Dashboard — alerts table
 -- Run: psql -U <user> -d <dbname> -f sql/005_alerts.sql
 
 CREATE TABLE IF NOT EXISTS alerts (

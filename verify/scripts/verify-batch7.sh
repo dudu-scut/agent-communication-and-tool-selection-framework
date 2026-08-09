@@ -1,17 +1,15 @@
 #!/bin/bash
-# ============================================================================
-# Batch 7 Verification: Growth + Retention
+# Verification: Growth + Retention
 #  7.1 — Sandbox isolation (context_id prefix + TTL)
 #  7.2 — Sandbox cost exemption
 #  7.3 — Session sharing (share link)
 #  7.4 — Template save and use
-# ============================================================================
 
 source "$(dirname "$0")/helpers.sh"
 
 precheck_services
 
-# ----- 7.1: Sandbox isolation -----------------------------------------------
+# 7.1: Sandbox isolation
 scenario "7.1 — Sandbox Isolation"
 
 step "Send SandboxQuery via UserExperienceService"
@@ -23,7 +21,7 @@ verify "SandboxQuery returns result (no gRPC error)" \
 verify "Sandbox result contains sandbox_ prefix" \
     assert_contains "$SANDBOX_RESPONSE" "sandbox"
 
-# ----- 7.2: Sandbox cost exemption ------------------------------------------
+# 7.2: Sandbox cost exemption
 scenario "7.2 — Sandbox Cost Exemption"
 
 step "Verify Redis budget counter not incremented for sandbox"
@@ -36,7 +34,7 @@ verify "Sandbox cost did not increment budget counter" \
 verify "token_usage has sandbox component record" \
     assert_pg_row_exists "token_usage" "component = 'sandbox'"
 
-# ----- 7.3: Session sharing -------------------------------------------------
+# 7.3: Session sharing
 scenario "7.3 — Session Sharing"
 
 step "Share a session as readonly via SharingService"
@@ -59,7 +57,7 @@ else
     verify_warn "Could not extract share_id" false
 fi
 
-# ----- 7.4: Template save and use -------------------------------------------
+# 7.4: Template save and use
 scenario "7.4 — Template Save and Use"
 
 step "Save a session as template via SharingService"
@@ -88,6 +86,6 @@ else
     verify_warn "Could not extract template_id" false
 fi
 
-# ----- Report ----------------------------------------------------------------
+# Report
 print_batch_report "Batch 7 — Growth + Retention"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

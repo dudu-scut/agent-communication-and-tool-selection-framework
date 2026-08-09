@@ -13,10 +13,6 @@
 namespace agent_rpc {
 namespace server {
 
-// ============================================================================
-// AgentCommunicationServiceImpl
-// ============================================================================
-
 AgentCommunicationServiceImpl::AgentCommunicationServiceImpl()
     : cleanup_running_(false) {
     cleanup_running_ = true;
@@ -54,7 +50,7 @@ void AgentCommunicationServiceImpl::setHealthCheckHandler(common::HealthCheckHan
 void AgentCommunicationServiceImpl::setAgentRouter(orchestrator::AgentRouter* router) {
     router_ = router;
     if (router_) {
-        LOG_INFO("AgentRouter connected to AgentCommunicationService (P0-2)");
+        LOG_INFO("AgentRouter connected to AgentCommunicationService");
     }
 }
 
@@ -62,7 +58,7 @@ void AgentCommunicationServiceImpl::setAgentRuntimeRepository(
     common::AgentRuntimeRepository* repository) {
     runtime_repository_ = repository;
     if (runtime_repository_) {
-        LOG_INFO("AgentRuntimeRepository connected to AgentCommunicationService (PR-C3)");
+        LOG_INFO("AgentRuntimeRepository connected to AgentCommunicationService");
     }
 }
 
@@ -111,7 +107,7 @@ void AgentCommunicationServiceImpl::cleanupOfflineAgents() {
             removeFromIndexes(it->first);
             agent_message_queues_.erase(it->first);
             common::Metrics::getInstance().recordDisconnection(it->first);
-            // P0-44: Also remove from router to prevent routing to dead agents
+            // Also remove from the router to prevent routing to dead agents
             if (router_) {
                 router_->removeAgent(it->first);
             }
@@ -130,10 +126,6 @@ std::vector<common::ServiceEndpoint> AgentCommunicationServiceImpl::getAgentsLis
     }
     return result;
 }
-
-// ========================================================================
-// gRPC Handlers
-// ========================================================================
 
 grpc::Status AgentCommunicationServiceImpl::SendMessage(
     grpc::ServerContext* /*context*/,
@@ -297,9 +289,9 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     const agent_communication::RegisterAgentRequest* request,
     agent_communication::RegisterAgentResponse* response) {
 
-    // PR-C3: agent lifecycle management is an admin capability. The local
+    // Agent lifecycle management is an admin capability. The local
     // deployment gates it on the statically configured ADMIN user
-    // (NEXUSAI_ADMIN_USERNAME; .env.example is delivered with PR-G).
+    // (NEXUSAI_ADMIN_USERNAME; documented in .env.example).
     const grpc::Status admin_check = AuthInterceptor::requireAdmin();
     if (!admin_check.ok()) {
         return admin_check;
@@ -307,7 +299,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
 
     const auto& info = request->agent_info();
 
-    // B-02: Validate required fields
+    // Validate required fields
     if (info.service_name().empty()) {
         auto* status = response->mutable_status();
         status->set_code(3); // INVALID_ARGUMENT
@@ -355,7 +347,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     common::Metrics::getInstance().recordConnection(agent_id, true);
     LOG_INFO("Agent registered: " + agent_id);
 
-    // PR-C3: persist the durable registry fact (PostgreSQL is the source of
+    // Persist the durable registry fact (PostgreSQL is the source of
     // truth; re-registration after a restart rewrites this row). Failures are
     // logged but do not block the in-memory registration path.
     if (runtime_repository_) {
@@ -385,7 +377,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
         redis_->setex("agent:liveness:" + agent_id, liveness_ttl, "1");
     }
 
-    // P0-2: Sync to AgentRouter for orchestrator routing
+    // Sync to AgentRouter for orchestrator routing
     if (router_) {
         orchestrator::AgentInfo info;
         info.id = agent_id;
@@ -406,7 +398,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
         } else {
             info.version = endpoint.version;
         }
-        // P1-45: Parse skill descriptions from AgentCard JSON for routing accuracy
+        // Parse skill descriptions from AgentCard JSON for routing accuracy
         if (!endpoint.agent_card.empty()) {
             try {
                 auto card = nlohmann::json::parse(endpoint.agent_card);
@@ -457,7 +449,7 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
     common::Metrics::getInstance().recordDisconnection(agent_id);
     LOG_INFO("Agent unregistered: " + agent_id + " reason: " + request->reason());
 
-    // PR-C3: keep the registry row (history/metrics stay queryable) but mark
+    // Keep the registry row (history/metrics stay queryable) but mark
     // the agent offline; drop the Redis liveness cache.
     if (runtime_repository_) {
         try {
@@ -470,7 +462,7 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
         redis_->del("agent:liveness:" + agent_id);
     }
 
-    // P0-2: Remove from AgentRouter
+    // Remove from AgentRouter
     if (router_) {
         router_->removeAgent(agent_id);
     }
@@ -495,7 +487,7 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
 
     updateAgentHeartbeat(request->agent_id());
 
-    // PR-C3: refresh the durable registry fact and the liveness cache. The
+    // Refresh the durable registry fact and the liveness cache. The
     // repository call uses upsert semantics, so a heartbeat heals a registry
     // row that was lost when PostgreSQL was down during RegisterAgent.
     if (runtime_repository_) {
@@ -521,7 +513,7 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
         redis_->setex("agent:liveness:" + request->agent_id(), ttl, "1");
     }
 
-    // P0-2: Propagate heartbeat to AgentRouter
+    // Propagate heartbeat to AgentRouter
     if (router_) {
         router_->updateHeartbeat(request->agent_id());
     }
@@ -603,7 +595,7 @@ grpc::Status AgentCommunicationServiceImpl::RealTimeCommunication(
     grpc::ServerReaderWriter<agent_communication::Message,
                              agent_communication::Message>* stream) {
 
-    // [PR-G] Local delivery boundary: this bidirectional channel never grew
+    // Local delivery boundary: this bidirectional channel never grew
     // beyond an echo placeholder (it did not route messages to any agent and
     // persisted nothing). Instead of returning a successful no-op it now
     // reports UNIMPLEMENTED explicitly. Supported messaging paths are the
@@ -617,10 +609,6 @@ grpc::Status AgentCommunicationServiceImpl::RealTimeCommunication(
         "boundary; use SendMessage/ReceiveMessage/BroadcastMessage or "
         "ListenMessages instead");
 }
-
-// ========================================================================
-// Index helpers & FindAgents
-// ========================================================================
 
 void AgentCommunicationServiceImpl::addToIndexes(
     const std::string& agent_id, const common::ServiceEndpoint& endpoint) {
@@ -665,7 +653,7 @@ grpc::Status AgentCommunicationServiceImpl::FindAgents(
     int limit = request->limit();
     if (limit <= 0) limit = 100;
 
-    // 收集候选 agent_id 集合
+    // Collect candidate agent ids
     std::set<std::string> candidates;
     bool has_filter = false;
 
@@ -682,9 +670,9 @@ grpc::Status AgentCommunicationServiceImpl::FindAgents(
         auto it = skills_index_.find(request->skill());
         if (it != skills_index_.end()) {
             if (candidates.empty() && !request->tag().empty()) {
-                // tag 有结果但 skill 无结果 → 交集为空
+                // tag matched but skill did not → intersection is empty
             } else if (!candidates.empty()) {
-                // 交集
+                // intersect with tag candidates
                 std::set<std::string> intersection;
                 for (const auto& id : it->second) {
                     if (candidates.count(id)) intersection.insert(id);
@@ -735,10 +723,6 @@ grpc::Status AgentCommunicationServiceImpl::FindAgents(
     status->set_message("OK");
     return grpc::Status::OK;
 }
-
-// ============================================================================
-// HealthServiceImpl
-// ============================================================================
 
 HealthServiceImpl::HealthServiceImpl() = default;
 

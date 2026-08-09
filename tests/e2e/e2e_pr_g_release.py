@@ -5,7 +5,7 @@ Runs a REAL build/server/rpc_server process against the real Docker
 PostgreSQL/Redis, with a minimal real HTTP A2A agent, and verifies every
 scenario by querying PostgreSQL directly (docker exec psql or a local psql).
 
-Covered scenarios (TODO 3.7 / PR-G item 4):
+Covered scenarios:
   1. register/login -> QueryStream -> exactly one complete -> PG rows
      (query log / trace / messages / ledger) owned by the caller;
      GetQueryStatus reads the durable PG state (owner scoped).
@@ -96,9 +96,7 @@ def free_port():
         return s.getsockname()[1]
 
 
-# ---------------------------------------------------------------------------
 # PostgreSQL access: real queries only (docker exec psql, or local psql).
-# ---------------------------------------------------------------------------
 PG_EXECUTOR = None  # resolved in preflight: list of argv prefix
 
 
@@ -148,9 +146,7 @@ def pg_scalar(sql, timeout=20):
     return out.splitlines()[0] if out else ""
 
 
-# ---------------------------------------------------------------------------
 # grpcurl helpers
-# ---------------------------------------------------------------------------
 GRPCURL = None
 SERVER_ADDR = None
 
@@ -199,9 +195,7 @@ def register_login(username):
     return resp.get("user_id", ""), resp.get("token", ""), None
 
 
-# ---------------------------------------------------------------------------
 # Mock A2A agent (real HTTP server, standard-library only)
-# ---------------------------------------------------------------------------
 class MockA2AHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
@@ -260,9 +254,7 @@ def start_mock_agent():
     return server, server.server_address[1]
 
 
-# ---------------------------------------------------------------------------
 # Real rpc_server lifecycle
-# ---------------------------------------------------------------------------
 def start_rpc_server(port, mock_port):
     env = dict(os.environ)
     # Shared libraries from a user-prefix libpqxx install (no-sudo WSL setup)
@@ -318,9 +310,7 @@ def wait_until(predicate, timeout=15, interval=0.5):
     return predicate()
 
 
-# ---------------------------------------------------------------------------
 # Scenarios
-# ---------------------------------------------------------------------------
 def scenario_1_register_login_stream(a_id, a_token):
     print("\n[1] register/login -> QueryStream -> exactly one complete -> PG facts")
     reg_resp, err = grpc_ok("agent_communication.auth.UserService/Register",
@@ -523,9 +513,7 @@ def scenario_6_share_ttl_revoke(a_token, ctx_id_a):
     report(ok, "revoked share is refused", detail)
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 MOCK_PORT = 0
 
 

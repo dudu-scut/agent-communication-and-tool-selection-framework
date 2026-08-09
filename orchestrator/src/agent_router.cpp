@@ -1,8 +1,6 @@
 /**
  * @file agent_router.cpp
- * @brief Agent Router implementation
- * 
- * Task 8.3: 实现AgentRouter路由器
+ * @brief AgentRouter implementation
  */
 
 #include "agent_rpc/orchestrator/agent_router.h"
@@ -90,7 +88,7 @@ bool isCJK(uint32_t cp) {
            (cp >= 0x3400 && cp <= 0x4DBF);      // CJK Extension A
 }
 
-// P1-3: Word-boundary keyword matching.
+// Word-boundary keyword matching.
 // ASCII keywords require whole-word match (bounded by non-alnum or string edge).
 // CJK keywords (bigrams) use substring match since Chinese has no word boundaries.
 bool matchKeyword(const std::string& text, const std::string& keyword) {
@@ -714,8 +712,6 @@ AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<Age
     return selectWeightedByQuality(candidates);
 }
 
-// === Dynamic Intent Classification (P0-1 / P1-1) ===
-
 std::string AgentRouter::buildDynamicIntentPrompt(const std::string& user_text) const {
     std::lock_guard<std::mutex> lock(agents_mutex_);
     
@@ -843,8 +839,6 @@ std::string AgentRouter::analyzeIntentWithLLM(const std::string& question) {
 }
 
 #ifdef AGENT_RPC_ENABLE_MCP
-// === Embedding-based Routing (P3) ===
-
 bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
     // Step 1: Initialize/deinit embedding service under embedding_mutex_ only.
     // This avoids holding embedding_mutex_ while later acquiring agents_mutex_,
@@ -1027,8 +1021,6 @@ void AgentRouter::buildSkillEmbeddingIndex() {}
 std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string&) { return {}; }
 #endif
 
-// === Batch 2: Fallback and Feedback-Driven Routing ===
-
 std::string AgentRouter::findFallbackAgent(const std::string& skill_name, const std::string& exclude_agent_id) {
     std::lock_guard<std::mutex> lock(agents_mutex_);
     auto it = skill_to_agents_.find(skill_name);
@@ -1039,15 +1031,13 @@ std::string AgentRouter::findFallbackAgent(const std::string& skill_name, const 
     return "";
 }
 
-// === Batch 2: Feedback-Driven Routing ===
-
 void AgentRouter::setQualityProvider(QualityProvider provider) {
     std::lock_guard<std::mutex> lock(quality_provider_mutex_);
     quality_provider_ = std::move(provider);
 }
 
 double AgentRouter::getQualityCoefficient(const std::string& agent_id, const std::string& skill_name) {
-    // PR-C3: quality facts come from the owner-aware provider (backed by the
+    // Quality facts come from the owner-aware provider (backed by the
     // PostgreSQL feedback/agent_route_quality tables). Owner-less Redis
     // feedback keys are no longer consulted. Copy the provider under its own
     // lock, then invoke outside the lock (the provider may hit PostgreSQL).

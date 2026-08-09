@@ -6,7 +6,6 @@
 namespace agent_rpc {
 namespace common {
 
-// CircuitBreaker 实现
 CircuitBreaker::CircuitBreaker(const CircuitBreakerConfig& config)
     : config_(config)
     , state_(CircuitState::CLOSED)
@@ -124,7 +123,6 @@ bool CircuitBreaker::shouldAttemptReset() {
     return time_since_open >= config_.timeout;
 }
 
-// CircuitBreakerManager 实现
 CircuitBreakerManager& CircuitBreakerManager::getInstance() {
     static CircuitBreakerManager instance;
     return instance;

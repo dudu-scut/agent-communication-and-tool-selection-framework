@@ -15,7 +15,7 @@ namespace server {
 
 class UserExperienceServiceImpl final : public agent_communication::UserExperienceService::Service {
 public:
-    // [PR-E] Executor invoked for sandbox executions and deferred
+    // Executor invoked for sandbox executions and deferred
     // intervention executions. It runs the request through the already
     // initialized durable Query pipeline (the only execution entry point —
     // budget/owner/trace/cost/finalize logic is never duplicated here) with

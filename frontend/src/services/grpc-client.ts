@@ -114,9 +114,7 @@ async function unaryCall<TReq, TRes>(
   return resp.json() as Promise<TRes>
 }
 
-// ============================================================================
 // AIQueryService
-// ============================================================================
 
 /** Synchronous query */
 export async function query(
@@ -239,9 +237,7 @@ export function queryStream(
     })
 }
 
-// ============================================================================
 // AgentCommunicationService
-// ============================================================================
 
 /** Get all registered Agents */
 export async function getAgents(
@@ -269,8 +265,8 @@ export async function findAgents(
 }
 
 /**
- * 获取指定Agent的运行时指标
- * 对应 RPC: AIQueryService/GetAgentMetrics
+ * Fetch runtime metrics for the given agent
+ * RPC: AIQueryService/GetAgentMetrics
  */
 export async function getAgentMetrics(
   agentId: string,
@@ -289,9 +285,7 @@ export async function getAgentMetrics(
   }
 }
 
-// ============================================================================
 // UserService (Auth)
-// ============================================================================
 
 /** User registration */
 export async function register(
@@ -312,12 +306,10 @@ export async function login(
   return unaryCall<LoginRequest, LoginResponse>(USER_AUTH, 'Login', req)
 }
 
-// ============================================================================
 // ObservabilityService
-// ============================================================================
 
 /**
- * 获取追踪详情
+ * Fetch trace detail
  */
 export async function getTraceDetail(traceId: string): Promise<GetTraceDetailResponse | null> {
   try {
@@ -331,7 +323,7 @@ export async function getTraceDetail(traceId: string): Promise<GetTraceDetailRes
 }
 
 /**
- * 获取成本报告
+ * Fetch cost report
  */
 export async function getCostReport(
   userId: string,
@@ -348,9 +340,7 @@ export async function getCostReport(
   }
 }
 
-// ============================================================================
-// OrchestrationService — PR-D: Replay / Export
-// ============================================================================
+// OrchestrationService — Replay / Export
 
 /** Replay a traced query (mode: "exact" = re-execute, "route" = route comparison) */
 export async function replayQuery(
@@ -372,9 +362,7 @@ export async function exportConversation(
   )
 }
 
-// ============================================================================
-// SharingService — PR-D: Share / ReadSharedConversation / Templates
-// ============================================================================
+// SharingService — Share / ReadSharedConversation / Templates
 
 /** Create a read-only share link; the raw token is returned exactly once */
 export async function shareSession(
@@ -436,9 +424,7 @@ export async function useTemplate(templateId: string): Promise<UseTemplateRespon
   )
 }
 
-// ============================================================================
-// UserExperienceService — PR-E: Sandbox / Intervention
-// ============================================================================
+// UserExperienceService — Sandbox / Intervention
 
 /**
  * Run a sandbox query through the durable pipeline. When the owner's
@@ -471,9 +457,7 @@ export async function interventionResponse(
   )
 }
 
-// ============================================================================
-// AgentLifecycleService — PR-E: Compare / Autonomy / Undo
-// ============================================================================
+// AgentLifecycleService — Compare / Autonomy / Undo
 
 /** Compare at most 3 agents running the same question in parallel */
 export async function compareAgents(

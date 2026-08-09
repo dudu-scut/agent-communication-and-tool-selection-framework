@@ -1,9 +1,6 @@
 /**
  * @file tool_retriever.h
- * @brief 工具检索器，整合 EmbeddingService 和 VectorIndex
- * 
- * Requirements: 1.1, 1.3, 1.4, 4.1, 4.2, 4.3, 5.1
- * Task 7: 实现 ToolRetriever
+ * @brief Tool retriever integrating EmbeddingService and VectorIndex
  */
 
 #pragma once
@@ -23,172 +20,163 @@ namespace mcp {
 namespace rag {
 
 /**
- * @brief 检索器配置
+ * @brief Retriever configuration
  */
 struct RetrieverConfig {
-    EmbeddingConfig embedding_config;     ///< Embedding 服务配置
-    CacheConfig cache_config;             ///< 缓存配置
-    int top_k = 5;                        ///< 返回工具数量
-    float similarity_threshold = 0.3f;    ///< 相似度阈值
-    bool enable_validation = false;       ///< 是否启用验证
-    int validation_timeout_ms = 5000;     ///< 验证超时
-    std::string index_path;               ///< 索引文件路径
-    bool auto_save_index = true;          ///< 是否自动保存索引
+    EmbeddingConfig embedding_config;     ///< Embedding service configuration
+    CacheConfig cache_config;             ///< Cache configuration
+    int top_k = 5;                        ///< Number of tools to return
+    float similarity_threshold = 0.3f;    ///< Similarity threshold
+    bool enable_validation = false;       ///< Whether validation is enabled
+    int validation_timeout_ms = 5000;     ///< Validation timeout (ms)
+    std::string index_path;               ///< Index file path
+    bool auto_save_index = true;          ///< Whether to auto-save the index
 };
 
 /**
- * @brief 检索到的工具
+ * @brief Retrieved tool
  */
 struct RetrievedTool {
-    std::string name;                     ///< 工具名称
-    std::string description;              ///< 工具描述
-    std::string input_schema;             ///< 输入参数 JSON Schema
-    float relevance_score;                ///< 相关性分数
+    std::string name;                     ///< Tool name
+    std::string description;              ///< Tool description
+    std::string input_schema;             ///< Input parameter JSON Schema
+    float relevance_score;                ///< Relevance score
 };
 
 /**
- * @brief 工具检索器
+ * @brief Tool retriever
  * 
- * 整合 EmbeddingService、EmbeddingCache 和 VectorIndex，
- * 提供完整的工具检索功能。
+ * Integrates EmbeddingService, EmbeddingCache, and VectorIndex to provide
+ * complete tool retrieval.
  * 
- * 工作流程：
- * 1. 接收用户查询
- * 2. 检查缓存是否有查询向量
- * 3. 如果没有，调用 EmbeddingService 生成向量
- * 4. 在 VectorIndex 中搜索最相似的工具
- * 5. 可选：验证工具兼容性
- * 6. 返回检索结果
+ * Workflow:
+ * 1. Receive the user query
+ * 2. Check whether the cache has the query embedding
+ * 3. If not, call EmbeddingService to generate the embedding
+ * 4. Search the VectorIndex for the most similar tools
+ * 5. Optionally validate tool compatibility
+ * 6. Return the retrieval results
  */
 class ToolRetriever {
 public:
     explicit ToolRetriever(const RetrieverConfig& config);
     ~ToolRetriever();
     
-    // 禁止拷贝
+    // Disable copy
     ToolRetriever(const ToolRetriever&) = delete;
     ToolRetriever& operator=(const ToolRetriever&) = delete;
     
-    // ========================================================================
-    // 生命周期管理
-    // ========================================================================
+    // Lifecycle management
     
     /**
-     * @brief 初始化检索器
-     * @return 如果初始化成功返回 true
+     * @brief Initialize the retriever
+     * @return true if initialization succeeded
      * 
-     * 会尝试从 index_path 加载索引，如果文件不存在则创建空索引。
+     * Tries to load the index from index_path; creates an empty index if the
+     * file does not exist.
      */
     bool initialize();
     
     /**
-     * @brief 关闭检索器
+     * @brief Shut down the retriever
      * 
-     * 如果 auto_save_index 为 true，会保存索引到文件。
+     * Saves the index to a file if auto_save_index is true.
      */
     void shutdown();
     
     /**
-     * @brief 检查是否已初始化
+     * @brief Check whether initialized
      */
     bool isInitialized() const { return initialized_; }
     
-    // ========================================================================
-    // 工具索引
-    // ========================================================================
+    // Tool indexing
     
     /**
-     * @brief 索引 MCP 工具
-     * @param tools 工具列表
+     * @brief Index MCP tools
+     * @param tools Tool list
      * 
-     * 会为每个工具生成向量并添加到索引。
+     * Generates an embedding for each tool and adds it to the index.
      */
     void indexTools(const std::vector<ToolInfo>& tools);
     
     /**
-     * @brief 添加单个工具到索引
+     * @brief Add a single tool to the index
      */
     void addTool(const ToolInfo& tool);
     
     /**
-     * @brief 从索引移除工具
+     * @brief Remove a tool from the index
      */
     bool removeTool(const std::string& tool_name);
     
     /**
-     * @brief 刷新索引（重新生成所有向量）
+     * @brief Refresh the index (regenerate all embeddings)
      */
     void refreshIndex();
     
     /**
-     * @brief 保存索引到文件
+     * @brief Save the index to a file
      */
     bool saveIndex();
     
     /**
-     * @brief 加载索引从文件
+     * @brief Load the index from a file
      */
     bool loadIndex();
     
-    // ========================================================================
-    // 工具检索
-    // ========================================================================
+    // Tool retrieval
     
     /**
-     * @brief 检索相关工具
-     * @param query 用户查询
-     * @return 检索到的工具列表，按相关性降序排列
+     * @brief Retrieve relevant tools
+     * @param query User query
+     * @return Retrieved tools sorted by relevance in descending order
      */
     std::vector<RetrievedTool> retrieve(const std::string& query);
     
     /**
-     * @brief 检索相关工具（自定义 top_k）
+     * @brief Retrieve relevant tools (custom top_k)
      */
     std::vector<RetrievedTool> retrieve(const std::string& query, int top_k);
     
     /**
-     * @brief 获取所有工具（不进行检索）
+     * @brief Get all tools (without retrieval)
      */
     std::vector<RetrievedTool> getAllTools() const;
     
-    // ========================================================================
-    // 格式转换
-    // ========================================================================
+    // Format conversion
     
     /**
-     * @brief 将检索结果转换为 LLM 函数调用格式
-     * @param tools 检索到的工具
-     * @return JSON 格式的函数定义
+     * @brief Convert retrieval results to LLM function-calling format
+     * @param tools Retrieved tools
+     * @return JSON-formatted function definitions
      */
     static std::string toFunctionCallingFormat(const std::vector<RetrievedTool>& tools);
     
-    // ========================================================================
-    // 状态和配置
-    // ========================================================================
+    // State and configuration
     
     /**
-     * @brief 获取索引大小
+     * @brief Get the index size
      */
     size_t getIndexSize() const;
     
     /**
-     * @brief 获取缓存统计
+     * @brief Get cache statistics
      */
     CacheStats getCacheStats() const;
     
     /**
-     * @brief 获取配置
+     * @brief Get the configuration
      */
     const RetrieverConfig& getConfig() const { return config_; }
 
 private:
     /**
-     * @brief 获取文本的向量（带缓存）
+     * @brief Get the embedding of text (with cache)
      */
     std::vector<float> getEmbedding(const std::string& text);
     
     /**
-     * @brief 构建工具的文本表示（用于向量化）
+     * @brief Build the textual representation of a tool (for embedding)
      */
     static std::string buildToolText(const ToolInfo& tool);
     
@@ -200,11 +188,11 @@ private:
 };
 
 /**
- * @brief RAG-MCP 集成配置
+ * @brief RAG-MCP integration configuration
  */
 struct RAGMCPConfig {
-    bool enabled = false;                 ///< 是否启用 RAG-MCP
-    RetrieverConfig retriever_config;     ///< 检索器配置
+    bool enabled = false;                 ///< Whether RAG-MCP is enabled
+    RetrieverConfig retriever_config;     ///< Retriever configuration
 };
 
 } // namespace rag

@@ -1,8 +1,6 @@
 /**
  * @file a2a_adapter.h
  * @brief Main A2A adapter class
- * 
- * Requirements: 8.1, 8.2, 8.5
  */
 
 #pragma once
@@ -106,14 +104,14 @@ public:
     bool isAvailable() const;
 
     /**
-     * @brief Cancel an in-flight task (P2-2)
+     * @brief Cancel an in-flight task
      * @param task_id Task identifier to cancel
      * @return true if cancellation request was sent successfully
      */
     bool cancelTask(const std::string& task_id);
 
     /**
-     * @brief Set per-request timeout (P2-2)
+     * @brief Set per-request timeout
      *
      * Call before processQuery() to override the default timeout
      * for the next request. Useful for propagating gRPC deadlines.
@@ -149,7 +147,7 @@ public:
     void setRedisClient(std::shared_ptr<common::RedisClient> redis);
 
     /**
-     * @brief [Batch 4 U3] Check whether user intervention is needed before
+     * @brief Check whether user intervention is needed before
      *        executing a high-impact operation.
      *
      * Evaluates the action type against configured thresholds:

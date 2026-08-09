@@ -1,9 +1,6 @@
 /**
  * @file agent_router.h
  * @brief Agent Router - selects appropriate agent for requests
- * 
- * Task 8.3: 实现AgentRouter路由器
- * Requirements: 2.3, 3.3, 3.4
  */
 
 #pragma once
@@ -21,7 +18,7 @@
 #include <unordered_set>
 #include <vector>
 
-// Forward declarations for MCP RAG types (P3 embedding routing)
+// Forward declarations for MCP RAG types (embedding routing)
 #ifdef AGENT_RPC_ENABLE_MCP
 namespace agent_rpc { namespace mcp { namespace rag {
     class EmbeddingService;
@@ -30,7 +27,7 @@ namespace agent_rpc { namespace mcp { namespace rag {
 }}}
 #endif
 
-// Forward declaration for P1-1 LLM-based intent classification
+// Forward declaration for LLM-based intent classification
 class LLMClient;
 
 namespace agent_rpc {
@@ -40,7 +37,7 @@ class RedisClient;
 namespace orchestrator {
 
 /**
- * @brief Configuration for embedding-based skill routing (P3)
+ * @brief Configuration for embedding-based skill routing
  */
 struct EmbeddingRouterConfig {
     bool enabled = false;
@@ -53,7 +50,7 @@ struct EmbeddingRouterConfig {
 };
 
 /**
- * @brief Result of hybrid skill analysis (P3)
+ * @brief Result of hybrid skill analysis
  */
 struct SkillMatchResult {
     std::string skill_name;
@@ -91,8 +88,6 @@ public:
      */
     void shutdown();
     
-    // === Agent Selection ===
-    
     /**
      * @brief Select an agent for a request
      * @param question The question/request content (used for skill analysis)
@@ -106,7 +101,7 @@ public:
         const std::vector<std::string>& required_skills = {});
 
     /**
-     * @brief Callback type for agent invocation (P1-2 generic dispatch)
+     * @brief Callback type for agent invocation
      *
      * Parameters: (agent_url, prompt)
      * Returns: agent response text, or empty string on failure.
@@ -127,7 +122,7 @@ public:
     };
 
     /**
-     * @brief Generic dispatch: route + call agent (P1-2)
+     * @brief Generic dispatch: route + call agent
      *
      * Combines selectAgent() with an injectable call function.
      * Eliminates if/else dispatch — any registered agent is reachable
@@ -164,8 +159,6 @@ public:
      */
     std::vector<AgentInfo> findHealthyAgentsWithSkills(
         const std::vector<std::string>& required_skills);
-    
-    // === Agent Management ===
     
     /**
      * @brief Update the list of available agents
@@ -205,8 +198,6 @@ public:
      */
     std::vector<AgentInfo> getHealthyAgents();
     
-    // === Health Management ===
-    
     /**
      * @brief Mark an agent as unhealthy
      * @param agent_id Agent identifier
@@ -241,8 +232,6 @@ public:
      */
     void updateAgentLoad(const std::string& agent_id, int load);
     
-    // === Configuration ===
-    
     /**
      * @brief Set routing strategy
      * @param strategy New strategy
@@ -255,8 +244,6 @@ public:
      */
     RoutingStrategy getStrategy() const;
     
-    // === Statistics ===
-    
     /**
      * @brief Get total number of agents
      */
@@ -266,8 +253,6 @@ public:
      * @brief Get number of healthy agents
      */
     size_t getHealthyAgentCount() const;
-    
-    // === Dynamic Intent Classification (P0-1 / P1-1) ===
     
     /**
      * @brief Build a dynamic intent classification prompt from registered agents
@@ -288,7 +273,7 @@ public:
     std::unordered_map<std::string, std::string> getAllSkillDescriptions() const;
 
     /**
-     * @brief Set LLM client for dynamic intent classification (P1-1)
+     * @brief Set LLM client for dynamic intent classification
      *
      * When set, selectAgent() will use LLM-based intent classification
      * with buildDynamicIntentPrompt() before falling back to embedding/keyword routing.
@@ -296,8 +281,6 @@ public:
      * @param client LLMClient instance (caller transfers ownership)
      */
     void setLLMClient(std::unique_ptr<LLMClient> client);
-
-    // === Feedback-Driven Routing (Batch 2) ===
 
     /**
      * @brief Find a fallback agent for a given skill, excluding a specific agent
@@ -316,7 +299,7 @@ public:
     double getQualityCoefficient(const std::string& agent_id, const std::string& skill_name);
 
     /**
-     * @brief Owner-aware quality data source (PR-C3).
+     * @brief Owner-aware quality data source.
      *
      * Returns the approval rate in [0,1] for an agent/skill pair in the
      * context of the current owner, or a negative value when the owner has
@@ -329,13 +312,13 @@ public:
                                                  const std::string& skill_name)>;
 
     /**
-     * @brief Inject the owner-aware quality provider (PR-C3)
+     * @brief Inject the owner-aware quality provider
      */
     void setQualityProvider(QualityProvider provider);
 
     /**
      * @brief Set the Redis client (retained for compatibility; feedback
-     *        quality no longer reads owner-less Redis keys — PR-C3).
+     *        quality no longer reads owner-less Redis keys).
      * @param redis Pointer to RedisClient instance
      */
     void setRedisClient(agent_rpc::common::RedisClient* redis) { redis_ = redis; }
@@ -394,7 +377,7 @@ private:
     AgentInfo selectLeastLoad(const std::vector<AgentInfo>& candidates);
 
     /**
-     * @brief Select using quality-weighted random (Batch 2 feedback-driven)
+     * @brief Select using quality-weighted random (feedback-driven)
      *
      * Agents with higher quality coefficients (derived from approval rate) are
      * more likely to be selected. Uses a weighted random selection.
@@ -411,7 +394,7 @@ private:
     void rebuildSkillKeywordIndex();
 
     /**
-     * @brief LLM-based intent classification using buildDynamicIntentPrompt() (P1-1)
+     * @brief LLM-based intent classification using buildDynamicIntentPrompt()
      *
      * Calls LLM with a dynamically built prompt, parses the response as a
      * skill name, and does exact matching against registered skills.
@@ -443,10 +426,10 @@ private:
     };
     std::unordered_map<std::string, std::vector<KeywordEntry>> skill_keywords_;
 
-    // Skill → agent IDs map for fast fallback lookup (Batch 2)
+    // Skill → agent IDs map for fast fallback lookup
     std::unordered_map<std::string, std::vector<std::string>> skill_to_agents_;
 
-    // Embedding-based routing (P3)
+    // Embedding-based routing
     EmbeddingRouterConfig embedding_config_;
 #ifdef AGENT_RPC_ENABLE_MCP
     std::unique_ptr<agent_rpc::mcp::rag::EmbeddingService> embedding_service_;
@@ -457,14 +440,14 @@ private:
     std::atomic<uint64_t> embedding_query_count_{0};
     std::atomic<uint64_t> embedding_hit_count_{0};
 
-    // LLM-based intent classification (P1-1)
+    // LLM-based intent classification
     std::unique_ptr<LLMClient> llm_client_;
 
     // Redis client (retained for API compatibility; quality lookups are
-    // owner-aware via quality_provider_ since PR-C3).
+    // owner-aware via quality_provider_).
     agent_rpc::common::RedisClient* redis_ = nullptr;
 
-    // Owner-aware quality provider (PR-C3). Guarded by its own mutex: the
+    // Owner-aware quality provider. Guarded by its own mutex: the
     // provider callable is copied under this lock, then invoked OUTSIDE the
     // lock (it may hit PostgreSQL), and neither step runs under
     // agents_mutex_.

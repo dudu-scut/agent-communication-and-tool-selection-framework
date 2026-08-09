@@ -1,4 +1,4 @@
--- Batch 2: Agent feedback and performance tracking
+-- Agent feedback and performance tracking
 -- Run: psql -U <user> -d <dbname> -f sql/002_agent_feedback.sql
 
 -- Table 1: agent_feedback — user ratings for agent responses

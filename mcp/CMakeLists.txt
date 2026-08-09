@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
-# MCP模块配置
+# MCP module configuration
 set(MCP_SOURCES
     src/mcp_client.cpp
     src/mcp_tool_manager.cpp
     src/mcp_agent_integration.cpp
-    # RAG-MCP 源文件
+    # RAG-MCP source files
     src/rag/embedding_service.cpp
     src/rag/embedding_cache.cpp
     src/rag/vector_index.cpp
@@ -14,20 +14,20 @@ set(MCP_SOURCES
     src/rag/semantic_cache_index.cpp
 )
 
-# 创建MCP库
+# Build the MCP library
 add_library(agent_rpc_mcp STATIC ${MCP_SOURCES})
 
-# 设置包含目录
+# Include directories
 target_include_directories(agent_rpc_mcp PUBLIC
     include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# 查找jsoncpp
+# Find jsoncpp
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
-# 链接依赖库
+# Link dependencies
 target_link_libraries(agent_rpc_mcp PRIVATE
     agent_rpc_common
     ${JSONCPP_LIBRARIES}
@@ -37,10 +37,10 @@ target_link_libraries(agent_rpc_mcp PRIVATE
 
 target_include_directories(agent_rpc_mcp PRIVATE ${JSONCPP_INCLUDE_DIRS})
 
-# 设置C++标准
+# C++ standard
 target_compile_features(agent_rpc_mcp PRIVATE cxx_std_20)
 
-# 设置编译选项
+# Compile options
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(agent_rpc_mcp PRIVATE -Wall -Wextra -Wpedantic)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -50,7 +50,7 @@ if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endif()
 endif()
 
-# 安装规则
+# Install rules
 install(TARGETS agent_rpc_mcp
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

@@ -1,6 +1,6 @@
 /**
  * @file task_planner.h
- * @brief TaskPlanner — decomposes user queries into multi-agent execution plans (P4-1)
+ * @brief TaskPlanner — decomposes user queries into multi-agent execution plans
  *
  * Uses LLM to analyze whether a query requires single-agent or multi-agent
  * execution.  For multi-agent queries, produces an ExecutionPlan with
@@ -22,11 +22,9 @@ namespace orchestrator {
 
 class AgentRouter;  // forward declaration for resolveAgents()
 
-// ── Data structures ────────────────────────────────────────────────────────
-
 /**
  * @brief A candidate agent for a subtask with confidence score.
- * [Batch 4 U4] Used to present Top-3 choices to the user.
+ * Used to present Top-3 choices to the user.
  */
 struct CandidateAgent {
     std::string agent_id;
@@ -41,7 +39,7 @@ struct SubTask {
     std::vector<std::string> depends_on;   // IDs of prerequisite subtasks
     std::string preferred_agent_id;        // Pre-resolved agent (set by resolveAgents)
     std::string preferred_agent_name;      // Agent name for logging
-    std::vector<CandidateAgent> candidate_agents; // [Batch 4 U4] Top-3 candidates
+    std::vector<CandidateAgent> candidate_agents; // Top-3 candidates
 };
 
 struct ExecutionPlan {

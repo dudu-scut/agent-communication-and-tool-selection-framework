@@ -1,8 +1,6 @@
 /**
  * @file request_adapter.h
  * @brief RPC request to A2A request adapter
- *
- * Requirements: 8.1, 8.2
  */
 
 #pragma once
@@ -49,8 +47,8 @@ public:
     std::string generateContextId();
 
 private:
-    std::atomic<uint64_t> message_counter_{0};  // Fix #21: atomic for thread safety
-    std::atomic<uint64_t> context_counter_{0};  // Fix #21: atomic for thread safety
+    std::atomic<uint64_t> message_counter_{0};  // Atomic for thread safety
+    std::atomic<uint64_t> context_counter_{0};  // Atomic for thread safety
 
     a2a::AgentMessage buildAgentMessage(
         const std::string& content,

@@ -1,9 +1,6 @@
 /**
  * @file vector_index.cpp
- * @brief VectorIndex 实现
- * 
- * Requirements: 1.3, 1.4, 3.1, 3.2, 3.3, 3.4
- * Task 5: 实现 VectorIndex
+ * @brief VectorIndex implementation
  */
 
 #include "agent_rpc/mcp/rag/vector_index.h"
@@ -91,7 +88,7 @@ std::vector<SearchResult> VectorIndex::search(
         return {};
     }
     
-    // 计算所有工具的相似度
+    // Compute similarity for all tools
     std::vector<SearchResult> all_results;
     all_results.reserve(tools_.size());
     
@@ -109,13 +106,13 @@ std::vector<SearchResult> VectorIndex::search(
         all_results.push_back(result);
     }
     
-    // 按相似度降序排序
+    // Sort by similarity in descending order
     std::sort(all_results.begin(), all_results.end(),
         [](const SearchResult& a, const SearchResult& b) {
             return a.similarity > b.similarity;
         });
     
-    // 应用阈值过滤
+    // Apply the threshold filter
     std::vector<SearchResult> filtered_results;
     for (const auto& result : all_results) {
         if (result.similarity >= threshold) {
@@ -123,12 +120,12 @@ std::vector<SearchResult> VectorIndex::search(
         }
     }
     
-    // 如果没有结果满足阈值，返回最佳匹配
+    // Fall back to the best match if nothing meets the threshold
     if (filtered_results.empty() && !all_results.empty()) {
         filtered_results.push_back(all_results[0]);
     }
     
-    // 限制返回数量
+    // Limit the result count
     if (static_cast<int>(filtered_results.size()) > top_k) {
         filtered_results.resize(top_k);
     }
@@ -223,15 +220,15 @@ bool VectorIndex::loadFromFile(const std::string& path) {
         json index_json = json::parse(file);
         file.close();
         
-        // 读取版本
+        // Read the version
         if (index_json.contains("version")) {
             version_ = index_json["version"].get<std::string>();
         }
         
-        // 清空现有数据
+        // Clear existing data
         tools_.clear();
         
-        // 加载工具
+        // Load tools
         if (index_json.contains("tools")) {
             for (const auto& tool_json : index_json["tools"]) {
                 IndexedTool tool;
