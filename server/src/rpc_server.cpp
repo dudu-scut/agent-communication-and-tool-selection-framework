@@ -13,10 +13,11 @@
 #include "agent_rpc/common/serializer.h"
 #include "agent_rpc/common/cost_tracker.h"
 #include "agent_rpc/orchestrator/feedback_aggregator.h"
+#include "agent_rpc/orchestrator/export_service.h"
+#include "agent_rpc/orchestrator/replay_service.h"
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
-#include <fstream>
 #include <sstream>
 
 namespace agent_rpc {
@@ -98,14 +99,58 @@ RpcServer::~RpcServer() {
     agent_lifecycle_service_impl_.reset();
     user_experience_service_impl_.reset();
     observability_service_impl_.reset();
+    runtime_repository_.reset();
+    query_domain_repository_.reset();
+    budget_repository_.reset();
+    auth_repository_.reset();
+    postgres_store_.reset();
     server_.reset();
-    server_credentials_.reset();
     builders_.clear();
 }
 
 bool RpcServer::initialize(const common::RpcConfig& config) {
     config_ = config;
     address_ = config.server_address;
+
+    auth_service_impl_.reset();
+    auth_repository_.reset();
+    runtime_repository_.reset();
+    query_domain_repository_.reset();
+    budget_repository_.reset();
+    postgres_store_.reset();
+
+    // Authentication and the durable query pipeline are PostgreSQL-backed and
+    // fail closed when the database is unavailable.
+    try {
+        postgres_store_ = std::make_unique<common::PostgresStore>(
+            common::PostgresConfig::fromEnvironment());
+        if (!postgres_store_->healthCheck()) {
+            throw common::PostgresUnavailable("PostgreSQL health check failed");
+        }
+        auth_repository_ = std::make_unique<common::AuthRepository>(*postgres_store_);
+        query_domain_repository_ =
+            std::make_unique<common::QueryDomainRepository>(*postgres_store_);
+        budget_repository_ =
+            std::make_unique<common::PostgresBudgetRepository>(*postgres_store_);
+        runtime_repository_ =
+            std::make_unique<common::AgentRuntimeRepository>(*postgres_store_);
+    } catch (const common::PostgresUnavailable& error) {
+        LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
+        auth_repository_.reset();
+        runtime_repository_.reset();
+        query_domain_repository_.reset();
+        budget_repository_.reset();
+        postgres_store_.reset();
+        return false;
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to initialize PostgreSQL auth store: " + std::string(error.what()));
+        auth_repository_.reset();
+        runtime_repository_.reset();
+        query_domain_repository_.reset();
+        budget_repository_.reset();
+        postgres_store_.reset();
+        return false;
+    }
 
     // Redis: connect to Redis server
     redis_client_ = std::make_unique<common::RedisClient>();
@@ -119,34 +164,178 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
     // Initialize CostTracker with Redis for budget counters
     agent_rpc::common::CostTracker::instance().initialize(redis_client_.get());
 
-    // Initialize FeedbackAggregator with Redis for feedback-driven routing (Batch 2)
+    // Initialize FeedbackAggregator: Redis is only a metrics cache; the
+    // durable facts live in PostgreSQL (PR-C3).
     agent_rpc::orchestrator::FeedbackAggregator::initialize(redis_client_.get());
+    agent_rpc::orchestrator::FeedbackAggregator::setRuntimeRepository(runtime_repository_.get());
 
-    // Initialize lifecycle service AFTER Redis is connected
+    // Initialize lifecycle service AFTER Redis is connected; feedback itself
+    // is persisted to PostgreSQL (owner-scoped), Redis stays optional.
     agent_lifecycle_service_impl_ = std::make_unique<AgentLifecycleServiceImpl>(redis_client_.get());
+    agent_lifecycle_service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
+    agent_lifecycle_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
 
-    // Initialize observability service (reads trace spans + cost data from Redis)
+    // Initialize observability service (reads traces + cost ledger from PostgreSQL)
     observability_service_impl_ = std::make_unique<ObservabilityServiceImpl>(redis_client_.get());
+    observability_service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
+    observability_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
 
     // 创建服务实现
     service_impl_ = std::make_shared<AgentCommunicationServiceImpl>();
+    // Agent registration/heartbeat writes the durable registry to PostgreSQL
+    // and keeps only liveness in Redis (PR-C3).
+    service_impl_->setAgentRuntimeRepository(runtime_repository_.get());
+    service_impl_->setRedisClient(redis_client_.get());
     health_service_impl_ = std::make_shared<HealthServiceImpl>();
     ai_query_service_impl_ = std::make_shared<AIQueryServiceImpl>();
-    auth_service_impl_ = std::make_shared<AuthServiceImpl>(redis_client_.get());
+    auth_service_impl_ = std::make_shared<AuthServiceImpl>(auth_repository_.get());
     
     // 初始化序列化器
     common::MessageSerializer::getInstance().initialize(common::SerializerFactory::PROTOBUF_BINARY);
     
-    // 初始化AI查询服务
-    if (!ai_query_service_impl_->initialize(config_, a2a_config_, redis_client_.get())) {
-        LOG_WARN("Failed to initialize AI Query Service, continuing without it");
+    // 初始化AI查询服务：durable pipeline 依赖三个 PostgreSQL 对象，任一
+    // 初始化失败即启动失败（不注册 Query 服务，不允许静默降级）。
+    if (!ai_query_service_impl_->initialize(config_, a2a_config_, redis_client_.get(),
+                                            *postgres_store_,
+                                            *query_domain_repository_,
+                                            *budget_repository_)) {
+        LOG_ERROR("Failed to initialize AI Query Service; refusing to start without it");
+        return false;
     }
+
+    // agent_invocations producer wiring (final wrap-up): Query/QueryStream
+    // become the table's production writer. Facts are owner-scoped via the
+    // authenticated session; write failures are logged only and never
+    // affect the query outcome (observability data, not the source of truth).
+    ai_query_service_impl_->setInvocationRepository(runtime_repository_.get());
+
+    // PR-D (minimal DI addition, declared in the task report): wire the
+    // durable Replay/Export/Share services to the PostgreSQL source of
+    // truth. SharingServiceImpl gets the store + domain repository; the
+    // ReplayService gets the repository, the current route provider and a
+    // pipeline executor that invokes the already-initialized durable Query
+    // pipeline (owner still comes from the thread-local auth context, never
+    // from the request body).
+    sharing_service_impl_->setStore(postgres_store_.get());
+    sharing_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
+
+    orchestrator::ExportService::instance().configure(query_domain_repository_.get());
+
+    std::shared_ptr<AIQueryServiceImpl> pipeline = ai_query_service_impl_;
+    orchestrator::ReplayService::instance().configure(
+        query_domain_repository_.get(),
+        [pipeline]() -> std::string {
+            // Same source of truth as the Query pipeline's route label —
+            // a non-null router alone does not mean orchestration is on.
+            return (pipeline && pipeline->isOrchestratorEnabled())
+                       ? "multi-agent"
+                       : "single-agent-a2a";
+        },
+        [pipeline](const std::string& request_id, const std::string& context_id,
+                   const std::string& question, std::string& answer,
+                   std::string& error) -> bool {
+            if (!pipeline) {
+                error = "AI Query pipeline unavailable";
+                return false;
+            }
+            agent_communication::AIQueryRequest replay_request;
+            replay_request.set_request_id(request_id);
+            replay_request.set_context_id(context_id);
+            replay_request.set_question(question);
+            agent_communication::AIQueryResponse replay_response;
+            grpc::ServerContext replay_context;
+            const auto replay_status =
+                pipeline->Query(&replay_context, &replay_request, &replay_response);
+            if (!replay_status.ok()) {
+                error = replay_status.error_message();
+                return false;
+            }
+            if (replay_response.status().code() != 0) {
+                error = replay_response.status().message();
+                return false;
+            }
+            answer = replay_response.answer();
+            return true;
+        });
+
+    // PR-E (minimal DI addition, declared in the task report): wire the
+    // Sandbox / Compare / Intervention / Undo / Autonomy workflows to the
+    // PostgreSQL source of truth and to one shared pipeline executor. The
+    // executor invokes the already-initialized durable Query pipeline with
+    // the sandbox flag set (skips long-term memory writes); budget, owner,
+    // trace, cost, cancellation and finalization all stay inside the
+    // pipeline — nothing is duplicated here. The owner still comes from the
+    // thread-local auth context (compare worker threads propagate it via
+    // AuthInterceptor::propagateAuth before invoking the executor).
+    user_experience_service_impl_->setQueryDomainRepository(query_domain_repository_.get());
+    auto sandbox_executor = [pipeline](const std::string& request_id,
+                                       const std::string& context_id,
+                                       const std::string& question, std::string& answer,
+                                       std::string& error) -> bool {
+        if (!pipeline) {
+            error = "AI Query pipeline unavailable";
+            return false;
+        }
+        agent_communication::AIQueryRequest sandbox_request;
+        sandbox_request.set_request_id(request_id);
+        sandbox_request.set_context_id(context_id);
+        sandbox_request.set_question(question);
+        sandbox_request.set_sandbox(true);
+        agent_communication::AIQueryResponse sandbox_response;
+        grpc::ServerContext sandbox_context;
+        const auto sandbox_status =
+            pipeline->Query(&sandbox_context, &sandbox_request, &sandbox_response);
+        if (!sandbox_status.ok()) {
+            error = sandbox_status.error_message();
+            return false;
+        }
+        if (sandbox_response.status().code() != 0) {
+            error = sandbox_response.status().message();
+            return false;
+        }
+        answer = sandbox_response.answer();
+        return true;
+    };
+    user_experience_service_impl_->setExecutor(sandbox_executor);
+    agent_lifecycle_service_impl_->setExecutor(sandbox_executor);
 
     // P0-2: Wire AgentRouter to AgentCommunicationService for registration sync
     if (ai_query_service_impl_ && service_impl_) {
         auto* router = ai_query_service_impl_->getAgentRouter();
         if (router) {
             service_impl_->setAgentRouter(router);
+            // PR-C3: owner-aware routing quality. The provider runs on the
+            // serving thread, so the authenticated owner comes from the
+            // thread-local auth context set by AuthInterceptor. It reads the
+            // PRE-AGGREGATED agent_route_quality row (kept fresh by
+            // SubmitFeedback and the hourly aggregator) instead of scanning
+            // the raw feedback table on the routing hot path. A negative
+            // return means "no quality data for this owner" — the router then
+            // uses its neutral default and never borrows another owner's
+            // ratings.
+            common::AgentRuntimeRepository* runtime_repo = runtime_repository_.get();
+            router->setQualityProvider(
+                [runtime_repo](const std::string& agent_id,
+                               const std::string& skill_name) -> double {
+                    if (runtime_repo == nullptr) {
+                        return -1.0;
+                    }
+                    const std::string owner = AuthInterceptor::currentUserId();
+                    if (owner.empty()) {
+                        return -1.0;
+                    }
+                    try {
+                        const auto quality = runtime_repo->getRouteQuality(
+                            owner, agent_id, skill_name);
+                        if (!quality.has_value()) {
+                            return -1.0;
+                        }
+                        const double weight = std::stod(quality->routing_weight);
+                        return weight > 0.0 ? weight : -1.0;
+                    } catch (const std::exception&) {
+                        return -1.0;
+                    }
+                });
         }
     }
 
@@ -257,6 +446,12 @@ void RpcServer::initializeServiceRegistry() {
         consul->initialize(stripScheme(config_.registry_address, "consul"));
         service_registry_ = consul;
     } else if (config_.registry_address.rfind("etcd://", 0) == 0) {
+        // [PR-G] etcd is outside the local delivery boundary: this branch is
+        // only reachable when an operator explicitly points
+        // RPC_REGISTRY_ADDRESS at etcd://. The supported local path is the
+        // in-memory registry plus the PostgreSQL agent_registry table.
+        LOG_WARN("etcd service registry is not part of the supported local "
+                 "deployment; expect no maintenance for this backend");
         auto etcd = std::make_shared<registry::EtcdServiceRegistry>();
         etcd->initialize(stripScheme(config_.registry_address, "etcd"));
         service_registry_ = etcd;
@@ -286,20 +481,11 @@ void RpcServer::unregisterService() {
 }
 
 void RpcServer::setupServer() {
-    // Initialize SSL credentials if configured
-    setupSslCredentials();
-
     grpc::ServerBuilder builder;
-
-    // Use SSL credentials if available, otherwise fallback to insecure
-    if (server_credentials_) {
-        builder.AddListeningPort(address_, server_credentials_);
-        LOG_INFO("RPC server listening on " + address_ + " with SSL/TLS");
-    } else {
-        builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
-        LOG_WARN("RPC server listening on " + address_ + " WITHOUT SSL/TLS (insecure)");
-    }
-    
+    // The local WSL/Compose deployment intentionally uses plaintext gRPC.
+    // Authentication is handled by the RPC interceptor, not transport TLS.
+    builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
+    LOG_INFO("RPC server listening on " + address_ + " (local transport)");
     // 设置最大消息大小
     builder.SetMaxReceiveMessageSize(config_.max_receive_message_size);
     builder.SetMaxSendMessageSize(config_.max_message_size);
@@ -389,36 +575,6 @@ void RpcServer::setupServer() {
     
     if (!server_) {
         throw std::runtime_error("Failed to build gRPC server");
-    }
-}
-
-void RpcServer::setupSslCredentials() {
-    if (config_.enable_ssl && !config_.ssl_cert_path.empty() && !config_.ssl_key_path.empty()) {
-        grpc::SslServerCredentialsOptions ssl_opts;
-        grpc::SslServerCredentialsOptions::PemKeyCertPair pkcp;
-        
-        // 读取证书文件
-        std::ifstream key_file(config_.ssl_key_path);
-        std::ifstream cert_file(config_.ssl_cert_path);
-        
-        if (key_file.is_open() && cert_file.is_open()) {
-            std::string key_content((std::istreambuf_iterator<char>(key_file)),
-                                  std::istreambuf_iterator<char>());
-            std::string cert_content((std::istreambuf_iterator<char>(cert_file)),
-                                  std::istreambuf_iterator<char>());
-            
-            pkcp.private_key = key_content;
-            pkcp.cert_chain = cert_content;
-            ssl_opts.pem_key_cert_pairs.push_back(pkcp);
-            
-            server_credentials_ = grpc::SslServerCredentials(ssl_opts);
-            LOG_INFO("SSL credentials configured");
-        } else {
-            LOG_ERROR("Failed to read SSL certificate files");
-            server_credentials_ = grpc::InsecureServerCredentials();
-        }
-    } else {
-        server_credentials_ = grpc::InsecureServerCredentials();
     }
 }
 

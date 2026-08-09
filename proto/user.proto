@@ -20,6 +20,7 @@ message RegisterResponse {
     common.Status status = 1;
     string user_id = 2;            // 服务端生成的 UUID
     string username = 3;
+    string role = 4;               // USER | ADMIN（PR-C3 追加）
 }
 
 // 登录请求
@@ -35,6 +36,7 @@ message LoginResponse {
     string username = 3;
     string token = 4;              // 认证令牌 (UUID)
     int64 expires_at = 5;          // 过期时间 (Unix timestamp)
+    string role = 6;               // USER | ADMIN（PR-C3 追加）
 }
 
 // Token 验证请求 (内部使用 / 拦截器)
@@ -48,6 +50,7 @@ message ValidateTokenResponse {
     string user_id = 2;
     string username = 3;
     bool valid = 4;
+    string role = 5;               // USER | ADMIN（PR-C3 追加）
 }
 
 // ============================================================================

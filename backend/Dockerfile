@@ -1,0 +1,22 @@
+FROM debian:bookworm-slim AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake pkg-config \
+    libcurl4-openssl-dev libgrpc++-dev libhiredis-dev libjsoncpp-dev \
+    libprotobuf-dev libssl-dev protobuf-compiler uuid-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY CMakeLists.txt ./
+COPY proto common registry a2a a2a_adapter orchestrator server client ./
+RUN cmake -S . -B /build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_MCP=OFF \
+    && cmake --build /build --parallel
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client libcurl4 libgrpc++1.51 libhiredis0.14 libjsoncpp25 libprotobuf32 libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /build/server/rpc_server /usr/local/bin/rpc_server
+EXPOSE 50051
+ENTRYPOINT ["rpc_server"]
+CMD ["-p", "50051"]

@@ -26,13 +26,21 @@ venv/
 
 # Node.js
 node_modules/
-package-lock.json
 
 # Runtime artifacts
+.nexusai-data/
 logs/
+
+# Local-only Compose port override for WSL ctest / release E2E (not committed)
+docker-compose.override.yml
+
+# Local task/environment records / agent working files (not committed)
+TASK_REPORT.md
+.superpowers/
 pids/
 *.log
 *.pid
+pid.txt
 
 # Secrets
 .env

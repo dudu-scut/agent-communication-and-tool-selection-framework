@@ -1,5 +1,5 @@
 /**
- * gRPC-Web client wrapper
+ * JSON proxy client wrapper
  *
  * Communicates with grpcwebproxy via HTTP/1.1, which converts to gRPC/2 and forwards to NexusAI.
  * Currently uses hand-written TypeScript types + fetch; can switch to protoc-generated stubs later.
@@ -20,6 +20,33 @@ import type {
   LoginResponse,
   GetTraceDetailResponse,
   GetCostReportResponse,
+  ReplayQueryRequest,
+  ReplayQueryResponse,
+  ExportConversationRequest,
+  ExportConversationResponse,
+  ShareSessionRequest,
+  ShareSessionResponse,
+  ReadSharedConversationRequest,
+  ReadSharedConversationResponse,
+  ListSharesResponse,
+  RevokeShareResponse,
+  SaveTemplateRequest,
+  SaveTemplateResponse,
+  ListTemplatesResponse,
+  GetTemplateResponse,
+  UseTemplateResponse,
+  SandboxQueryRequest,
+  SandboxQueryResponse,
+  InterventionResponseRequest,
+  InterventionResponseResponse,
+  CompareAgentsRequest,
+  CompareAgentsResponse,
+  GetAgentCompareRequest,
+  GetAgentCompareResponse,
+  SetAutonomyLevelRequest,
+  SetAutonomyLevelResponse,
+  UndoActionRequest,
+  UndoActionResponse,
 } from '../types/proto'
 
 const BASE_URL = import.meta.env.VITE_API_BASE || ''
@@ -29,6 +56,10 @@ const AI_QUERY = '/agent_communication.AIQueryService'
 const AGENT_COMM = '/agent_communication.AgentCommunicationService'
 const USER_AUTH = '/agent_communication.auth.UserService'
 const OBSERVABILITY = '/agent_communication.ObservabilityService'
+const ORCHESTRATION = '/agent_communication.OrchestrationService'
+const SHARING = '/agent_communication.SharingService'
+const USER_EXPERIENCE = '/agent_communication.UserExperienceService'
+const AGENT_LIFECYCLE = '/agent_communication.AgentLifecycleService'
 
 // Auth token accessor (set by auth store)
 let _getAuthToken: (() => string | null) | null = null
@@ -66,7 +97,18 @@ async function unaryCall<TReq, TRes>(
     if (resp.status === 401) {
       _onUnauthorized?.()
     }
-    throw new Error(`RPC ${method} failed: ${resp.status} ${resp.statusText}`)
+    // The proxy returns the real gRPC error as { error, code, details }.
+    // Surface that semantic instead of a bare HTTP status.
+    let backendMessage = ''
+    try {
+      const body = await resp.json()
+      backendMessage = (body && (body.error || body.message || body.details)) || ''
+    } catch {
+      // non-JSON error body
+    }
+    throw new Error(
+      backendMessage || `RPC ${method} failed: ${resp.status} ${resp.statusText}`,
+    )
   }
 
   return resp.json() as Promise<TRes>
@@ -96,7 +138,7 @@ export async function query(
  * Streaming query
  *
  * Uses fetch + ReadableStream to consume server-streaming responses.
- * grpcwebproxy returns gRPC-Web text format (base64-encoded frames),
+ * The JSON proxy returns server-streaming RPCs as SSE frames,
  * simplified here to line-by-line JSON event parsing.
  */
 export function queryStream(
@@ -304,4 +346,168 @@ export async function getCostReport(
     console.warn('Failed to get cost report:', e)
     return null
   }
+}
+
+// ============================================================================
+// OrchestrationService — PR-D: Replay / Export
+// ============================================================================
+
+/** Replay a traced query (mode: "exact" = re-execute, "route" = route comparison) */
+export async function replayQuery(
+  traceId: string,
+  mode: 'exact' | 'route',
+): Promise<ReplayQueryResponse> {
+  const req: ReplayQueryRequest = { trace_id: traceId, mode }
+  return unaryCall<ReplayQueryRequest, ReplayQueryResponse>(ORCHESTRATION, 'ReplayQuery', req)
+}
+
+/** Export a conversation as Markdown or HTML (file_data is base64) */
+export async function exportConversation(
+  contextId: string,
+  format: 'markdown' | 'html',
+): Promise<ExportConversationResponse> {
+  const req: ExportConversationRequest = { context_id: contextId, format }
+  return unaryCall<ExportConversationRequest, ExportConversationResponse>(
+    ORCHESTRATION, 'ExportConversation', req,
+  )
+}
+
+// ============================================================================
+// SharingService — PR-D: Share / ReadSharedConversation / Templates
+// ============================================================================
+
+/** Create a read-only share link; the raw token is returned exactly once */
+export async function shareSession(
+  contextId: string,
+  expiryDays = 0,
+): Promise<ShareSessionResponse> {
+  const req: ShareSessionRequest = { context_id: contextId, mode: 'view', expiry_days: expiryDays }
+  return unaryCall<ShareSessionRequest, ShareSessionResponse>(SHARING, 'ShareSession', req)
+}
+
+/** Public (no auth) read of a shared conversation by raw token */
+export async function readSharedConversation(
+  token: string,
+): Promise<ReadSharedConversationResponse> {
+  const req: ReadSharedConversationRequest = { token }
+  return unaryCall<ReadSharedConversationRequest, ReadSharedConversationResponse>(
+    SHARING, 'ReadSharedConversation', req,
+  )
+}
+
+/** List the authenticated owner's shares */
+export async function listShares(): Promise<ListSharesResponse> {
+  return unaryCall<object, ListSharesResponse>(SHARING, 'ListShares', {})
+}
+
+/** Revoke one of the authenticated owner's shares */
+export async function revokeShare(shareId: string): Promise<RevokeShareResponse> {
+  return unaryCall<{ share_id: string }, RevokeShareResponse>(
+    SHARING, 'RevokeShare', { share_id: shareId },
+  )
+}
+
+/** List the authenticated owner's templates */
+export async function listTemplates(): Promise<ListTemplatesResponse> {
+  return unaryCall<object, ListTemplatesResponse>(SHARING, 'ListTemplates', {})
+}
+
+/** Get one of the authenticated owner's templates */
+export async function getTemplate(templateId: string): Promise<GetTemplateResponse> {
+  return unaryCall<{ template_id: string }, GetTemplateResponse>(
+    SHARING, 'GetTemplate', { template_id: templateId },
+  )
+}
+
+/** Save a template (dagJson must be valid JSON, validated server-side) */
+export async function saveTemplate(
+  name: string,
+  description: string,
+  dagJson: string,
+): Promise<SaveTemplateResponse> {
+  const req: SaveTemplateRequest = { name, description, dag_json: dagJson }
+  return unaryCall<SaveTemplateRequest, SaveTemplateResponse>(SHARING, 'SaveTemplate', req)
+}
+
+/** Use a template to create a real conversation under the current owner */
+export async function useTemplate(templateId: string): Promise<UseTemplateResponse> {
+  return unaryCall<{ template_id: string }, UseTemplateResponse>(
+    SHARING, 'UseTemplate', { template_id: templateId },
+  )
+}
+
+// ============================================================================
+// UserExperienceService — PR-E: Sandbox / Intervention
+// ============================================================================
+
+/**
+ * Run a sandbox query through the durable pipeline. When the owner's
+ * autonomy level requires confirmation, the backend creates a pending
+ * intervention instead of executing (intervention_required = true).
+ */
+export async function sandboxQuery(
+  agentId: string,
+  queryText: string,
+): Promise<SandboxQueryResponse> {
+  const req: SandboxQueryRequest = { agent_id: agentId, query_text: queryText }
+  return unaryCall<SandboxQueryRequest, SandboxQueryResponse>(
+    USER_EXPERIENCE, 'SandboxQuery', req,
+  )
+}
+
+/** Resolve a pending intervention (PROCEED / MODIFY / SKIP / ABORT) */
+export async function interventionResponse(
+  interventionId: string,
+  decision: 'PROCEED' | 'MODIFY' | 'SKIP' | 'ABORT',
+  modificationText?: string,
+): Promise<InterventionResponseResponse> {
+  const req: InterventionResponseRequest = {
+    intervention_id: interventionId,
+    decision,
+    modification_text: modificationText,
+  }
+  return unaryCall<InterventionResponseRequest, InterventionResponseResponse>(
+    USER_EXPERIENCE, 'InterventionResponse', req,
+  )
+}
+
+// ============================================================================
+// AgentLifecycleService — PR-E: Compare / Autonomy / Undo
+// ============================================================================
+
+/** Compare at most 3 agents running the same question in parallel */
+export async function compareAgents(
+  question: string,
+  agentIds: string[],
+): Promise<CompareAgentsResponse> {
+  const req: CompareAgentsRequest = { question, agent_ids: agentIds }
+  return unaryCall<CompareAgentsRequest, CompareAgentsResponse>(
+    AGENT_LIFECYCLE, 'CompareAgents', req,
+  )
+}
+
+/** List the owner's persisted compare runs (true empty state when none) */
+export async function getAgentCompare(): Promise<GetAgentCompareResponse> {
+  return unaryCall<GetAgentCompareRequest, GetAgentCompareResponse>(
+    AGENT_LIFECYCLE, 'GetAgentCompare', {},
+  )
+}
+
+/** Set the owner's autonomy level (1..4) for one agent */
+export async function setAutonomyLevel(
+  agentId: string,
+  level: number,
+): Promise<SetAutonomyLevelResponse> {
+  const req: SetAutonomyLevelRequest = { agent_id: agentId, level }
+  return unaryCall<SetAutonomyLevelRequest, SetAutonomyLevelResponse>(
+    AGENT_LIFECYCLE, 'SetAutonomyLevel', req,
+  )
+}
+
+/** Undo a reversible action by its undo_actions id */
+export async function undoAction(actionId: string): Promise<UndoActionResponse> {
+  const req: UndoActionRequest = { action_id: actionId }
+  return unaryCall<UndoActionRequest, UndoActionResponse>(
+    AGENT_LIFECYCLE, 'UndoAction', req,
+  )
 }

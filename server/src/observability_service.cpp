@@ -2,25 +2,26 @@
  * @file observability_service.cpp
  * @brief ObservabilityService implementation — GetTraceDetail & GetCostReport
  *
- * Data flow:
- *   - Trace spans are written to Redis by AIQueryServiceImpl (Task #20) as
- *     JSON objects in list key  trace:{trace_id}:spans
- *   - Cost micro-dollar counters are written by CostTracker as
- *     string key  cost:{user_id}:{YYYY-MM-DD}
- *
- * This service reads those keys and serves the frontend Dashboard / Monitor.
+ * Data flow (PR-C3):
+ *   - Trace payloads (including collected spans) live in PostgreSQL
+ *     `traces.trace_payload` written by AIQueryServiceImpl's durable pipeline.
+ *   - Daily costs are aggregated from `token_usage_ledger`.
+ *   - The owner is ALWAYS the authenticated user; client-supplied ids are
+ *     ignored. Redis is not consulted for observability reads anymore.
  */
 
 #include "agent_rpc/server/observability_service.h"
 #include "agent_rpc/server/auth_interceptor.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
+#include "agent_rpc/common/query_domain_repository.h"
 #include "agent_rpc/common/logger.h"
-#include "agent_rpc/common/cost_tracker.h"
 
 #include <nlohmann/json.hpp>
 
 #include <ctime>
 #include <cstring>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -33,6 +34,16 @@ namespace server {
 
 ObservabilityServiceImpl::ObservabilityServiceImpl(common::RedisClient* redis_client)
     : redis_client_(redis_client) {
+}
+
+void ObservabilityServiceImpl::setAgentRuntimeRepository(
+    common::AgentRuntimeRepository* repository) {
+    runtime_repository_ = repository;
+}
+
+void ObservabilityServiceImpl::setQueryDomainRepository(
+    common::QueryDomainRepository* repository) {
+    query_repository_ = repository;
 }
 
 // ============================================================================
@@ -97,18 +108,22 @@ grpc::Status ObservabilityServiceImpl::GetTraceDetail(
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "trace_id is required");
     }
-
-    LOG_INFO("GetTraceDetail for trace: " + trace_id);
-
-    if (!redis_client_) {
+    if (query_repository_ == nullptr) {
         return grpc::Status(grpc::StatusCode::UNAVAILABLE,
-                            "Redis not available");
+                            "Trace storage not available");
     }
 
-    // Read all span JSON objects from the Redis list
-    std::string redis_key = "trace:" + trace_id + ":spans";
-    std::vector<std::string> raw_spans;
-    if (!redis_client_->lrange(redis_key, 0, -1, raw_spans) || raw_spans.empty()) {
+    // Owner comes exclusively from the auth context. Traces are stored as
+    // "trace-<request_id>" but clients may send the bare id; try both.
+    // Missing OR foreign traces both surface as NOT_FOUND so another user's
+    // trace existence is never disclosed.
+    const std::string owner = AuthInterceptor::currentUserId();
+    std::optional<common::TraceRecord> trace =
+        query_repository_->getTraceById(owner, trace_id);
+    if (!trace.has_value()) {
+        trace = query_repository_->getTraceById(owner, "trace-" + trace_id);
+    }
+    if (!trace.has_value()) {
         auto* status = response->mutable_status();
         status->set_code(-1);
         status->set_message("Trace not found: " + trace_id);
@@ -116,38 +131,43 @@ grpc::Status ObservabilityServiceImpl::GetTraceDetail(
                             "Trace not found: " + trace_id);
     }
 
-    // Deserialise each JSON span into a proto TraceSpan
+    LOG_INFO("GetTraceDetail for trace: " + trace->id + " owner=" + owner);
+
+    // trace_payload is a JSON object; the durable pipeline stores collected
+    // spans under "spans" (fields: name/component/duration_ms/status).
     std::ostringstream summary;
     bool first_span = true;
+    try {
+        const auto payload = nlohmann::json::parse(trace->trace_payload);
+        if (payload.contains("spans") && payload["spans"].is_array()) {
+            int span_index = 0;
+            for (const auto& j : payload["spans"]) {
+                auto* span = response->add_spans();
+                span->set_trace_id(trace->id);
+                span->set_span_id(j.value("span_id", "span-" + std::to_string(span_index++)));
+                span->set_parent_span_id(j.value("parent_span_id", ""));
+                // Legacy Redis spans carried "component"; durable payload may
+                // only carry "name" — fall back to it for readability.
+                std::string component = j.value("component", "");
+                if (component.empty()) {
+                    component = j.value("name", "");
+                }
+                span->set_component(component);
+                span->set_start_time(j.value("start_time", int64_t{0}));
+                span->set_end_time(j.value("end_time", int64_t{0}));
+                span->set_duration_ms(j.value("duration_ms", 0));
+                span->set_status(j.value("status", "ok"));
+                span->set_error_message(j.value("error_message", ""));
+                span->set_metadata_json(j.value("metadata_json", ""));
 
-    for (const auto& raw : raw_spans) {
-        try {
-            auto j = nlohmann::json::parse(raw);
-            auto* span = response->add_spans();
-
-            span->set_trace_id(j.value("trace_id", trace_id));
-            span->set_span_id(j.value("span_id", ""));
-            span->set_parent_span_id(j.value("parent_span_id", ""));
-            span->set_component(j.value("component", ""));
-
-            // Wall-clock times (Unix ms)
-            span->set_start_time(j.value("start_time", int64_t{0}));
-            span->set_end_time(j.value("end_time", int64_t{0}));
-            span->set_duration_ms(j.value("duration_ms", 0));
-
-            span->set_status(j.value("status", "ok"));
-            span->set_error_message(j.value("error_message", ""));
-            span->set_metadata_json(j.value("metadata_json", ""));
-
-            // Build human-readable summary: "component duration_ms -> ..."
-            if (!first_span) summary << " \xe2\x86\x92 ";
-            summary << span->component() << " " << span->duration_ms() << "ms";
-            first_span = false;
-
-        } catch (const nlohmann::json::exception& e) {
-            LOG_WARN("Skipping malformed span JSON in trace " + trace_id +
-                     ": " + std::string(e.what()));
+                if (!first_span) summary << " \xe2\x86\x92 ";
+                summary << span->component() << " " << span->duration_ms() << "ms";
+                first_span = false;
+            }
         }
+    } catch (const nlohmann::json::exception& e) {
+        LOG_WARN("Malformed trace payload for trace " + trace->id + ": " +
+                 std::string(e.what()));
     }
 
     response->set_trace_summary(summary.str());
@@ -156,8 +176,8 @@ grpc::Status ObservabilityServiceImpl::GetTraceDetail(
     status->set_code(0);
     status->set_message("OK");
 
-    LOG_INFO("GetTraceDetail returned " + std::to_string(raw_spans.size()) +
-             " spans for trace: " + trace_id);
+    LOG_INFO("GetTraceDetail returned " + std::to_string(response->spans_size()) +
+             " spans for trace: " + trace->id);
     return grpc::Status::OK;
 }
 
@@ -181,11 +201,10 @@ grpc::Status ObservabilityServiceImpl::GetCostReport(
                             "Valid authentication token required");
     }
 
-    const std::string& user_id = request->user_id();
-    if (user_id.empty()) {
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "user_id is required");
-    }
+    // The report is always scoped to the authenticated owner; a user_id in
+    // the request body is deliberately ignored (cross-owner cost reads are
+    // forbidden by design).
+    const std::string user_id = AuthInterceptor::currentUserId();
 
     // Parse date range
     std::tm tm_start{}, tm_end{};
@@ -195,7 +214,7 @@ grpc::Status ObservabilityServiceImpl::GetCostReport(
                             "Invalid date format; expected YYYY-MM-DD");
     }
 
-    // Cap the range to 90 days to protect Redis from heavy scans
+    // Cap the range to 90 days to keep the aggregate scan bounded
     int range_days = daysBetween(tm_start, tm_end);
     if (range_days < 0) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
@@ -208,46 +227,46 @@ grpc::Status ObservabilityServiceImpl::GetCostReport(
         range_days = 90;
     }
 
-    LOG_INFO("GetCostReport for user=" + user_id +
+    if (runtime_repository_ == nullptr) {
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                            "Cost storage not available");
+    }
+
+    LOG_INFO("GetCostReport for owner=" + user_id +
              " from=" + request->start_date() +
              " to=" + formatDate(tm_end) +
              " (" + std::to_string(range_days + 1) + " days)");
 
-    if (!redis_client_) {
-        return grpc::Status(grpc::StatusCode::UNAVAILABLE,
-                            "Redis not available");
-    }
-
     double total_cost_usd = 0.0;
-
-    // Iterate day by day (inclusive of end date)
-    std::tm tm_cur = tm_start;
-    for (int d = 0; d <= range_days; ++d) {
-        std::string date_str = formatDate(tm_cur);
-        std::string redis_key = "cost:" + user_id + ":" + date_str;
-
-        std::string raw_value;
-        if (redis_client_->get(redis_key, raw_value) && !raw_value.empty()) {
-            try {
-                // CostTracker stores micro-dollars (int64); convert to USD
-                int64_t micro_dollars = std::stoll(raw_value);
-                double cost_usd = static_cast<double>(micro_dollars) / 1'000'000.0;
-
-                auto* record = response->add_records();
-                record->set_user_id(user_id);
-                record->set_date(date_str);
-                record->set_total_cost_usd(cost_usd);
-                // Token-level fields (total_prompt_tokens etc.) are not stored
-                // in the simple cost key — left at default 0.
-
-                total_cost_usd += cost_usd;
-            } catch (const std::exception& e) {
-                LOG_WARN("Failed to parse cost value for key " + redis_key +
-                         ": " + std::string(e.what()));
+    try {
+        for (const auto& day : runtime_repository_->dailyCostReport(
+                 user_id, request->start_date(), formatDate(tm_end))) {
+            auto* record = response->add_records();
+            record->set_user_id(user_id);
+            record->set_date(day.date);
+            double cost_usd = 0.0;
+            if (!day.cost_usd.empty()) {
+                try {
+                    cost_usd = std::stod(day.cost_usd);
+                } catch (const std::exception&) {
+                    cost_usd = 0.0;
+                }
             }
+            record->set_total_cost_usd(cost_usd);
+            record->set_total_prompt_tokens(
+                static_cast<int32_t>(day.prompt_tokens));
+            record->set_total_completion_tokens(
+                static_cast<int32_t>(day.completion_tokens));
+            record->set_total_requests(static_cast<int32_t>(day.request_count));
+            // estimated=true means the provider never reported real usage and
+            // the numbers are local estimates — never present them as exact.
+            record->set_estimated(day.estimated);
+            total_cost_usd += cost_usd;
         }
-
-        advanceDay(tm_cur);
+    } catch (const std::exception& e) {
+        LOG_WARN(std::string("GetCostReport aggregate failed: ") + e.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                            "Failed to build cost report");
     }
 
     response->set_total_cost_usd(total_cost_usd);

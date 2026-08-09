@@ -592,14 +592,8 @@ void RpcClient::setupChannel() {
     args.SetMaxReceiveMessageSize(config_.max_receive_message_size);
     args.SetMaxSendMessageSize(config_.max_message_size);
 
-    if (config_.enable_ssl) {
-        setupSslCredentials();
-        channel_ = grpc::CreateCustomChannel(
-            server_address_, grpc::SslCredentials(grpc::SslCredentialsOptions()), args);
-    } else {
-        channel_ = grpc::CreateCustomChannel(
-            server_address_, grpc::InsecureChannelCredentials(), args);
-    }
+    channel_ = grpc::CreateCustomChannel(
+        server_address_, grpc::InsecureChannelCredentials(), args);
 
     if (!channel_) {
         throw std::runtime_error("Failed to create gRPC channel");
@@ -619,9 +613,6 @@ void RpcClient::setupChannel() {
     }
 }
 
-void RpcClient::setupSslCredentials() {
-    // SSL证书配置逻辑预留
-}
 
 bool RpcClient::reconnect() {
     if (connection_retry_count_ >= MAX_RETRY_COUNT) {

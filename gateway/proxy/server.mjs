@@ -1,7 +1,7 @@
 /**
  * NexusAI gRPC ↔ JSON Transcoding Proxy
  *
- * Replaces Envoy + grpcwebproxy for local development.
+ * Serves the supported JSON browser gateway for local development and containers.
  * Accepts JSON POST from the Vue frontend, converts to gRPC/protobuf,
  * forwards to the rpc_server, and returns JSON.
  *
@@ -106,6 +106,39 @@ const UNSUPPORTED_STREAMING_RPCS = new Set([
   'agent_communication.AgentCommunicationService/RealTimeCommunication',
 ]);
 
+// ── gRPC status → HTTP status mapping (PR-F) ─────────────────────────────
+// Stable error semantics: gRPC errors are surfaced as structured JSON/SSE
+// errors, never wrapped as 200 success responses.
+const GRPC_HTTP_STATUS = {
+  [grpc.status.CANCELLED]: 499,
+  [grpc.status.PERMISSION_DENIED]: 403,
+  [grpc.status.NOT_FOUND]: 404,
+  [grpc.status.ALREADY_EXISTS]: 409,
+  [grpc.status.RESOURCE_EXHAUSTED]: 429,
+  [grpc.status.UNAUTHENTICATED]: 401,
+};
+// NOTE: the mapping table above is the single source of truth — the
+// error-mapping contract test's static guard asserts on these computed
+// entries, not on any prose comment (PR-F Minor #1).
+
+const GRPC_STATUS_NAME = Object.fromEntries(
+  Object.entries(grpc.status)
+    .filter(([k]) => Number.isNaN(Number(k)))
+    .map(([name, code]) => [code, name])
+);
+
+function grpcErrorPayload(err, fallbackMessage) {
+  const code = typeof err?.code === 'number' ? err.code : null;
+  const codeName = code != null ? (GRPC_STATUS_NAME[code] ?? 'UNKNOWN') : 'UNKNOWN';
+  const details = err?.details || err?.message || fallbackMessage;
+  return {
+    error: `${codeName}: ${details}`,
+    code: code ?? 'N/A',
+    code_name: codeName,
+    details,
+  };
+}
+
 // ── Helper: Extract auth metadata ───────────────────────────────────────
 function buildMetadata(headers) {
   const meta = new grpc.Metadata();
@@ -180,9 +213,16 @@ function streamCall(serviceName, methodName, body, metadata, res) {
 
   const stream = client[grpcMethod](body, metadata);
   let ended = false;
+  // PR-C2: the gRPC server is the single authoritative emitter of terminal
+  // events. Track whether a terminal event (complete/error) was relayed and
+  // only synthesize a fallback complete when gRPC ended without one.
+  let completeSeen = false;
 
   stream.on('data', (event) => {
     if (ended) return;
+    if (event && (event.event_type === 'complete' || event.event_type === 'error')) {
+      completeSeen = true;
+    }
     const json = JSON.stringify(sanitizeBuffers(event));
     res.write(`data: ${json}\n\n`);
   });
@@ -190,7 +230,9 @@ function streamCall(serviceName, methodName, body, metadata, res) {
   stream.on('end', () => {
     if (ended) return;
     ended = true;
-    res.write(`data: ${JSON.stringify({ event_type: 'complete' })}\n\n`);
+    if (!completeSeen) {
+      res.write(`data: ${JSON.stringify({ event_type: 'complete' })}\n\n`);
+    }
     res.end();
   });
 
@@ -199,16 +241,21 @@ function streamCall(serviceName, methodName, body, metadata, res) {
     ended = true;
     const codeLabel = err.code != null ? err.code : 'N/A';
     console.error(`[proxy] Stream error (${serviceName}.${methodName}):`, err.message, `(code: ${codeLabel})`);
+    // PR-F: structured SSE error event with stable code semantics, then close.
+    const payload = grpcErrorPayload(err, 'Stream error');
     const errJson = JSON.stringify({
       event_type: 'error',
-      content: err.message || 'Stream error',
-      code: err.code != null ? err.code : 'N/A',
+      content: payload.error,
+      code: payload.code,
+      code_name: payload.code_name,
+      details: payload.details,
     });
     res.write(`data: ${errJson}\n\n`);
     res.end();
   });
 
-  // Handle client disconnect
+  // Handle client disconnect: browser/SSE close must cancel the gRPC stream
+  // so the server can persist the cancelled terminal state.
   res.on('close', () => {
     if (!ended) {
       ended = true;
@@ -315,20 +362,16 @@ function handleRequest(req, res) {
     } catch (err) {
       const codeLabel = err.code != null ? err.code : 'N/A';
       console.error(`[proxy] RPC error (${serviceName}.${methodName}):`, err.message, `(code: ${codeLabel})`);
-      const status = err.code === grpc.status.UNAUTHENTICATED ? 401
-        : err.code === grpc.status.NOT_FOUND ? 404
-        : err.code === grpc.status.ALREADY_EXISTS ? 409
-        : 500;
+      // PR-F: map the five contract codes (plus ALREADY_EXISTS) to stable
+      // HTTP statuses; everything else is a generic 500.
+      const status = (typeof err.code === 'number' && GRPC_HTTP_STATUS[err.code]) || 500;
+      const payload = grpcErrorPayload(err, 'RPC failed');
 
       res.writeHead(status, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
       });
-      res.end(JSON.stringify({
-        error: err.message || 'RPC failed',
-        code: err.code != null ? err.code : 'N/A',
-        details: err.details,
-      }));
+      res.end(JSON.stringify(payload));
     }
   });
 }
@@ -341,3 +384,7 @@ server.listen(PROXY_PORT, () => {
   console.log(`NexusAI gRPC-JSON proxy listening on :${PROXY_PORT}`);
   console.log(`Forwarding to gRPC server at ${GRPC_TARGET}`);
 });
+
+// Exported so contract tests can shut the listener down (keeps `npm test`
+// from hanging on an open handle); production entrypoint is unchanged.
+export default server;

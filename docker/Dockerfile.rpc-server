@@ -1,0 +1,36 @@
+FROM debian:bookworm-slim AS build
+
+# Optional apt mirror for restricted networks (empty keeps the upstream
+# sources). Example: --build-arg APT_MIRROR_PREFIX=http://mirrors.aliyun.com/debian
+ARG APT_MIRROR_PREFIX=
+RUN if [ -n "$APT_MIRROR_PREFIX" ]; then \
+        sed -i "s|http://deb.debian.org/debian|${APT_MIRROR_PREFIX}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake pkg-config \
+    libcurl4-openssl-dev libgrpc++-dev libhiredis-dev libjsoncpp-dev libpqxx-dev nlohmann-json3-dev \
+    libprotobuf-dev libssl-dev protobuf-compiler protobuf-compiler-grpc uuid-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+RUN cmake -S . -B /build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_MCP=OFF \
+    -DNEXUSAI_MIGRATIONS_DEFAULT_DIR=/usr/local/share/nexusai/migrations \
+    && cmake --build /build --parallel
+
+FROM debian:bookworm-slim
+ARG APT_MIRROR_PREFIX=
+RUN if [ -n "$APT_MIRROR_PREFIX" ]; then \
+        sed -i "s|http://deb.debian.org/debian|${APT_MIRROR_PREFIX}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client netcat-openbsd libcurl4 libgrpc++1.51 libhiredis0.14 libjsoncpp25 libpqxx-6.4 libprotobuf32 libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /build/server/rpc_server /usr/local/bin/rpc_server
+COPY --from=build /build/db/db_migrate /usr/local/bin/db_migrate
+COPY db/migrations /usr/local/share/nexusai/migrations
+EXPOSE 50051
+HEALTHCHECK --interval=5s --timeout=3s --retries=20 CMD ["nc", "-z", "-w", "1", "127.0.0.1", "50051"]
+ENTRYPOINT ["rpc_server"]
+CMD ["-p", "50051"]

@@ -1,6 +1,6 @@
 /**
  * @file test_redis_services.cpp
- * @brief Integration tests for RedisClient, AuthService, and MemoryService.
+ * @brief Integration tests for RedisClient and MemoryService.
  *
  * Requires a running Redis instance at REDIS_HOST:REDIS_PORT (default 127.0.0.1:6379).
  * Tests use a "nexusai_test:" prefix to avoid polluting real data and clean up after themselves.
@@ -8,10 +8,8 @@
 
 #include "agent_rpc/common/redis_client.h"
 #include "agent_rpc/common/memory_service.h"
-#include "agent_rpc/server/auth_service.h"
 
 #include "ai_query.pb.h"
-#include "user.pb.h"
 
 #include <gtest/gtest.h>
 
@@ -311,208 +309,6 @@ TEST_F(MemoryFixture, HistoryTrimming) {
     redis.del("nexusai:last_agent:" + ctx);
 }
 
-// ============================================================================
-// AuthService (Redis-backed)
-// ============================================================================
-
-class AuthFixture : public RedisFixture {
-protected:
-    std::unique_ptr<server::AuthServiceImpl> auth;
-    grpc::ServerContext ctx;  // dummy context for gRPC handlers
-
-    void SetUp() override {
-        RedisFixture::SetUp();
-        if (!redis_available) return;
-        auth = std::make_unique<server::AuthServiceImpl>(&redis);
-    }
-
-    // Helper: register + login, return token
-    std::string registerAndLogin(const std::string& username,
-                                  const std::string& password = "test123") {
-        // Register
-        agent_communication::auth::RegisterRequest reg_req;
-        agent_communication::auth::RegisterResponse reg_resp;
-        reg_req.set_username(username);
-        reg_req.set_password(password);
-        auth->Register(&ctx, &reg_req, &reg_resp);
-
-        // Login
-        agent_communication::auth::LoginRequest login_req;
-        agent_communication::auth::LoginResponse login_resp;
-        login_req.set_username(username);
-        login_req.set_password(password);
-        auth->Login(&ctx, &login_req, &login_resp);
-
-        return login_resp.token();
-    }
-
-    // Helper: clean up all test keys
-    void cleanupUser(const std::string& username) {
-        // Look up user_id before deleting
-        std::string uid;
-        redis.hget("nexusai:user:" + username, "user_id", uid);
-        redis.del("nexusai:user:" + username);
-        if (!uid.empty()) {
-            redis.del("nexusai:uid:" + uid);
-        }
-    }
-};
-
-TEST_F(AuthFixture, RegisterSuccess) {
-    auto username = testPrefix() + "_user";
-
-    agent_communication::auth::RegisterRequest req;
-    agent_communication::auth::RegisterResponse resp;
-    req.set_username(username);
-    req.set_password("password123");
-    req.set_display_name("Test User");
-
-    auto status = auth->Register(&ctx, &req, &resp);
-    EXPECT_TRUE(status.ok());
-    EXPECT_EQ(resp.status().code(), 0);
-    EXPECT_FALSE(resp.user_id().empty());
-    EXPECT_EQ(resp.username(), username);
-
-    cleanupUser(username);
-}
-
-TEST_F(AuthFixture, RegisterDuplicate) {
-    auto username = testPrefix() + "_dup";
-
-    agent_communication::auth::RegisterRequest req;
-    agent_communication::auth::RegisterResponse resp;
-    req.set_username(username);
-    req.set_password("password123");
-
-    // First registration succeeds
-    auto s1 = auth->Register(&ctx, &req, &resp);
-    EXPECT_TRUE(s1.ok());
-
-    // Second registration should fail with ALREADY_EXISTS
-    agent_communication::auth::RegisterResponse resp2;
-    auto s2 = auth->Register(&ctx, &req, &resp2);
-    EXPECT_EQ(s2.error_code(), grpc::StatusCode::ALREADY_EXISTS);
-    EXPECT_EQ(resp2.status().code(), 409);
-
-    cleanupUser(username);
-}
-
-TEST_F(AuthFixture, RegisterEmptyCredentials) {
-    agent_communication::auth::RegisterRequest req;
-    agent_communication::auth::RegisterResponse resp;
-    req.set_username("");
-    req.set_password("");
-
-    auto status = auth->Register(&ctx, &req, &resp);
-    EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
-}
-
-TEST_F(AuthFixture, LoginSuccess) {
-    auto username = testPrefix() + "_login";
-
-    // Register first
-    agent_communication::auth::RegisterRequest reg_req;
-    agent_communication::auth::RegisterResponse reg_resp;
-    reg_req.set_username(username);
-    reg_req.set_password("secret");
-    auth->Register(&ctx, &reg_req, &reg_resp);
-
-    // Login
-    agent_communication::auth::LoginRequest login_req;
-    agent_communication::auth::LoginResponse login_resp;
-    login_req.set_username(username);
-    login_req.set_password("secret");
-
-    auto status = auth->Login(&ctx, &login_req, &login_resp);
-    EXPECT_TRUE(status.ok());
-    EXPECT_EQ(login_resp.status().code(), 0);
-    EXPECT_FALSE(login_resp.token().empty());
-    EXPECT_FALSE(login_resp.user_id().empty());
-    EXPECT_GT(login_resp.expires_at(), 0);
-
-    // Clean up token
-    redis.del("nexusai:token:" + login_resp.token());
-    cleanupUser(username);
-}
-
-TEST_F(AuthFixture, LoginWrongPassword) {
-    auto username = testPrefix() + "_wrongpw";
-
-    // Register
-    agent_communication::auth::RegisterRequest reg_req;
-    agent_communication::auth::RegisterResponse reg_resp;
-    reg_req.set_username(username);
-    reg_req.set_password("correct");
-    auth->Register(&ctx, &reg_req, &reg_resp);
-
-    // Login with wrong password
-    agent_communication::auth::LoginRequest login_req;
-    agent_communication::auth::LoginResponse login_resp;
-    login_req.set_username(username);
-    login_req.set_password("wrong");
-
-    auto status = auth->Login(&ctx, &login_req, &login_resp);
-    EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
-    EXPECT_EQ(login_resp.status().code(), 401);
-
-    cleanupUser(username);
-}
-
-TEST_F(AuthFixture, LoginNonexistentUser) {
-    agent_communication::auth::LoginRequest req;
-    agent_communication::auth::LoginResponse resp;
-    req.set_username("nonexistent_user_xyz");
-    req.set_password("anything");
-
-    auto status = auth->Login(&ctx, &req, &resp);
-    EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
-}
-
-TEST_F(AuthFixture, ValidateTokenValid) {
-    auto username = testPrefix() + "_validate";
-    auto token = registerAndLogin(username);
-    EXPECT_FALSE(token.empty());
-
-    // Validate the token
-    std::string uid, uname;
-    EXPECT_TRUE(auth->validateToken(token, uid, uname));
-    EXPECT_FALSE(uid.empty());
-    EXPECT_EQ(uname, username);
-
-    redis.del("nexusai:token:" + token);
-    cleanupUser(username);
-}
-
-TEST_F(AuthFixture, ValidateTokenInvalid) {
-    std::string uid, uname;
-    EXPECT_FALSE(auth->validateToken("bogus-token-xyz", uid, uname));
-    EXPECT_FALSE(auth->validateToken("", uid, uname));
-}
-
-TEST_F(AuthFixture, AtomicRegistrationPreventsRace) {
-    // Verify HSETNX semantics: even if key exists with different data,
-    // second registration fails
-    auto username = testPrefix() + "_atomic";
-
-    agent_communication::auth::RegisterRequest req;
-    agent_communication::auth::RegisterResponse resp;
-    req.set_username(username);
-    req.set_password("pw1test");
-
-    auto s1 = auth->Register(&ctx, &req, &resp);
-    EXPECT_TRUE(s1.ok());
-    auto first_uid = resp.user_id();
-
-    req.set_password("pw2test");
-    auto s2 = auth->Register(&ctx, &req, &resp);
-    EXPECT_EQ(s2.error_code(), grpc::StatusCode::ALREADY_EXISTS);
-
-    // Original user data should be intact
-    std::string stored_pw;
-    redis.hget("nexusai:user:" + username, "password_hash", stored_pw);
-    EXPECT_FALSE(stored_pw.empty());  // still has the first registration's hash
-
-    cleanupUser(username);
-}
+// Authentication is PostgreSQL-backed and is covered by LocalAuthContractTest.
 
 }  // namespace agent_rpc::tests

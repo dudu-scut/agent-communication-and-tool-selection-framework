@@ -4,6 +4,11 @@
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
 #include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/postgres_store.h"
+#include "agent_rpc/common/auth_repository.h"
+#include "agent_rpc/common/query_domain_repository.h"
+#include "agent_rpc/common/postgres_budget_repository.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/registry/service_registry.h"
 #include "agent_rpc/server/agent_lifecycle_service.h"
@@ -61,7 +66,7 @@ public:
     // 获取认证服务
     std::shared_ptr<AuthServiceImpl> getAuthService();
 
-    // 获取 Redis 客户端 (Batch 6: for CronScheduler and Canary)
+    // 获取 Redis 客户端 (PR-C3: liveness/metrics cache only)
     common::RedisClient* getRedisClient() { return redis_client_.get(); }
     
     // 设置A2A配置
@@ -79,7 +84,6 @@ public:
 
 private:
     void setupServer();
-    void setupSslCredentials();
     void initializeMCPClient();
     void initializeServiceRegistry();
     void unregisterService();
@@ -99,6 +103,14 @@ private:
     std::unique_ptr<UserExperienceServiceImpl> user_experience_service_impl_;
     std::unique_ptr<ObservabilityServiceImpl> observability_service_impl_;
     std::unique_ptr<common::RedisClient> redis_client_;
+    std::unique_ptr<common::PostgresStore> postgres_store_;
+    std::unique_ptr<common::AuthRepository> auth_repository_;
+    // RpcServer is the single owner of the durable PostgreSQL repositories;
+    // AIQueryServiceImpl only keeps non-owning references to them.
+    std::unique_ptr<common::QueryDomainRepository> query_domain_repository_;
+    std::unique_ptr<common::PostgresBudgetRepository> budget_repository_;
+    // Owner-scoped runtime facts (registry/feedback/route quality/costs).
+    std::unique_ptr<common::AgentRuntimeRepository> runtime_repository_;
     
     // A2A配置
     a2a_adapter::A2AConfig a2a_config_;
@@ -109,8 +121,6 @@ private:
 
     std::shared_ptr<registry::ServiceRegistry> service_registry_;
     std::string registered_service_id_;
-    
-    std::shared_ptr<grpc::ServerCredentials> server_credentials_;
     std::vector<std::unique_ptr<grpc::ServerBuilder>> builders_;
 };
 

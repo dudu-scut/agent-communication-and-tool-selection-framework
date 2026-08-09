@@ -18,13 +18,17 @@
 #include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/common/background_scheduler.h"
 #include "agent_rpc/orchestrator/feedback_aggregator.h"
-#include "agent_rpc/orchestrator/cron_scheduler.h"
+#ifdef AGENT_RPC_ENABLE_MCP
 #include "agent_rpc/mcp/rag/semantic_cache_index.h"
+#endif
 #include "agent_rpc/common/profile_summarizer.h"
 #include "agent_rpc/common/trace_context.h"
 #include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/postgres_store.h"
+#include "agent_rpc/db/migration_runner.h"
 #include "agent_rpc/registry/service_registry.h"
 #include <curl/curl.h>
+#include <filesystem>
 #include <iostream>
 #include <signal.h>
 #include <thread>
@@ -32,6 +36,10 @@
 #include <cstdlib>
 #include <queue>
 #include <mutex>
+
+#ifndef NEXUSAI_MIGRATIONS_DEFAULT_DIR
+#error "NEXUSAI_MIGRATIONS_DEFAULT_DIR must be provided by server/CMakeLists.txt"
+#endif
 
 using namespace agent_rpc::server;
 using namespace agent_rpc::common;
@@ -76,6 +84,14 @@ void pushSpanToQueue(const Span& span, const std::string& trace_id,
     qs.metadata_json = span.metadata_json;
     std::lock_guard<std::mutex> lock(g_span_queue_mutex);
     g_span_queue.push(std::move(qs));
+}
+
+std::filesystem::path resolveMigrationDirectory() {
+    if (const char* environment_directory = std::getenv("NEXUSAI_MIGRATIONS_DIR");
+        environment_directory != nullptr && *environment_directory != '\0') {
+        return environment_directory;
+    }
+    return NEXUSAI_MIGRATIONS_DEFAULT_DIR;
 }
 
 }  // anonymous namespace
@@ -208,6 +224,19 @@ int main(int argc, char* argv[]) {
     log_config.async_logging = true;
     log_config.color_output = true;
     initializeAdvancedLogger(log_config);
+
+    // PostgreSQL is the durable source of truth. Apply migrations before
+    // constructing or initializing the RPC server so failures fail closed.
+    try {
+        const auto postgres_config = PostgresConfig::fromEnvironment();
+        PostgresStore postgres_store{postgres_config};
+        agent_rpc::db::MigrationRunner migration_runner{postgres_store};
+        migration_runner.migrate(resolveMigrationDirectory());
+    } catch (const std::exception& error) {
+        LOG_ERROR("RPC startup migration failed: " + std::string(error.what()));
+        std::cerr << "Error: RPC startup migration failed: " << error.what() << std::endl;
+        return 1;
+    }
     
     // 配置 RPC Server
     RpcConfig config;
@@ -279,11 +308,18 @@ int main(int argc, char* argv[]) {
         "feedback_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculate(); },
         std::chrono::seconds(3600));
+    // NOTE: the production writer for agent_invocations is the
+    // Query/QueryStream pipeline (AIQueryServiceImpl for the single-agent
+    // A2A path, MultiAgentHandler for the orchestrator path — wired in
+    // RpcServer::initialize, final wrap-up). This hourly task therefore
+    // aggregates real invocation facts and refreshes the Redis
+    // agent_metrics cache whenever rows exist.
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "agent_metrics_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculateMetrics(); },
         std::chrono::seconds(3600));
 
+#ifdef AGENT_RPC_ENABLE_MCP
     // Batch 3: Register semantic cache cleanup task (every 10 minutes)
     // The SemanticCacheIndex instance should be shared from wherever it is owned
     // (e.g., held by the MCP module or AIQueryService).  At startup the shared_ptr
@@ -293,10 +329,14 @@ int main(int argc, char* argv[]) {
         "cache_cleanup",
         []() { if (semantic_cache) semantic_cache->cleanup(); },
         std::chrono::seconds(600));
+#endif
 
     // Batch 4 U2: Register profile extraction task (every 5 minutes)
-    // Calls ProfileSummarizer::processPending() which is a no-op placeholder
-    // until LLM-based extraction is implemented in a future iteration.
+    // Calls ProfileSummarizer::processPending(), which performs real work
+    // (reads pending users from Redis and calls the LLM when LLM_API_KEY is
+    // set). Known limitation: the extracted profiles are written back to
+    // Redis only — they are not persisted to PostgreSQL yet, so treat them
+    // as cache-tier data.
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "profile_extraction",
         []() { agent_rpc::common::ProfileSummarizer::processPending(); },
@@ -310,187 +350,10 @@ int main(int argc, char* argv[]) {
         },
         std::chrono::seconds(30));
 
-    // Batch 6: Initialize CronScheduler with Redis client
-    agent_rpc::orchestrator::CronScheduler::initialize(server.getRedisClient());
-
-    // Batch 6: Wire up CronScheduler execute callback to AIQueryService
-    agent_rpc::orchestrator::CronScheduler::setExecuteFn(
-        [&server](int64_t task_id, const std::string& task_name,
-                   const std::string& query_template,
-                   const std::string& agent_id,
-                   const std::string& context_id) {
-            auto ai_service = server.getAIQueryService();
-            if (!ai_service || !ai_service->isAvailable()) {
-                LOG_WARN("CronScheduler: AIQueryService not available, skipping task " +
-                         std::to_string(task_id));
-                return;
-            }
-            agent_communication::AIQueryRequest req;
-            req.set_request_id("cron_" + std::to_string(task_id));
-            req.set_question(query_template.empty() ? task_name : query_template);
-            req.set_context_id(context_id.empty() ? "cron_" + std::to_string(task_id) : context_id);
-            req.set_user_id("cron_scheduler");
-            if (!agent_id.empty()) {
-                req.mutable_preference()->add_preferred_agents(agent_id);
-            }
-            agent_communication::AIQueryResponse resp;
-            ai_service->Query(nullptr, &req, &resp);
-            LOG_INFO("CronScheduler: task " + std::to_string(task_id) +
-                     " executed via AIQueryService");
-        });
-
-    // Batch 6: Register cron scheduler check (every 60 seconds)
-    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
-        "cron_scheduler",
-        []() { agent_rpc::orchestrator::CronScheduler::checkAndFire(); },
-        std::chrono::seconds(60));
-
-    // Batch 6: Register canary evaluation task (every 600 seconds)
-    // Canary evaluation compares canary vs stable agent metrics from Redis
-    // and progressively promotes or rolls back canary deployments.
-    //
-    // Redis data layout:
-    //   canary:active_set           — SET of skill names with active canary deployments
-    //   canary:{skill_name}         — HASH {canary_agent_id, stable_agent_id, version,
-    //                                  weight, stage, deploy_time}
-    //   agent_metrics:{agent_id}    — HASH {success_rate, avg_latency_ms, ...}
-    //                                  (written by FeedbackAggregator::recalculateMetrics)
-    agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
-        "canary_evaluation",
-        [&server]() {
-            LOG_INFO("Canary evaluation: starting evaluation cycle...");
-
-            auto* redis = server.getRedisClient();
-            if (!redis || !redis->isConnected()) {
-                LOG_WARN("Canary evaluation: Redis unavailable, skipping this cycle");
-                return;
-            }
-
-            // 1. Retrieve all active canary skill names from the tracking set
-            std::vector<std::string> canary_skills;
-            if (!redis->lrange("canary:active_list", 0, -1, canary_skills)) {
-                LOG_WARN("Canary evaluation: failed to read canary:active_list");
-                return;
-            }
-
-            if (canary_skills.empty()) {
-                LOG_DEBUG("Canary evaluation: no active canary deployments");
-                return;
-            }
-
-            LOG_INFO("Canary evaluation: evaluating " + std::to_string(canary_skills.size()) +
-                     " active canary deployment(s)");
-
-            int promoted = 0, rolled_back = 0, increased = 0;
-
-            for (const auto& skill_name : canary_skills) {
-                try {
-                    // 2. Read canary deployment info
-                    std::map<std::string, std::string> canary_info;
-                    if (!redis->hgetall("canary:" + skill_name, canary_info) || canary_info.empty()) {
-                        LOG_WARN("Canary evaluation: no info for skill '" + skill_name + "', skipping");
-                        continue;
-                    }
-
-                    std::string stage = canary_info.count("stage") ? canary_info["stage"] : "";
-
-                    // Only evaluate deployments in PROMOTING stage
-                    if (stage != "PROMOTING") {
-                        LOG_DEBUG("Canary evaluation: skill '" + skill_name +
-                                  "' stage=" + stage + ", skipping");
-                        continue;
-                    }
-
-                    std::string canary_agent_id = canary_info.count("canary_agent_id")
-                                                      ? canary_info["canary_agent_id"] : "";
-                    std::string stable_agent_id = canary_info.count("stable_agent_id")
-                                                      ? canary_info["stable_agent_id"] : "";
-                    if (canary_agent_id.empty() || stable_agent_id.empty()) {
-                        LOG_WARN("Canary evaluation: missing agent IDs for skill '" + skill_name + "'");
-                        continue;
-                    }
-
-                    // 3. Fetch metrics for canary and stable versions
-                    std::map<std::string, std::string> canary_metrics;
-                    std::map<std::string, std::string> stable_metrics;
-                    redis->hgetall("agent_metrics:" + canary_agent_id, canary_metrics);
-                    redis->hgetall("agent_metrics:" + stable_agent_id, stable_metrics);
-
-                    // Parse metrics with safe defaults
-                    auto safeDouble = [](const std::map<std::string, std::string>& m,
-                                         const std::string& key, double fallback) -> double {
-                        auto it = m.find(key);
-                        if (it == m.end() || it->second.empty()) return fallback;
-                        try { return std::stod(it->second); }
-                        catch (...) { return fallback; }
-                    };
-
-                    double canary_sr  = safeDouble(canary_metrics, "success_rate", 0.0);
-                    double stable_sr  = safeDouble(stable_metrics, "success_rate", 0.0);
-                    double canary_lat = safeDouble(canary_metrics, "avg_latency_ms", 999999.0);
-                    double stable_lat = safeDouble(stable_metrics, "avg_latency_ms", 999999.0);
-
-                    // 4. Decision: canary passes if success_rate >= 95% of stable
-                    //    AND avg_latency <= 120% of stable
-                    bool should_promote = (canary_sr >= stable_sr * 0.95) &&
-                                          (canary_lat <= stable_lat * 1.2);
-
-                    if (should_promote) {
-                        // 5a. Progressive promotion: increase weight by 10%
-                        int current_weight = 0;
-                        try {
-                            current_weight = std::stoi(
-                                canary_info.count("weight") ? canary_info["weight"] : "10");
-                        } catch (...) { current_weight = 10; }
-
-                        int new_weight = std::min(current_weight + 10, 100);
-                        redis->hset("canary:" + skill_name, "weight", std::to_string(new_weight));
-
-                        if (new_weight >= 100) {
-                            // Full promotion: canary is now the stable version
-                            redis->hset("canary:" + skill_name, "stage", "STABLE");
-                            LOG_INFO("Canary evaluation: PROMOTED '" + skill_name +
-                                     "' (agent=" + canary_agent_id + ") to STABLE "
-                                     "[sr=" + std::to_string(canary_sr) +
-                                     "%, lat=" + std::to_string(canary_lat) + "ms]");
-                            ++promoted;
-                        } else {
-                            LOG_INFO("Canary evaluation: increased weight to " +
-                                     std::to_string(new_weight) + "% for '" + skill_name +
-                                     "' [sr=" + std::to_string(canary_sr) +
-                                     "%, lat=" + std::to_string(canary_lat) + "ms]");
-                            ++increased;
-                        }
-                    } else {
-                        // 5b. Rollback: canary underperforms stable
-                        redis->hset("canary:" + skill_name, "stage", "ROLLING_BACK");
-                        redis->hset("canary:" + skill_name, "weight", "0");
-                        LOG_WARN("Canary evaluation: ROLLING BACK '" + skill_name +
-                                 "' (agent=" + canary_agent_id + ") "
-                                 "[canary_sr=" + std::to_string(canary_sr) +
-                                 "%, stable_sr=" + std::to_string(stable_sr) +
-                                 "%, canary_lat=" + std::to_string(canary_lat) +
-                                 "ms, stable_lat=" + std::to_string(stable_lat) + "ms]");
-                        ++rolled_back;
-                    }
-
-                    // Update last evaluation timestamp
-                    auto now_ts = std::to_string(
-                        std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::system_clock::now().time_since_epoch()).count());
-                    redis->hset("canary:" + skill_name, "last_evaluation_at", now_ts);
-
-                } catch (const std::exception& e) {
-                    LOG_WARN("Canary evaluation: error processing skill '" +
-                             skill_name + "': " + e.what());
-                }
-            }
-
-            LOG_INFO("Canary evaluation: cycle complete — promoted=" +
-                     std::to_string(promoted) + ", increased=" + std::to_string(increased) +
-                     ", rolled_back=" + std::to_string(rolled_back));
-        },
-        std::chrono::seconds(600));
+    // PR-C3: the legacy CronScheduler and canary-evaluation background tasks
+    // were removed per the local delivery boundary and are NOT planned to be
+    // rebuilt. Canary weighting was dropped together with the CANARY/DEPRECATED
+    // router modifiers — routing quality is now owner-scoped PostgreSQL data.
 
     // ========================================================================
     // Batch 8: Span batch flush (every 1 second)

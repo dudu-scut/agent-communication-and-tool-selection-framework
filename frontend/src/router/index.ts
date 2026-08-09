@@ -26,7 +26,7 @@ const router = createRouter({
       path: '/admin',
       name: 'admin',
       component: () => import('../views/AdminView.vue'),
-      meta: { title: '管理后台', icon: 'mdi:shield-crown-outline', requiresAuth: true },
+      meta: { title: '管理后台', icon: 'mdi:shield-crown-outline', requiresAuth: true, requiresAdmin: true },
     },
     {
       path: '/sandbox',
@@ -84,6 +84,11 @@ router.beforeEach((to) => {
   if (!auth.isAuthenticated) {
     if (auth.token) auth.logout()
     return { name: 'login' }
+  }
+  // PR-F: client-side admin gate is a UX nicety only — the server enforces
+  // admin checks on every admin RPC regardless.
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return { name: 'chat' }
   }
   return true
 })

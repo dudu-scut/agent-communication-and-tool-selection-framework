@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
 # NexusAI 项目运行脚本 (Linux)
 #
@@ -8,7 +8,7 @@
 #   ./run.sh clean              清理构建目录
 #   ./run.sh start              启动 gRPC 服务端 (后台运行)
 #   ./run.sh redis              启动 Redis 服务
-#   ./run.sh gateway            启动 API 网关 (Nginx + Envoy, 需 Docker)
+#   ./run.sh gateway            启动 containerized API stack (Docker)
 #   ./run.sh frontend-dev       启动前端开发服务器
 #   ./run.sh frontend-build     构建前端生产包
 #   ./run.sh stop               停止所有服务 (含 Docker 容器)
@@ -43,6 +43,39 @@ fi
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
+readonly NEXUSAI_LIBPQXX_VERSION_PIN="8.0.1"
+readonly NEXUSAI_LIBPQXX_SOURCE_SHA256_PIN="24f878a1b4249035e4b6c07d49351506bf99f88df584d36bf198d58ebf293823"
+if [ -n "${XDG_DATA_HOME:-}" ]; then
+    NEXUSAI_LIBPQXX_DEFAULT_PREFIX="$XDG_DATA_HOME/nexusai/libpqxx-${NEXUSAI_LIBPQXX_VERSION_PIN}"
+else
+    NEXUSAI_LIBPQXX_DEFAULT_PREFIX="${HOME:-$PROJECT_ROOT}/.local/share/nexusai/libpqxx-${NEXUSAI_LIBPQXX_VERSION_PIN}"
+fi
+
+controlled_libpqxx_prefix() {
+    local os_release_file="${NEXUSAI_OS_RELEASE_FILE:-/etc/os-release}"
+    local os_id os_version_id prefix marker
+    [ -r "$os_release_file" ] || return 1
+    os_id="$(sed -n 's/^ID=//p' "$os_release_file" | head -n 1 | tr -d '"')"
+    os_version_id="$(sed -n 's/^VERSION_ID=//p' "$os_release_file" | head -n 1 | tr -d '"')"
+    [ "$os_id" = "ubuntu" ] && [ "$os_version_id" = "26.04" ] || return 1
+
+    prefix="${NEXUSAI_LIBPQXX_PREFIX:-$NEXUSAI_LIBPQXX_DEFAULT_PREFIX}"
+    marker="$prefix/.nexusai-libpqxx"
+    [ -f "$marker" ] || return 1
+    grep -Fqx "version=$NEXUSAI_LIBPQXX_VERSION_PIN" "$marker" || return 1
+    grep -Fqx "source_sha256=$NEXUSAI_LIBPQXX_SOURCE_SHA256_PIN" "$marker" || return 1
+    printf '%s\n' "$prefix"
+}
+
+controlled_libpqxx_pkgconfig_path() {
+    local prefix="$1" pkg_dir separator=""
+    for pkg_dir in "$prefix/lib/pkgconfig" "$prefix/lib64/pkgconfig" "$prefix"/lib/*/pkgconfig; do
+        [ -d "$pkg_dir" ] || continue
+        printf '%s%s' "$separator" "$pkg_dir"
+        separator=":"
+    done
+}
+
 # ============================================================================
 # 工具函数
 # ============================================================================
@@ -58,6 +91,45 @@ info()  { echo -e "\033[32m[INFO]\033[0m  $1"; }
 warn()  { echo -e "\033[33m[WARN]\033[0m  $1"; }
 error() { echo -e "\033[31m[ERROR]\033[0m $1"; }
 
+is_pid_running() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+stop_pid() {
+    local pid="$1"
+    is_pid_running "$pid" || return 1
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        is_pid_running "$pid" || break
+        sleep 0.2
+    done
+    if is_pid_running "$pid"; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    return 0
+}
+
+wait_for_tcp() {
+    local host="$1" port="$2" pid="$3"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        is_pid_running "$pid" || return 1
+        if (echo > "/dev/tcp/$host/$port") 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+on_signal() {
+    local status=$?
+    trap - INT TERM
+    cmd_stop || true
+    exit "${status:-130}"
+}
+trap on_signal INT TERM
 # ============================================================================
 # build - 编译项目
 # ============================================================================
@@ -78,7 +150,23 @@ cmd_build() {
     info "并行任务: $BUILD_JOBS"
 
     info "CMake 配置..."
-    cmake .. -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    local controlled_prefix cmake_prefix_path controlled_pkgconfig_path
+    local -a cmake_libpqxx_args=()
+    if controlled_prefix="$(controlled_libpqxx_prefix 2>/dev/null)"; then
+        cmake_prefix_path="$controlled_prefix"
+        if [ -n "${CMAKE_PREFIX_PATH:-}" ]; then
+            cmake_prefix_path="$controlled_prefix;$CMAKE_PREFIX_PATH"
+        fi
+        cmake_libpqxx_args+=("-DCMAKE_PREFIX_PATH=$cmake_prefix_path")
+        cmake_libpqxx_args+=("-DCMAKE_BUILD_RPATH=$controlled_prefix/lib")
+        cmake_libpqxx_args+=("-DCMAKE_INSTALL_RPATH=$controlled_prefix/lib")
+        if controlled_pkgconfig_path="$(controlled_libpqxx_pkgconfig_path "$controlled_prefix")"; then
+            export PKG_CONFIG_PATH="$controlled_pkgconfig_path${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+        fi
+        export LD_LIBRARY_PATH="$controlled_prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        info "Using controlled libpqxx prefix: $controlled_prefix"
+    fi
+    cmake .. -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "${cmake_libpqxx_args[@]}"
     if [ $? -ne 0 ]; then
         error "CMake 配置失败"
         exit 1
@@ -139,7 +227,6 @@ cmd_clean() {
 # ============================================================================
 SERVER_PORT="${RPC_SERVER_PORT:-50051}"
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:5000}"
-GATEWAY_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.gateway.yaml"
 
 cmd_start() {
     banner "启动 gRPC 服务端"
@@ -165,18 +252,18 @@ cmd_start() {
     fi
 
     # 环境变量传递
-    local env_vars=""
+    local -a server_env=()
     if [ -n "${LLM_API_KEY:-}" ]; then
-        env_vars="LLM_API_KEY=$LLM_API_KEY"
+        server_env+=("LLM_API_KEY=$LLM_API_KEY")
         info "LLM 多 Agent 编排: 已启用"
     else
         info "LLM 多 Agent 编排: 未启用 (设置 LLM_API_KEY 可启用)"
     fi
     if [ -n "${LLM_MODEL:-}" ]; then
-        env_vars="$env_vars LLM_MODEL=$LLM_MODEL"
+        server_env+=("LLM_MODEL=$LLM_MODEL")
     fi
     if [ -n "${LLM_API_URL:-}" ]; then
-        env_vars="$env_vars LLM_API_URL=$LLM_API_URL"
+        server_env+=("LLM_API_URL=$LLM_API_URL")
     fi
 
     mkdir -p "$LOGS_DIR" "$PIDS_DIR"
@@ -200,8 +287,8 @@ cmd_start() {
     info "日志: $LOGS_DIR/rpc_server.log"
 
     # 后台启动
-    if [ -n "$env_vars" ]; then
-        env $env_vars "$bin" "${args[@]}" >> "$LOGS_DIR/rpc_server.log" 2>&1 &
+    if [ "${#server_env[@]}" -gt 0 ]; then
+        env "${server_env[@]}" "$bin" "${args[@]}" >> "$LOGS_DIR/rpc_server.log" 2>&1 &
     else
         "$bin" "${args[@]}" >> "$LOGS_DIR/rpc_server.log" 2>&1 &
     fi
@@ -210,7 +297,7 @@ cmd_start() {
 
     # 等待启动
     sleep 1
-    if kill -0 "$pid" 2>/dev/null; then
+    if wait_for_tcp 127.0.0.1 "$SERVER_PORT" "$pid"; then
         info "rpc_server 启动成功 (PID: $pid)"
         echo ""
         echo "  gRPC 地址:    0.0.0.0:$SERVER_PORT"
@@ -222,6 +309,7 @@ cmd_start() {
     else
         error "rpc_server 启动失败，查看日志:"
         tail -20 "$LOGS_DIR/rpc_server.log" 2>/dev/null || true
+        stop_pid "$pid" || true
         rm -f "$pid_file"
         exit 1
     fi
@@ -267,30 +355,29 @@ cmd_gateway() {
         exit 1
     fi
 
-    if [ ! -f "$GATEWAY_COMPOSE" ]; then
-        error "未找到 docker-compose 配置: $GATEWAY_COMPOSE"
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        error "未找到 docker-compose 配置: $PROJECT_ROOT/docker-compose.yml"
         exit 1
     fi
 
-    info "启动 Nginx + Envoy 网关..."
-    docker compose -f "$GATEWAY_COMPOSE" up -d
+    info "启动 containerized JSON gateway stack..."
+    docker compose -f "$PROJECT_ROOT/docker-compose.yml" up --build -d
 
     sleep 2
 
     # 检查容器状态
-    if docker compose -f "$GATEWAY_COMPOSE" ps --format json 2>/dev/null | grep -q '"running"'; then
+    if docker compose -f "$PROJECT_ROOT/docker-compose.yml" ps --format json 2>/dev/null | grep -q '"running"'; then
         echo ""
         info "API 网关启动成功"
         echo ""
-        echo "  浏览器入口:   http://localhost:8080  (gRPC-Web)"
-        echo "  后端入口:     localhost:8082          (gRPC 直连)"
-        echo "  Envoy:         localhost:8081"
+        echo "  浏览器入口:   https://localhost:8443  (HTTPS JSON)"
+        echo "  Node JSON proxy: internal :8081"
         echo ""
-        echo "  查看日志:     docker compose -f $GATEWAY_COMPOSE logs -f"
+        echo "  查看日志:     docker compose -f $PROJECT_ROOT/docker-compose.yml logs -f"
         echo "  停止网关:     ./run.sh stop"
     else
         warn "部分容器可能未正常启动，请检查:"
-        docker compose -f "$GATEWAY_COMPOSE" ps
+        docker compose -f "$PROJECT_ROOT/docker-compose.yml" ps
     fi
 }
 
@@ -311,8 +398,8 @@ cmd_stop() {
                 local name
                 name=$(basename "$pid_file" .pid)
                 info "停止进程 $pid ($name)"
-                kill "$pid"
-                ((stopped++))
+                stop_pid "$pid" || true
+                stopped=$((stopped + 1))
             fi
             rm -f "$pid_file"
         done
@@ -323,11 +410,9 @@ cmd_stop() {
     fi
 
     # 停止 Docker 网关容器
-    if command -v docker &>/dev/null && [ -f "$GATEWAY_COMPOSE" ]; then
-        if docker compose -f "$GATEWAY_COMPOSE" ps --format json 2>/dev/null | grep -q '"running"'; then
+    if command -v docker &>/dev/null && [ -f "$PROJECT_ROOT/docker-compose.yml" ]; then
             info "停止 API 网关容器..."
-            docker compose -f "$GATEWAY_COMPOSE" down
-        fi
+            docker compose -f "$PROJECT_ROOT/docker-compose.yml" down
     fi
 
     if [ "$stopped" -eq 0 ]; then
@@ -339,17 +424,19 @@ cmd_stop() {
 # setup - 环境检测
 # ============================================================================
 cmd_setup() {
-    banner "环境检测"
+    banner "Environment checks"
+    if ! cmd_require_dependencies; then
+        return 1
+    fi
 
     check_tool() {
-        local name="$1"
-        local cmd="$2"
+        local name="$1" cmd="$2"
         if command -v "$cmd" &>/dev/null; then
             local ver
             ver=$("$cmd" --version 2>&1 | head -1)
-            echo "  $name: ✅ $ver"
+            echo "  $name: OK $ver"
         else
-            echo "  $name: ❌ 未安装"
+            echo "  $name: MISSING"
         fi
     }
 
@@ -410,7 +497,7 @@ cmd_frontend_dev() {
 
     if [ ! -d "node_modules" ]; then
         info "安装前端依赖..."
-        npm install
+        npm ci
     fi
 
     info "启动 Vite 开发服务器 (HMR)..."
@@ -437,7 +524,7 @@ cmd_frontend_build() {
 
     if [ ! -d "node_modules" ]; then
         info "安装前端依赖..."
-        npm install
+        npm ci
     fi
 
     info "构建中..."
@@ -485,10 +572,10 @@ cmd_verify() {
 
         if "$script"; then
             batch_results+=("Batch $batch — PASS")
-            ((total_pass++))
+            total_pass=$((total_pass + 1))
         else
             batch_results+=("Batch $batch — FAIL")
-            ((total_fail++))
+            total_fail=$((total_fail + 1))
         fi
         echo ""
     done
@@ -541,6 +628,7 @@ cmd_start_mock_agent() {
             warn "Mock Agent 已在运行 (PID: $old_pid)"
             return 0
         fi
+        stop_pid "$old_pid" || true
         rm -f "$pid_file"
     fi
 
@@ -554,6 +642,7 @@ cmd_start_mock_agent() {
         info "Mock Agent 启动成功 (PID: $pid)"
     else
         error "Mock Agent 启动失败"
+        stop_pid "$pid" || true
         rm -f "$pid_file"
         exit 1
     fi
@@ -586,54 +675,150 @@ cmd_start_orchestrator() {
 }
 
 # ============================================================================
-# ============================================================================
-# start-all - 一键启动全部后端服务（在 WSL 终端中执行）
-# ============================================================================
-cmd_start_all() {
-    banner "启动全部服务"
+check_wsl_ready() {
+    if [ "$(uname -s)" != "Linux" ] || ! grep -qiE '(microsoft|wsl)' /proc/sys/kernel/osrelease 2>/dev/null; then
+        error "Run this command from WSL2 Ubuntu. See scripts/bootstrap-wsl.sh."
+        return 1
+    fi
+    if ! grep -qi 'wsl2' /proc/sys/kernel/osrelease; then
+        error "WSL1 is unsupported; use WSL2."
+        return 1
+    fi
+    case "$PROJECT_ROOT" in
+        /mnt/*) error "Move the repository to the WSL Linux filesystem before running services."; return 1 ;;
+    esac
+}
 
-    # 1. Redis
-    cmd_redis
+version_at_least() {
+    local actual="${1#v}"
+    local required="$2"
+    if command -v dpkg >/dev/null 2>&1; then
+        dpkg --compare-versions "$actual" ge "$required"
+    else
+        [ "$(printf '%s\n' "$required" "$actual" | sort -V | head -n 1)" = "$required" ]
+    fi
+}
 
-    # 2. Mock Agent (验证用)
-    if [ -f "$VERIFY_DIR/mock-agent/mock_agent_server.py" ]; then
-        cmd_start_mock_agent
+check_development_package() {
+    local label="$1" pkg_config_name="$2"
+    shift 2
+    local ubuntu_package
+    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists "$pkg_config_name" 2>/dev/null; then
+        return 0
+    fi
+    if command -v dpkg-query >/dev/null 2>&1; then
+        for ubuntu_package in "$@"; do
+            if dpkg-query -W -f='${db:Status-Status}' "$ubuntu_package" 2>/dev/null | grep -qx installed; then
+                return 0
+            fi
+        done
+    fi
+    missing+=("$label (pkg-config: $pkg_config_name; Ubuntu packages: $*)")
+    return 0
+}
+
+cmd_require_dependencies() {
+    local -a missing=()
+    local command_name package_name compose_version="" cmake_version=""
+
+    if ! check_wsl_ready >/dev/null 2>&1; then
+        missing+=("WSL2/Linux context (use WSL2 and keep the repository outside /mnt/*)")
     fi
 
-    # 3. Node gRPC Proxy (gRPC-Web :8081 → gRPC :50051)
-    local proxy_dir="$PROJECT_ROOT/gateway/proxy"
-    if [ -f "$proxy_dir/server.mjs" ]; then
-        export PATH="$HOME/.local/bin:$PATH"
-        if command -v node &>/dev/null; then
-            info "启动 Node gRPC 代理 (端口 8081)..."
-            (cd "$proxy_dir" && GRPC_TARGET="localhost:50051" node server.mjs &>/dev/null &)
-            sleep 2
-            echo "  Node 代理: http://localhost:8081 → localhost:50051"
-        else
-            warn "Node.js 未安装，跳过代理启动"
+    if ! command -v docker >/dev/null 2>&1; then
+        missing+=("Docker CLI (docker)")
+        missing+=("Docker Compose v2 (docker compose; Docker CLI unavailable)")
+    else
+        if ! compose_version="$(docker compose version --short 2>/dev/null)"; then
+            missing+=("Docker Compose v2 (docker compose)")
+        elif ! version_at_least "${compose_version#v}" "2.0"; then
+            missing+=("Docker Compose v2 (found: $compose_version)")
         fi
     fi
 
-    # 4. Orchestrator
-    if [ -f "$PROJECT_ROOT/examples/orchestrator_agent.py" ]; then
-        cmd_start_orchestrator
+    if ! command -v cmake >/dev/null 2>&1; then
+        missing+=("CMake >=3.20 (cmake)")
+    else
+        if ! cmake_version="$(cmake --version 2>/dev/null | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')"; then
+            cmake_version=""
+        fi
+        if [ -z "$cmake_version" ] || ! version_at_least "$cmake_version" "3.20"; then
+            missing+=("CMake >=3.20 (found: $cmake_version)")
+        fi
     fi
 
-    # 5. gRPC Server
-    cmd_start "$@"
+    if ! command -v g++ >/dev/null 2>&1; then
+        missing+=("C++20-capable compiler (g++)")
+    elif ! printf 'int main() { return 0; }\n' | g++ -std=c++20 -x c++ -fsyntax-only - >/dev/null 2>&1; then
+        missing+=("C++20-capable compiler (g++ -std=c++20 probe failed)")
+    fi
 
-    echo ""
-    info "全部后端服务启动完成，请保持此 WSL 终端开启"
-    echo ""
-    echo "  Redis:           localhost:6379"
-    echo "  Mock Agent:      localhost:5100"
-    echo "  Node 代理:       localhost:8081 → gRPC :50051"
-    echo "  Orchestrator:    localhost:5000"
-    echo "  gRPC Server:     localhost:50051"
-    echo ""
-    echo "  接下来在 Windows 终端启动前端:"
-    echo "    cd frontend && npm run dev           # 前端 :5173"
-    echo "  运行验证:     ./run.sh verify"
+    for command_name in make pkg-config protoc grpc_cpp_plugin redis-server redis-cli psql pg_config node npm python3 openssl grpcurl; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+            missing+=("required command: $command_name")
+        fi
+    done
+
+    for package_name in grpc++ protobuf jsoncpp hiredis libcurl libsodium; do
+        if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists "$package_name" 2>/dev/null; then
+            missing+=("pkg-config package: $package_name")
+        fi
+    done
+
+    check_development_package "GTest" gtest libgtest-dev
+    check_development_package "RapidCheck" rapidcheck rapidcheck librapidcheck-dev
+    check_development_package "libpqxx" libpqxx libpqxx-dev
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        error "Missing required PR1 dependencies (all checks completed):"
+        printf '  - %s\n' "${missing[@]}"
+        return 1
+    fi
+    info "All PR1 WSL dependencies are available."
+    return 0
+}
+
+cmd_start_proxy() {
+    local proxy_dir="$PROJECT_ROOT/gateway/proxy"
+    local proxy_port="${PROXY_PORT:-8081}"
+    local pid_file="$PIDS_DIR/proxy.pid"
+    local log_file="$LOGS_DIR/proxy.log"
+    [ -f "$proxy_dir/server.mjs" ] || { error "Missing Node proxy: $proxy_dir/server.mjs"; return 1; }
+    command -v node >/dev/null 2>&1 || { error "Node.js is required for the JSON proxy."; return 1; }
+    mkdir -p "$LOGS_DIR" "$PIDS_DIR"
+    if [ -f "$pid_file" ]; then
+        local old_pid
+        old_pid=$(cat "$pid_file")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            info "Node JSON proxy already running (PID: $old_pid)"
+            return 0
+        fi
+        rm -f "$pid_file"
+    fi
+    if [ ! -d "$proxy_dir/node_modules" ]; then
+        (cd "$proxy_dir" && npm ci)
+    fi
+    (cd "$proxy_dir" && GRPC_TARGET="${GRPC_TARGET:-localhost:50051}" PROXY_PORT="$proxy_port" node server.mjs) >> "$log_file" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$pid_file"
+    for _ in {1..10}; do
+        if kill -0 "$pid" 2>/dev/null && (echo > "/dev/tcp/127.0.0.1/$proxy_port") 2>/dev/null; then
+            info "Node JSON proxy healthy (PID: $pid, port: $proxy_port)"
+            return 0
+        fi
+        sleep 1
+    done
+    error "Node JSON proxy failed its listener health check; see $log_file"
+    stop_pid "$pid" || true
+    rm -f "$pid_file"
+    return 1
+}
+
+# ============================================================================
+# start-all - start containerized JSON gateway stack (Docker)
+# ============================================================================
+cmd_start_all() {
+    cmd_gateway "$@"
 }
 
 # 主入口
@@ -647,7 +832,7 @@ usage() {
     echo "  clean          清理构建目录"
     echo "  start          启动 gRPC 服务端 (后台运行, 自动启动 Redis)"
     echo "  redis          启动 Redis 服务"
-    echo "  gateway        启动 API 网关: Nginx + Envoy (需 Docker)"
+    echo "  gateway        启动 containerized JSON gateway stack (Docker)"
     echo "  frontend-dev   启动前端开发服务器 (Vite HMR)"
     echo "  frontend-build 构建前端生产包"
     echo "  stop           停止所有服务 (本地进程 + Docker 容器 + Mock Agent)"
@@ -655,14 +840,13 @@ usage() {
     echo "  verify         运行 E2E 验证测试 (全部 8 批)"
     echo "  verify-batch1  单独运行第 1 批验证"
     echo "  verify-batch2  ...以此类推至 verify-batch8"
-    echo "  start-all      一键启动全部后端服务 (在 WSL 终端中执行)"
+    echo "  start-all      start containerized JSON gateway stack (Docker; same as gateway)"
     echo "  start-mock-agent 启动 Mock Agent (验证用)"
     echo "  start-orchestrator 启动 A2A Orchestrator (端口 5000)"
     echo ""
     echo "开发流程:"
-    echo "  WSL终端:  ./run.sh start-all    # 启动全部后端 (保持终端开启)"
-    echo "  Win终端:  cd gateway/proxy && node server.mjs  # gRPC代理"
-    echo "  Win终端:  cd frontend && npm run dev         # 前端"
+    echo "  ./run.sh start-all    # start containerized JSON gateway (same as gateway)"
+    echo "  ./run.sh frontend-dev # start local Vite HMR"
     echo ""
     echo "环境变量:"
     echo "  BUILD_TYPE           构建类型 (默认: Release)"
@@ -676,7 +860,7 @@ usage() {
     echo "  LLM_API_URL          LLM API 地址"
     echo ""
     echo "快速启动:"
-    echo "  ./run.sh build && ./run.sh start-all   # 编译 + 一键启动全部后端"
+    echo "  ./run.sh start-all    # start containerized JSON gateway (same as gateway)"
     echo "  ./run.sh gateway                       # 如需浏览器访问（Docker 网关）"
     echo ""
 }

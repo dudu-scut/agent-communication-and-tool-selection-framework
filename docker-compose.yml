@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexusai}
+      POSTGRES_USER: ${POSTGRES_USER:-nexusai}
+      # This fallback is local-only; production must override POSTGRES_PASSWORD.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexusai-dev-password}
+    volumes:
+      # Keep PostgreSQL state in the checkout so local WSL runs survive Compose
+      # teardown. The directory is ignored by Git (see .gitignore).
+      - ./.nexusai-data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  rpc-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rpc-server
+      args:
+        # Optional Debian apt mirror for restricted networks; empty keeps
+        # upstream sources. Example: APT_MIRROR_PREFIX=http://mirrors.aliyun.com/debian
+        APT_MIRROR_PREFIX: ${APT_MIRROR_PREFIX:-}
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      NEXUSAI_POSTGRES_HOST: postgres
+      NEXUSAI_POSTGRES_PORT: "5432"
+      NEXUSAI_POSTGRES_DATABASE: ${POSTGRES_DB:-nexusai}
+      NEXUSAI_POSTGRES_USER: ${POSTGRES_USER:-nexusai}
+      NEXUSAI_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexusai-dev-password}
+      NEXUSAI_MIGRATIONS_DIR: /usr/local/share/nexusai/migrations
+      # Admin user for agent management RPCs (RegisterAgent/UnregisterAgent);
+      # empty means no user gets the ADMIN role. Pass through from .env.
+      NEXUSAI_ADMIN_USERNAME: ${NEXUSAI_ADMIN_USERNAME:-}
+      RPC_SERVER_PORT: "50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose: ["50051"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z -w 1 127.0.0.1 50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  proxy:
+    build:
+      context: .
+      dockerfile: gateway/proxy/Dockerfile
+    environment:
+      GRPC_TARGET: rpc-server:50051
+      PROXY_PORT: "8081"
+    depends_on:
+      rpc-server:
+        condition: service_healthy
+    expose: ["8081"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "const net=require('node:net'); const socket=net.createConnection({host:'127.0.0.1',port:8081}); socket.once('connect',()=>{socket.destroy(); process.exit(0)}); socket.once('error',()=>process.exit(1)); setTimeout(()=>process.exit(1),1000)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [nexusai]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      proxy:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [nexusai]
+
+networks:
+  nexusai:
+
+volumes:
+  redis-data:

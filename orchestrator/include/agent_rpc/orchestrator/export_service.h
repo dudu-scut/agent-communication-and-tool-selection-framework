@@ -2,42 +2,57 @@
 
 #include <string>
 
+#include <grpcpp/grpcpp.h>
+
+namespace agent_communication {
+class ExportConversationRequest;
+class ExportConversationResponse;
+}
+
 namespace agent_rpc {
+namespace common {
+class QueryDomainRepository;
+}
+
 namespace orchestrator {
 
 /**
- * @brief Conversation Export Service (Batch 6)
+ * @brief Conversation Export Service (PR-D: durable, PostgreSQL-backed)
  *
- * Exports conversation history in Markdown or HTML format.
- * The Markdown format includes a conversational transcript with
- * a Mermaid DAG visualization when applicable. The HTML format
- * wraps the Markdown in a styled template with chat bubbles.
+ * Exports a conversation transcript stored in PostgreSQL
+ * (conversation_messages) as Markdown or standalone HTML. The lookup is
+ * scoped by the AUTHENTICATED owner: a conversation that does not exist or
+ * belongs to another user maps to NOT_FOUND.
+ *
+ * The HTML rendering escapes every message byte (& < > " '), so message
+ * text can never execute as HTML/script in the exported document.
  */
-class ExportService {
+class ExportService final {
 public:
-    /**
-     * @brief Format conversation history as Markdown.
-     *
-     * Reads conversation history from the conversation store
-     * (memory service / Redis) and formats it as a Markdown document
-     * with headers for user and agent messages, timestamps, and
-     * a Mermaid diagram for multi-agent DAG execution if applicable.
-     *
-     * @param context_id The conversation context identifier.
-     * @return Markdown-formatted string of the conversation.
-     */
-    static std::string toMarkdown(const std::string& context_id);
+    static ExportService& instance();
+
+    // Server-startup dependency injection; the repository must outlive the
+    // server.
+    void configure(common::QueryDomainRepository* domain_repository);
 
     /**
-     * @brief Wrap Markdown content in an HTML page with inline CSS.
-     *
-     * Converts the Markdown conversation into a standalone HTML document
-     * with chat-bubble styling, responsive layout, and print-friendly CSS.
-     *
-     * @param markdown The Markdown content (from toMarkdown()).
-     * @return Complete HTML document as string.
+     * @brief gRPC-level entry point shared by every ExportConversation call
+     *        path. `owner_id` MUST come from the authenticated session.
+     */
+    static grpc::Status handleExportRequest(const std::string& owner_id,
+                                            const agent_communication::ExportConversationRequest* request,
+                                            agent_communication::ExportConversationResponse* response);
+
+    /**
+     * @brief Wrap a Markdown transcript in a standalone HTML page. All text
+     *        content is HTML-escaped; raw markup never reaches the output.
      */
     static std::string toHTML(const std::string& markdown);
+
+private:
+    ExportService() = default;
+
+    common::QueryDomainRepository* domain_repository_ = nullptr;
 };
 
 } // namespace orchestrator

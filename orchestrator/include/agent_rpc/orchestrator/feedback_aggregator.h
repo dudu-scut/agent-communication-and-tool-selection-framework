@@ -4,43 +4,51 @@
 
 #include <string>
 
+namespace agent_rpc::common {
+class AgentRuntimeRepository;
+}  // namespace agent_rpc::common
+
 namespace agent_rpc {
 namespace orchestrator {
 
 /**
- * @brief Feedback aggregator for agent approval rates and performance metrics.
+ * @brief Feedback aggregator for owner-scoped routing quality and metrics.
  *
- * Periodically aggregates feedback ratings from agent_feedback table (PG)
- * and call metrics from agent_calls table (PG), then stores the results
- * in Redis for fast lookup by the routing layer.
+ * PostgreSQL is the sole source of truth (PR-C3): feedback rows and the
+ * derived agent_route_quality / agent_invocations aggregates all live in PG
+ * and are read/written through AgentRuntimeRepository (libpqxx parameter
+ * binding). Redis is only refreshed as an optional metrics cache — there is
+ * no shell-out and no separate connection string anywhere in this class.
  */
 class FeedbackAggregator {
 public:
     /**
-     * @brief Initialize the aggregator with a Redis client.
-     * @param redis Pointer to the shared RedisClient instance
+     * @brief Initialize the aggregator with a Redis client (cache only).
+     * @param redis Pointer to the shared RedisClient instance (may be null)
      */
     static void initialize(agent_rpc::common::RedisClient* redis);
 
     /**
-     * @brief Aggregate approval rates from agent_feedback into Redis.
+     * @brief Attach the durable PostgreSQL runtime repository (PR-C3).
+     * @param repository Pointer owned by the caller (RpcServer)
+     */
+    static void setRuntimeRepository(agent_rpc::common::AgentRuntimeRepository* repository);
+
+    /**
+     * @brief Recompute owner-scoped agent_route_quality from feedback rows.
      *
-     * Reads from PostgreSQL agent_feedback table, computes Bayesian-smoothed
-     * approval_rate per (agent_id, skill_name), and writes to Redis HSET
-     * under key "feedback:{agent_id}:{skill_name}".
-     *
+     * Iterates every distinct (owner, agent, skill) feedback triple and
+     * upserts the Bayesian-smoothed (Beta(2,2)) quality row in PostgreSQL.
      * Scheduled to run hourly.
      */
     static void recalculate();
 
     /**
-     * @brief Aggregate performance metrics from agent_calls into Redis.
+     * @brief Recompute per-agent invocation metrics from agent_invocations.
      *
-     * Reads from PostgreSQL agent_calls table, computes success_rate, avg_latency,
-     * p95_latency, total_requests per agent_id, and writes to Redis HSET
-     * under key "agent_metrics:{agent_id}".
-     *
-     * Scheduled to run hourly.
+     * Aggregates success_rate / avg_latency / total_requests in PostgreSQL
+     * and refreshes the "agent_metrics:{agent_id}" Redis cache used by the
+     * compare/dashboard views. Scheduled to run hourly.
      */
     static void recalculateMetrics();
 
@@ -48,15 +56,8 @@ private:
     /** Shared Redis client pointer (set once via initialize). */
     static agent_rpc::common::RedisClient* redis_;
 
-    /** Default PostgreSQL connection string (overridable via env PG_URL). */
-    static std::string pgUrl();
-
-    /**
-     * @brief Execute a SQL query via psql and return the result as a string.
-     * @param sql SQL query to execute
-     * @return Query result (stdout from psql), or empty on failure
-     */
-    static std::string execPsql(const std::string& sql);
+    /** Durable runtime repository (set once via setRuntimeRepository). */
+    static agent_rpc::common::AgentRuntimeRepository* runtime_repository_;
 };
 
 } // namespace orchestrator

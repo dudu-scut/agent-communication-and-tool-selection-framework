@@ -7,9 +7,11 @@
 
 #include "agent_rpc/orchestrator/agent_router.h"
 #include "agent_rpc/common/redis_client.h"
+#ifdef AGENT_RPC_ENABLE_MCP
 #include <agent_rpc/mcp/rag/embedding_service.h>
 #include <agent_rpc/mcp/rag/vector_index.h>
 #include <agent_rpc/mcp/rag/embedding_cache.h>
+#endif
 #include <a2a/llm_client.hpp>
 #include <algorithm>
 #include <cctype>
@@ -121,8 +123,7 @@ bool matchKeyword(const std::string& text, const std::string& keyword) {
 namespace agent_rpc {
 namespace orchestrator {
 
-AgentRouter::AgentRouter() 
-    : random_generator_(std::random_device{}()) {}
+AgentRouter::AgentRouter() {}
 
 AgentRouter::~AgentRouter() {
     shutdown();
@@ -194,49 +195,52 @@ std::optional<AgentInfo> AgentRouter::selectAgent(
         }
     }
 
-    // Phase 2: Filter and select from candidate agents
-    std::lock_guard<std::mutex> lock(agents_mutex_);
-
-    if (agents_.empty()) {
-        return std::nullopt;
-    }
-
-    // Build candidate list.
-    // used_fallback=true: all four tiers failed to identify a skill, pick any healthy agent.
-    // skills_to_match.empty() without used_fallback: either required_skills was empty and
-    //   strategy_ != SKILL_MATCH (e.g. ROUND_ROBIN), or intent analysis produced no result
-    //   but we still want to serve the request with available agents.
+    // Phase 2: Filter candidates under the lock, then run strategy selection
+    // OUTSIDE the lock — quality lookups may hit PostgreSQL via the injected
+    // provider and must not hold agents_mutex_ while doing so.
     std::vector<AgentInfo> candidates;
+    {
+        std::lock_guard<std::mutex> lock(agents_mutex_);
 
-    if (used_fallback || skills_to_match.empty()) {
-        // Fallback or no skill requirements: use all healthy agents
-        for (const auto& [id, agent] : agents_) {
-            if (agent.is_healthy) {
-                candidates.push_back(agent);
-            }
-        }
-    } else {
-        // Filter agents by skill requirements
-        for (const auto& [id, agent] : agents_) {
-            if (!agent.is_healthy) continue;
-            if (!agent.hasAnySkill(skills_to_match)) continue;
-            candidates.push_back(agent);
+        if (agents_.empty()) {
+            return std::nullopt;
         }
 
-        // If no candidates found with required skills, fall back to all healthy agents
-        if (candidates.empty()) {
+        // Build candidate list.
+        // used_fallback=true: all four tiers failed to identify a skill, pick any healthy agent.
+        // skills_to_match.empty() without used_fallback: either required_skills was empty and
+        //   strategy_ != SKILL_MATCH (e.g. ROUND_ROBIN), or intent analysis produced no result
+        //   but we still want to serve the request with available agents.
+        if (used_fallback || skills_to_match.empty()) {
+            // Fallback or no skill requirements: use all healthy agents
             for (const auto& [id, agent] : agents_) {
                 if (agent.is_healthy) {
                     candidates.push_back(agent);
                 }
             }
+        } else {
+            // Filter agents by skill requirements
+            for (const auto& [id, agent] : agents_) {
+                if (!agent.is_healthy) continue;
+                if (!agent.hasAnySkill(skills_to_match)) continue;
+                candidates.push_back(agent);
+            }
+
+            // If no candidates found with required skills, fall back to all healthy agents
+            if (candidates.empty()) {
+                for (const auto& [id, agent] : agents_) {
+                    if (agent.is_healthy) {
+                        candidates.push_back(agent);
+                    }
+                }
+            }
         }
     }
-    
+
     if (candidates.empty()) {
         return std::nullopt;
     }
-    
+
     return selectByStrategy(candidates);
 }
 
@@ -629,8 +633,10 @@ AgentInfo AgentRouter::selectRoundRobin(const std::vector<AgentInfo>& candidates
 }
 
 AgentInfo AgentRouter::selectRandom(const std::vector<AgentInfo>& candidates) {
+    // thread_local generator: strategy selection runs outside agents_mutex_.
+    static thread_local std::mt19937 generator{std::random_device{}()};
     std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
-    return candidates[dist(random_generator_)];
+    return candidates[dist(generator)];
 }
 
 AgentInfo AgentRouter::selectLeastLoad(const std::vector<AgentInfo>& candidates) {
@@ -652,23 +658,17 @@ AgentInfo AgentRouter::selectWeightedByQuality(const std::vector<AgentInfo>& can
     for (const auto& agent : candidates) {
         // Use first skill for quality coefficient lookup
         std::string skill = agent.skills.empty() ? "" : agent.skills.front();
-        double qc = getQualityCoefficient(agent.id, skill);
-
-        // [Batch 6] Apply deployment_stage weight multiplier
-        if (agent.deployment_stage == "CANARY") {
-            qc *= 0.1;  // Canary agents get 10% of their quality weight
-        } else if (agent.deployment_stage == "DEPRECATED") {
-            qc = 0.0;   // Deprecated agents are excluded from selection
-        }
-        // STABLE (or empty): full weight, no modification
+        const double qc = getQualityCoefficient(agent.id, skill);
 
         weights.push_back(qc);
         total_weight += qc;
     }
 
-    // Weighted random selection
+    // Weighted random selection (thread_local generator: strategy selection
+    // runs outside agents_mutex_).
+    static thread_local std::mt19937 generator{std::random_device{}()};
     std::uniform_real_distribution<double> dist(0.0, total_weight);
-    double pick = dist(random_generator_);
+    double pick = dist(generator);
     double cumulative = 0.0;
     for (size_t i = 0; i < candidates.size(); ++i) {
         cumulative += weights[i];
@@ -687,20 +687,14 @@ AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<Age
     // In that case, fall back to round-robin for fair load distribution.
     if (candidates.size() <= 1) return candidates[0];
 
-    // Compute quality coefficients with deployment stage modifiers applied,
-    // so CANARY/DEPRECATED stages are properly reflected in the fallback decision.
+    // Compute quality coefficients; when the owner-aware provider has no
+    // feedback for any candidate, all coefficients equal the neutral
+    // default and round-robin keeps the load fair.
     std::vector<double> qcs;
     qcs.reserve(candidates.size());
     for (const auto& agent : candidates) {
         std::string skill = agent.skills.empty() ? "" : agent.skills.front();
-        double qc = getQualityCoefficient(agent.id, skill);
-        // Apply deployment stage weight modifiers (same as selectWeightedByQuality)
-        if (agent.deployment_stage == "CANARY") {
-            qc *= 0.1;
-        } else if (agent.deployment_stage == "DEPRECATED") {
-            qc = 0.0;
-        }
-        qcs.push_back(qc);
+        qcs.push_back(getQualityCoefficient(agent.id, skill));
     }
 
     // Check if all coefficients are identical (within epsilon)
@@ -713,7 +707,7 @@ AgentInfo AgentRouter::selectWeightedByQualityWithFallback(const std::vector<Age
     }
 
     if (all_same) {
-        // Redis unavailable or no feedback data — use round-robin for fairness
+        // No owner feedback data — use round-robin for fairness
         return selectRoundRobin(candidates);
     }
 
@@ -848,6 +842,7 @@ std::string AgentRouter::analyzeIntentWithLLM(const std::string& question) {
     return {};  // LLM returned a skill that's not registered
 }
 
+#ifdef AGENT_RPC_ENABLE_MCP
 // === Embedding-based Routing (P3) ===
 
 bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
@@ -1017,6 +1012,21 @@ std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string& questi
     return {};
 }
 
+#else
+bool AgentRouter::enableEmbedding(const EmbeddingRouterConfig& config) {
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
+    embedding_config_ = config;
+    embedding_config_.enabled = false;
+    return !config.enabled;
+}
+
+bool AgentRouter::isEmbeddingEnabled() const { return false; }
+
+void AgentRouter::buildSkillEmbeddingIndex() {}
+
+std::string AgentRouter::analyzeRequiredSkillEmbedding(const std::string&) { return {}; }
+#endif
+
 // === Batch 2: Fallback and Feedback-Driven Routing ===
 
 std::string AgentRouter::findFallbackAgent(const std::string& skill_name, const std::string& exclude_agent_id) {
@@ -1031,14 +1041,32 @@ std::string AgentRouter::findFallbackAgent(const std::string& skill_name, const 
 
 // === Batch 2: Feedback-Driven Routing ===
 
+void AgentRouter::setQualityProvider(QualityProvider provider) {
+    std::lock_guard<std::mutex> lock(quality_provider_mutex_);
+    quality_provider_ = std::move(provider);
+}
+
 double AgentRouter::getQualityCoefficient(const std::string& agent_id, const std::string& skill_name) {
-    std::string key = "feedback:" + agent_id + ":" + skill_name;
-    std::string value;
-    if (redis_ && redis_->hget(key, "approval_rate", value)) {
-        double rate = std::stod(value);
-        return 0.5 + 0.5 * rate; // range [0.5, 1.0]
+    // PR-C3: quality facts come from the owner-aware provider (backed by the
+    // PostgreSQL feedback/agent_route_quality tables). Owner-less Redis
+    // feedback keys are no longer consulted. Copy the provider under its own
+    // lock, then invoke outside the lock (the provider may hit PostgreSQL).
+    QualityProvider provider;
+    {
+        std::lock_guard<std::mutex> lock(quality_provider_mutex_);
+        provider = quality_provider_;
     }
-    return 0.75; // default for new agents
+    if (provider) {
+        try {
+            const double approval_rate = provider(agent_id, skill_name);
+            if (approval_rate >= 0.0) {
+                return 0.5 + 0.5 * approval_rate;  // range [0.5, 1.0]
+            }
+        } catch (const std::exception&) {
+            // Provider failure degrades to the neutral default below.
+        }
+    }
+    return 0.75;  // neutral default for agents without owner feedback
 }
 
 } // namespace orchestrator

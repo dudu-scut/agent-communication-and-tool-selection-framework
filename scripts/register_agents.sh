@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE (PR-C3): RegisterAgent is an ADMIN-only RPC. The login user below must
+# match NEXUSAI_ADMIN_USERNAME (see .env.example), otherwise every registration
+# in this script fails with PERMISSION_DENIED.
 GRPCURL="$HOME/.local/bin/grpcurl"
 SERVER="localhost:50051"
 
@@ -15,17 +18,17 @@ echo '{"agent_info":{"service_name":"mock-general","skills":["general"],"a2a_ver
 
 echo ""
 echo "=== Register Math Agent ==="
-echo '{"agent_info":{"service_name":"math-agent","skills":["math","calculation"],"a2a_version":"1.0","deployment_stage":"STABLE","host":"127.0.0.1","port":5100}}' | \
+echo '{"agent_info":{"service_name":"math-agent","skills":["math","calculation"],"a2a_version":"1.0","deployment_stage":"STABLE","host":"127.0.0.1","port":9091}}' | \
     $GRPCURL -plaintext -H "Authorization: Bearer $TOKEN" -d @ $SERVER agent_communication.AgentCommunicationService/RegisterAgent 2>&1
 
 echo ""
 echo "=== Register Translator Agent ==="
-echo '{"agent_info":{"service_name":"translator-agent","skills":["translation","language"],"a2a_version":"1.0","deployment_stage":"STABLE","host":"127.0.0.1","port":5100}}' | \
+echo '{"agent_info":{"service_name":"translator-agent","skills":["translation","language"],"a2a_version":"1.0","deployment_stage":"STABLE","host":"127.0.0.1","port":9092}}' | \
     $GRPCURL -plaintext -H "Authorization: Bearer $TOKEN" -d @ $SERVER agent_communication.AgentCommunicationService/RegisterAgent 2>&1
 
 echo ""
 echo "=== Register Echo Agent ==="
-echo '{"agent_info":{"service_name":"echo-agent","skills":["echo","test"],"a2a_version":"1.0","deployment_stage":"STABLE","host":"127.0.0.1","port":5100}}' | \
+echo '{"agent_info":{"service_name":"echo-agent","skills":["echo","test"],"a2a_version":"1.0","deployment_stage":"STABLE","host":"127.0.0.1","port":9090}}' | \
     $GRPCURL -plaintext -H "Authorization: Bearer $TOKEN" -d @ $SERVER agent_communication.AgentCommunicationService/RegisterAgent 2>&1
 
 echo ""

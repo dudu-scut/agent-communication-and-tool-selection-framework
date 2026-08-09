@@ -1,11 +1,15 @@
 {
   "name": "nexusai-grpc-proxy",
   "version": "1.0.0",
-  "description": "JSON ↔ gRPC transcoding proxy for NexusAI (replaces Envoy in dev)",
+  "description": "JSON to gRPC transcoding proxy for NexusAI",
   "main": "server.mjs",
   "type": "module",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "typecheck": "node --check server.mjs",
+    "lint": "npm run typecheck",
+    "test": "node --test test/*.test.mjs",
+    "build": "npm run typecheck"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",

@@ -58,6 +58,30 @@ void AgentCommunicationServiceImpl::setAgentRouter(orchestrator::AgentRouter* ro
     }
 }
 
+void AgentCommunicationServiceImpl::setAgentRuntimeRepository(
+    common::AgentRuntimeRepository* repository) {
+    runtime_repository_ = repository;
+    if (runtime_repository_) {
+        LOG_INFO("AgentRuntimeRepository connected to AgentCommunicationService (PR-C3)");
+    }
+}
+
+void AgentCommunicationServiceImpl::setRedisClient(common::RedisClient* redis) {
+    redis_ = redis;
+}
+
+namespace {
+// Liveness cache TTL: three missed heartbeats, never below 5 minutes.
+constexpr int kDefaultLivenessTtlSeconds = 300;
+
+int livenessTtlSeconds(int heartbeat_interval) {
+    if (heartbeat_interval <= 0) {
+        return kDefaultLivenessTtlSeconds;
+    }
+    return std::max(heartbeat_interval * 3, kDefaultLivenessTtlSeconds);
+}
+}  // namespace
+
 std::string AgentCommunicationServiceImpl::generateMessageId() {
     return std::to_string(++message_id_counter_);
 }
@@ -273,6 +297,14 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     const agent_communication::RegisterAgentRequest* request,
     agent_communication::RegisterAgentResponse* response) {
 
+    // PR-C3: agent lifecycle management is an admin capability. The local
+    // deployment gates it on the statically configured ADMIN user
+    // (NEXUSAI_ADMIN_USERNAME; .env.example is delivered with PR-G).
+    const grpc::Status admin_check = AuthInterceptor::requireAdmin();
+    if (!admin_check.ok()) {
+        return admin_check;
+    }
+
     const auto& info = request->agent_info();
 
     // B-02: Validate required fields
@@ -292,6 +324,7 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
     }
 
     std::string agent_id = info.service_name() + "-" + info.host() + "-" + std::to_string(info.port());
+    const int liveness_ttl = livenessTtlSeconds(request->heartbeat_interval());
 
     common::ServiceEndpoint endpoint;
     endpoint.host = info.host();
@@ -315,11 +348,42 @@ grpc::Status AgentCommunicationServiceImpl::RegisterAgent(
         std::lock_guard<std::mutex> lock(agents_mutex_);
         agents_[agent_id] = endpoint;
         agent_message_queues_.try_emplace(agent_id);
+        agent_liveness_ttl_[agent_id] = liveness_ttl;
         addToIndexes(agent_id, endpoint);
     }
 
     common::Metrics::getInstance().recordConnection(agent_id, true);
     LOG_INFO("Agent registered: " + agent_id);
+
+    // PR-C3: persist the durable registry fact (PostgreSQL is the source of
+    // truth; re-registration after a restart rewrites this row). Failures are
+    // logged but do not block the in-memory registration path.
+    if (runtime_repository_) {
+        try {
+            nlohmann::json capabilities;
+            capabilities["skills"] = endpoint.skills;
+            capabilities["tags"] = endpoint.tags;
+            capabilities["version"] = endpoint.version;
+            const common::AgentRegistryRecord registry_record{
+                .id = "registry-" + agent_id,
+                .owner_id = "system",
+                .agent_id = agent_id,
+                .display_name = endpoint.service_name,
+                .capabilities = capabilities.dump(),
+                .health_status = "healthy",
+            };
+            if (!runtime_repository_->upsertAgentRegistry(registry_record)) {
+                LOG_WARN("Failed to persist agent_registry row for " + agent_id);
+            }
+        } catch (const std::exception& error) {
+            LOG_WARN("agent_registry persistence failed for " + agent_id + ": " +
+                     error.what());
+        }
+    }
+    // Redis carries only the short-lived liveness cache.
+    if (redis_) {
+        redis_->setex("agent:liveness:" + agent_id, liveness_ttl, "1");
+    }
 
     // P0-2: Sync to AgentRouter for orchestrator routing
     if (router_) {
@@ -376,16 +440,35 @@ grpc::Status AgentCommunicationServiceImpl::UnregisterAgent(
     const agent_communication::UnregisterAgentRequest* request,
     agent_communication::UnregisterAgentResponse* response) {
 
+    const grpc::Status admin_check = AuthInterceptor::requireAdmin();
+    if (!admin_check.ok()) {
+        return admin_check;
+    }
+
     const auto& agent_id = request->agent_id();
     {
         std::lock_guard<std::mutex> lock(agents_mutex_);
         removeFromIndexes(agent_id);
         agents_.erase(agent_id);
         agent_message_queues_.erase(agent_id);
+        agent_liveness_ttl_.erase(agent_id);
     }
 
     common::Metrics::getInstance().recordDisconnection(agent_id);
     LOG_INFO("Agent unregistered: " + agent_id + " reason: " + request->reason());
+
+    // PR-C3: keep the registry row (history/metrics stay queryable) but mark
+    // the agent offline; drop the Redis liveness cache.
+    if (runtime_repository_) {
+        try {
+            runtime_repository_->markAgentStatus(agent_id, "offline");
+        } catch (const std::exception& error) {
+            LOG_WARN("agent_registry update failed for " + agent_id + ": " + error.what());
+        }
+    }
+    if (redis_) {
+        redis_->del("agent:liveness:" + agent_id);
+    }
 
     // P0-2: Remove from AgentRouter
     if (router_) {
@@ -405,7 +488,38 @@ grpc::Status AgentCommunicationServiceImpl::Heartbeat(
     const agent_communication::HeartbeatRequest* request,
     agent_communication::HeartbeatResponse* response) {
 
+    if (!AuthInterceptor::isAuthenticated()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                            "Valid authentication token required");
+    }
+
     updateAgentHeartbeat(request->agent_id());
+
+    // PR-C3: refresh the durable registry fact and the liveness cache. The
+    // repository call uses upsert semantics, so a heartbeat heals a registry
+    // row that was lost when PostgreSQL was down during RegisterAgent.
+    if (runtime_repository_) {
+        try {
+            runtime_repository_->updateAgentHeartbeat(request->agent_id());
+        } catch (const std::exception& error) {
+            LOG_WARN("agent_registry heartbeat failed for " + request->agent_id() +
+                     ": " + error.what());
+        }
+    }
+    if (redis_) {
+        // Align the liveness TTL with the interval negotiated at registration
+        // time (max(3*interval, 300s)); fall back to the 5-minute default when
+        // the agent never registered through this process.
+        int ttl = kDefaultLivenessTtlSeconds;
+        {
+            std::lock_guard<std::mutex> lock(agents_mutex_);
+            const auto ttl_it = agent_liveness_ttl_.find(request->agent_id());
+            if (ttl_it != agent_liveness_ttl_.end()) {
+                ttl = ttl_it->second;
+            }
+        }
+        redis_->setex("agent:liveness:" + request->agent_id(), ttl, "1");
+    }
 
     // P0-2: Propagate heartbeat to AgentRouter
     if (router_) {
@@ -489,16 +603,19 @@ grpc::Status AgentCommunicationServiceImpl::RealTimeCommunication(
     grpc::ServerReaderWriter<agent_communication::Message,
                              agent_communication::Message>* stream) {
 
-    if (!AuthInterceptor::isAuthenticated()) {
-        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
-    }
-
-    agent_communication::Message msg;
-    while (!context->IsCancelled() && stream->Read(&msg)) {
-        // Echo back for now; real implementation would route to target
-        if (!stream->Write(msg)) break;
-    }
-    return grpc::Status::OK;
+    // [PR-G] Local delivery boundary: this bidirectional channel never grew
+    // beyond an echo placeholder (it did not route messages to any agent and
+    // persisted nothing). Instead of returning a successful no-op it now
+    // reports UNIMPLEMENTED explicitly. Supported messaging paths are the
+    // unary SendMessage/ReceiveMessage/BroadcastMessage RPCs and the
+    // server-streaming ListenMessages RPC.
+    (void)context;
+    (void)stream;
+    return grpc::Status(
+        grpc::StatusCode::UNIMPLEMENTED,
+        "RealTimeCommunication is not implemented in the local delivery "
+        "boundary; use SendMessage/ReceiveMessage/BroadcastMessage or "
+        "ListenMessages instead");
 }
 
 // ========================================================================

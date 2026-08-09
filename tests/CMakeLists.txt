@@ -160,6 +160,14 @@ target_include_directories(test_agent_router_properties PRIVATE
 )
 
 add_test(NAME AgentRouterPropertiesTest COMMAND test_agent_router_properties)
+# Link contract guard: consumers of orchestrator must receive agent_rpc_common
+# transitively because orchestrator sources reference RedisClient symbols.
+add_executable(test_orchestrator_common_link test_orchestrator_common_link.cpp)
+target_link_libraries(test_orchestrator_common_link
+    PRIVATE
+    orchestrator
+)
+add_test(NAME OrchestratorCommonLinkTest COMMAND test_orchestrator_common_link)
 
 # 安装测试
 install(TARGETS test_serialization
@@ -200,12 +208,13 @@ target_include_directories(test_ai_query_integration PRIVATE
 
 add_test(NAME AIQueryIntegrationTest COMMAND test_ai_query_integration)
 
+if(ENABLE_MCP)
 # MCP Agent集成测试
 # **Feature: a2a-integration, Task 20: MCP 集成测试**
 # **Validates: Requirements 12.1, 12.3, 12.5**
 add_executable(test_mcp_integration test_mcp_integration.cpp)
 
-target_link_libraries(test_mcp_integration 
+target_link_libraries(test_mcp_integration
     agent_rpc_mcp
     agent_rpc_common
     rapidcheck
@@ -226,7 +235,7 @@ add_test(NAME MCPIntegrationTest COMMAND test_mcp_integration)
 # **Validates: Requirements 1.3, 3.2, 3.3, 3.4, 4.1, 4.3, 7.2, 7.3**
 add_executable(test_rag_mcp_properties test_rag_mcp_properties.cpp)
 
-target_link_libraries(test_rag_mcp_properties 
+target_link_libraries(test_rag_mcp_properties
     agent_rpc_mcp
     agent_rpc_common
     rapidcheck
@@ -242,6 +251,8 @@ target_include_directories(test_rag_mcp_properties PRIVATE
 )
 
 add_test(NAME RAGMCPPropertiesTest COMMAND test_rag_mcp_properties)
+endif()
+
 
 add_executable(test_service_registry test_service_registry.cpp)
 target_link_libraries(test_service_registry
@@ -320,7 +331,7 @@ target_include_directories(test_cost_tracker PRIVATE
 )
 add_test(NAME CostTrackerTest COMMAND test_cost_tracker)
 
-# Redis 集成测试 (AuthService + MemoryService + RedisClient)
+# Redis 集成测试 (MemoryService + RedisClient)
 # 需要运行中的 Redis 实例，不可用时自动跳过
 add_executable(test_redis_services test_redis_services.cpp)
 target_link_libraries(test_redis_services
@@ -427,3 +438,307 @@ target_include_directories(test_error_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
 )
 add_test(NAME ErrorMapperTest COMMAND test_error_mapper)
+
+# PostgreSQL persistence foundation. Configuration is hermetic; the migration
+# integration test is registered only when a usable Docker daemon is present.
+add_executable(test_postgres_config test_postgres_config.cpp)
+target_link_libraries(test_postgres_config
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_postgres_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME PostgresConfigTest COMMAND test_postgres_config)
+add_executable(test_postgres_pool_contract test_postgres_pool_contract.cpp)
+target_link_libraries(test_postgres_pool_contract
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_postgres_pool_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+add_test(NAME PostgresPoolContractTest COMMAND test_postgres_pool_contract)
+
+add_executable(test_postgres_migration_api test_postgres_migration_api.cpp)
+target_link_libraries(test_postgres_migration_api
+    ${AGENT_RPC_PQXX_TARGET}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_postgres_migration_api PRIVATE
+    NEXUSAI_MIGRATION_RUNNER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/src/migration_runner.cpp"
+)
+add_test(NAME PostgresMigrationApiTest COMMAND test_postgres_migration_api)
+
+# RPC startup migration contract: source/Compose wiring keeps migrations
+# before RpcServer::initialize and fails closed when startup migration fails.
+add_executable(test_rpc_server_migrations test_rpc_server_migrations.cpp)
+target_link_libraries(test_rpc_server_migrations
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_rpc_server_migrations PRIVATE
+    RPC_SERVER_MAIN_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/main.cpp"
+    RPC_SERVER_CMAKE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/CMakeLists.txt"
+    RPC_COMPOSE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../docker-compose.yml"
+)
+add_test(NAME RpcServerMigrationsTest COMMAND test_rpc_server_migrations)
+
+find_package(Python3 COMPONENTS Interpreter)
+find_program(DOCKER_EXECUTABLE docker)
+set(NEXUSAI_DOCKER_AVAILABLE OFF)
+if(DOCKER_EXECUTABLE)
+    execute_process(
+        COMMAND ${DOCKER_EXECUTABLE} info
+        RESULT_VARIABLE NEXUSAI_DOCKER_INFO_RESULT
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if(NEXUSAI_DOCKER_INFO_RESULT EQUAL 0)
+        set(NEXUSAI_DOCKER_AVAILABLE ON)
+    endif()
+endif()
+if(Python3_Interpreter_FOUND AND NEXUSAI_DOCKER_AVAILABLE)
+    add_test(NAME PostgresMigrationIntegrationTest
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/postgres_migrations_integration.py
+            --migrator $<TARGET_FILE:db_migrate>
+            --migrations ${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations
+            --docker ${DOCKER_EXECUTABLE})
+    set_tests_properties(PostgresMigrationIntegrationTest PROPERTIES TIMEOUT 180)
+endif()
+
+# The local WSL/Compose transport intentionally uses plaintext gRPC.  Keep a
+# source-level contract here so certificate plumbing cannot silently return.
+add_executable(test_rpc_server_local_transport test_rpc_server_local_transport.cpp)
+target_link_libraries(test_rpc_server_local_transport
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_rpc_server_local_transport PRIVATE
+    RPC_SERVER_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/rpc_server.cpp"
+    RPC_SERVER_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/rpc_server.h"
+    RPC_TYPES_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/types.h"
+    RPC_CLIENT_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../client/src/rpc_client.cpp"
+    RPC_CLIENT_HEADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../client/include/agent_rpc/client/rpc_client.h"
+)
+add_test(NAME RpcServerLocalTransportTest COMMAND test_rpc_server_local_transport)
+
+add_executable(test_auth_repository_contract test_auth_repository_contract.cpp)
+target_link_libraries(test_auth_repository_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_auth_repository_contract PRIVATE
+    NEXUSAI_AUTH_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V010__local_auth.sql"
+    NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
+)
+add_test(NAME AuthRepositoryContractTest COMMAND test_auth_repository_contract)
+add_executable(test_local_auth_contract test_local_auth_contract.cpp)
+target_link_libraries(test_local_auth_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_local_auth_contract PRIVATE
+    NEXUSAI_AUTH_SERVICE_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/auth_service.h"
+    NEXUSAI_AUTH_SERVICE_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/auth_service.cpp"
+    NEXUSAI_RPC_SERVER_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/rpc_server.h"
+    NEXUSAI_RPC_SERVER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/rpc_server.cpp"
+    NEXUSAI_AUTH_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/auth_repository.h"
+)
+add_test(NAME LocalAuthContractTest COMMAND test_local_auth_contract)
+add_executable(test_auth_owner_context_contract test_auth_owner_context_contract.cpp)
+target_link_libraries(test_auth_owner_context_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_auth_owner_context_contract PRIVATE
+    NEXUSAI_AUTH_INTERCEPTOR_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../server/include/agent_rpc/server/auth_interceptor.h"
+    NEXUSAI_AUTH_INTERCEPTOR_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../server/src/auth_interceptor.cpp"
+)
+add_test(NAME AuthOwnerContextContractTest COMMAND test_auth_owner_context_contract)
+
+add_executable(test_durable_domain_schema_contract test_durable_domain_schema_contract.cpp)
+target_link_libraries(test_durable_domain_schema_contract
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_compile_definitions(test_durable_domain_schema_contract PRIVATE
+    NEXUSAI_DURABLE_DOMAIN_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V011__durable_domain.sql"
+)
+add_test(NAME DurableDomainSchemaContractTest COMMAND test_durable_domain_schema_contract)
+
+add_executable(test_postgres_budget_repository_contract test_postgres_budget_repository_contract.cpp)
+target_link_libraries(test_postgres_budget_repository_contract
+    agent_rpc_common
+    ${AGENT_RPC_PQXX_TARGET}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_postgres_budget_repository_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+target_compile_definitions(test_postgres_budget_repository_contract PRIVATE
+    NEXUSAI_BUDGET_MIGRATION_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations/V012__postgres_budget.sql"
+    NEXUSAI_BUDGET_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/postgres_budget_repository.h"
+)
+add_test(NAME PostgresBudgetRepositoryContractTest COMMAND test_postgres_budget_repository_contract)
+add_executable(test_query_domain_repository_contract test_query_domain_repository_contract.cpp)
+target_link_libraries(test_query_domain_repository_contract
+    agent_rpc_common
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+target_include_directories(test_query_domain_repository_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+)
+target_compile_definitions(test_query_domain_repository_contract PRIVATE
+    NEXUSAI_QUERY_DOMAIN_REPOSITORY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/../common/include/agent_rpc/common/query_domain_repository.h"
+    NEXUSAI_QUERY_DOMAIN_REPOSITORY_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../common/src/query_domain_repository.cpp"
+)
+add_test(NAME QueryDomainRepositoryContractTest COMMAND test_query_domain_repository_contract)
+
+# PR-C2: Query/QueryStream durable pipeline（静态契约 + 真实 PG/Redis/gRPC 集成）
+add_executable(test_durable_query_pipeline test_durable_query_pipeline.cpp)
+target_link_libraries(test_durable_query_pipeline
+    agent_rpc_server
+    agent_rpc_common
+    a2a_adapter
+    a2a
+    proto_lib
+    ${AGENT_RPC_PQXX_TARGET}
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_durable_query_pipeline PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+target_compile_definitions(test_durable_query_pipeline PRIVATE
+    NEXUSAI_PIPELINE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
+add_test(NAME DurableQueryPipelineTest COMMAND test_durable_query_pipeline)
+
+# PR-D: Replay/Export/Share/Template 最小真实闭环（静态守卫 + 真实 PG/Redis/gRPC 集成）
+add_executable(test_durable_workflows_contract test_durable_workflows_contract.cpp)
+target_link_libraries(test_durable_workflows_contract
+    agent_rpc_server
+    agent_rpc_common
+    a2a_adapter
+    a2a
+    proto_lib
+    ${AGENT_RPC_PQXX_TARGET}
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_durable_workflows_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+target_compile_definitions(test_durable_workflows_contract PRIVATE
+    NEXUSAI_WORKFLOWS_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
+add_test(NAME DurableWorkflowsContractTest COMMAND test_durable_workflows_contract)
+
+# PR-E: Sandbox/Compare/Intervention/Undo/Autonomy（静态守卫 + 真实 PG/Redis/gRPC 集成）
+add_executable(test_workflow_control_contract test_workflow_control_contract.cpp)
+target_link_libraries(test_workflow_control_contract
+    agent_rpc_server
+    agent_rpc_common
+    a2a_adapter
+    a2a
+    proto_lib
+    ${AGENT_RPC_PQXX_TARGET}
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_workflow_control_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+target_compile_definitions(test_workflow_control_contract PRIVATE
+    NEXUSAI_WORKFLOW_CONTROL_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
+add_test(NAME WorkflowControlContractTest COMMAND test_workflow_control_contract)
+
+# PR-C3: PG 可观测性、反馈与 Agent 生命周期（静态契约 + 真实 PG/Redis/gRPC 集成）
+add_executable(test_agent_runtime_repository_contract test_agent_runtime_repository_contract.cpp)
+target_link_libraries(test_agent_runtime_repository_contract
+    agent_rpc_server
+    agent_rpc_common
+    a2a_adapter
+    a2a
+    proto_lib
+    ${AGENT_RPC_PQXX_TARGET}
+    ${GRPC_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${HIREDIS_LIBRARIES}
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    ${UUID_LIB}
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+target_include_directories(test_agent_runtime_repository_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a_adapter/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../a2a/third_party
+    ${CMAKE_CURRENT_BINARY_DIR}/../proto
+)
+target_compile_definitions(test_agent_runtime_repository_contract PRIVATE
+    NEXUSAI_RUNTIME_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
+add_test(NAME AgentRuntimeRepositoryContractTest COMMAND test_agent_runtime_repository_contract)

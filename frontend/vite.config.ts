@@ -14,7 +14,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // gRPC-Web 请求代理到 grpcwebproxy（开发时绕过 Nginx）
+      // Browser JSON requests go only to the local Node JSON-to-gRPC proxy.
       '/agent_communication.': {
         target: 'http://localhost:8081',
         changeOrigin: true,

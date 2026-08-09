@@ -3,6 +3,8 @@
 #include "agent_rpc/common/types.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/metrics.h"
+#include "agent_rpc/common/redis_client.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
 #include "agent_service.grpc.pb.h"
 #include "agent_service.pb.h"
 #include "common.pb.h"
@@ -108,6 +110,16 @@ public:
      */
     void setAgentRouter(orchestrator::AgentRouter* router);
 
+    /**
+     * @brief PR-C3: durable registry + liveness cache wiring.
+     *
+     * RegisterAgent/UnregisterAgent/Heartbeat persist agent_registry rows
+     * through the runtime repository (PostgreSQL is the source of truth);
+     * Redis only carries the short-lived liveness key.
+     */
+    void setAgentRuntimeRepository(common::AgentRuntimeRepository* repository);
+    void setRedisClient(common::RedisClient* redis);
+
     std::vector<common::ServiceEndpoint> getAgentsList() const;
 
 private:
@@ -121,6 +133,9 @@ private:
     mutable std::mutex agents_mutex_;
     std::map<std::string, common::ServiceEndpoint> agents_;
     std::map<std::string, common::MessageQueue<agent_communication::Message>> agent_message_queues_;
+    // Redis liveness TTL negotiated at registration time (3x heartbeat interval,
+    // never below 5 minutes); Heartbeat reuses it so both paths stay aligned.
+    std::unordered_map<std::string, int> agent_liveness_ttl_;
 
     // 标签/技能倒排索引（agent_id 集合），加速 FindAgents 查询
     std::unordered_map<std::string, std::set<std::string>> tags_index_;
@@ -136,6 +151,10 @@ private:
 
     // P0-2: Optional pointer to orchestrator's AgentRouter for registration sync
     orchestrator::AgentRouter* router_ = nullptr;
+
+    // PR-C3: durable registry persistence (PostgreSQL) + Redis liveness cache
+    common::AgentRuntimeRepository* runtime_repository_ = nullptr;
+    common::RedisClient* redis_ = nullptr;
 };
 
 // 健康检查服务 gRPC 实现

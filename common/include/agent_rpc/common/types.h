@@ -28,9 +28,6 @@ struct RpcConfig {
     int timeout_seconds = 30;
     int max_retry_attempts = 3;
     int heartbeat_interval = 30;
-    bool enable_ssl = false;
-    std::string ssl_cert_path;
-    std::string ssl_key_path;
     std::string log_level = "INFO";
     bool enable_service_registry = false;
     std::string registry_address = "localhost:8500";

@@ -51,6 +51,8 @@ export interface AIQueryRequest {
   preference?: AgentPreference
   user_id?: string
   system_context?: SystemContext
+  // [PR-E] 沙箱执行标志（proto field 10）
+  sandbox?: boolean
 }
 
 export interface AIQueryResponse {
@@ -69,7 +71,8 @@ export interface AIQueryResponse {
 export interface Artifact {
   name: string
   mime_type: string
-  content: string
+  data: string                    // bytes → base64 (proxy sanitizeBuffers)
+  metadata?: Record<string, string>
 }
 
 export interface AIStreamEvent {
@@ -78,8 +81,10 @@ export interface AIStreamEvent {
   content: string
   task_state: string
   context_id: string
-  timestamp: number
-  trace_id?: string
+  timestamp: number | string
+  trace_summary?: string          // field 8: trace summary on 'complete' events
+  activity_json?: string          // field 9: JSON activity record for feed
+  intervention_required?: boolean // field 10: true when user action needed
 }
 
 // === agent_service.proto ===
@@ -205,6 +210,7 @@ export interface RegisterResponse {
   status: Status
   user_id: string
   username: string
+  role: string                    // USER | ADMIN（PR-C3）
 }
 
 export interface LoginRequest {
@@ -218,53 +224,133 @@ export interface LoginResponse {
   username: string
   token: string
   expires_at: number
+  role: string                    // USER | ADMIN（PR-C3）
 }
 
-// === Sharing & Templates ===
+export interface ValidateTokenRequest {
+  token: string
+}
 
-export interface ShareInfo {
-  share_id: string
+export interface ValidateTokenResponse {
+  status: Status
+  user_id: string
+  username: string
+  valid: boolean
+  role: string                    // USER | ADMIN（PR-C3）
+}
+
+// === Sharing & Templates (sharing.proto, PR-D) ===
+
+export interface ShareSessionRequest {
   context_id: string
-  owner_user_id: string
-  mode: 'READONLY' | 'COMMENT'
-  created_at: number
-  expires_at?: number
+  mode: string            // only "view" is supported
+  expiry_days: number     // 0 = never expires
 }
 
-export interface TemplateInfo {
-  id: string
+export interface ShareSessionResponse {
+  status: Status
+  share_id: string
+  share_url: string       // relative path "/share/<token>"
+  token: string           // raw bearer token, returned exactly once
+  expires_at: string      // ISO-8601, empty = never expires
+}
+
+export interface SharedMessage {
+  role: string
+  content: string
+  sequence_no: number | string
+  created_at: string
+}
+
+export interface ReadSharedConversationRequest {
+  token: string
+}
+
+export interface ReadSharedConversationResponse {
+  status: Status
+  title: string
+  messages: SharedMessage[]
+  shared_at: string
+}
+
+export interface ShareEntry {
+  share_id: string
+  conversation_id: string
+  permission: string
+  created_at: string
+  expires_at: string      // empty = never expires
+  revoked: boolean
+  revoked_at: string
+}
+
+export interface ListSharesResponse {
+  status: Status
+  shares: ShareEntry[]
+}
+
+export interface RevokeShareResponse {
+  status: Status
+}
+
+export interface SaveTemplateRequest {
   name: string
   description: string
-  category: string
-  usage_count: number
-  rating: number
-  author: string
-  dag_structure: ExecutionPlan
+  dag_json: string        // validated JSON definition
 }
 
-// === Cron / Scheduled Tasks ===
+export interface SaveTemplateResponse {
+  status: Status
+  template_id: string
+}
 
-export interface ScheduledTask {
-  id: string
+export interface TemplateEntry {
+  template_id: string
   name: string
-  cron_expr: string
-  query_template: string
-  enabled: boolean
-  last_run_at?: number
-  next_run_at?: number
-  execution_count: number
-  last_result?: string
+  description: string
+  definition: string      // JSON definition (stored as JSONB)
+  created_at: string
+  version: number
 }
 
-// === Canary Deployment ===
+export interface ListTemplatesResponse {
+  status: Status
+  templates: TemplateEntry[]
+}
 
-export interface CanaryConfig {
-  agent_id_stable: string
-  agent_id_canary: string
-  traffic_split_pct: number  // % to canary
-  stable_metrics: AgentMetrics
-  canary_metrics: AgentMetrics
-  status: 'running' | 'promoting' | 'rolling_back' | 'completed'
+export interface GetTemplateResponse {
+  status: Status
+  template: TemplateEntry
+}
+
+export interface UseTemplateResponse {
+  status: Status
+  context_id: string
+}
+
+// === Replay & Export (orchestration.proto, PR-D) ===
+
+export interface ReplayQueryRequest {
+  trace_id: string
+  mode: 'exact' | 'route'
+}
+
+export interface ReplayQueryResponse {
+  status: Status
+  original: string
+  replayed: string
+  new_trace_id: string    // empty in route mode
+  new_request_id: string  // empty in route mode
+}
+
+export interface ExportConversationRequest {
+  context_id: string
+  format: 'markdown' | 'html'
+}
+
+export interface ExportConversationResponse {
+  status: Status
+  file_data: string       // base64-encoded bytes
+  mime_type: string
 }
 
 // === Frontend internal types ===
@@ -333,6 +419,7 @@ export interface CostRecord {
   total_prompt_tokens: number
   total_completion_tokens: number
   total_requests: number
+  estimated: boolean     // true when provider usage was unavailable (PR-C3)
 }
 
 export interface GetTraceDetailResponse {
@@ -345,4 +432,97 @@ export interface GetCostReportResponse {
   status: Status
   records: CostRecord[]
   total_cost_usd: number
+}
+
+// === Sandbox & Intervention (user_experience.proto, PR-E) ===
+
+export interface SandboxQueryRequest {
+  query_text: string
+  agent_id: string
+  context_id?: string
+}
+
+export interface SandboxQueryResponse {
+  status: Status
+  result: string
+  request_id: string           // durable pipeline request id (empty when gated)
+  intervention_required: boolean
+  intervention_id: string
+}
+
+export interface InterventionResponseRequest {
+  trace_id?: string
+  decision: 'PROCEED' | 'MODIFY' | 'SKIP' | 'ABORT'
+  modification_text?: string
+  intervention_id: string
+}
+
+export interface InterventionResponseResponse {
+  status: Status
+  new_state: string
+  undo_action_id: string
+  executed_request_id: string
+}
+
+// === Compare / Autonomy / Undo (agent_lifecycle.proto, PR-E) ===
+
+export interface CompareAgentsRequest {
+  question: string
+  agent_ids: string[] // 1..3 entries, duplicates refused
+}
+
+export interface CompareAgentResult {
+  agent_id: string
+  status: string // completed | failed | cancelled
+  answer: string
+  error: string
+  request_id: string
+  trace_id: string
+}
+
+export interface CompareAgentsResponse {
+  status: Status
+  run_id: string
+  run_status: string // completed | partial | failed | cancelled
+  results: CompareAgentResult[]
+}
+
+export interface CompareRunSummary {
+  run_id: string
+  request_text: string
+  status: string
+  results_json: string
+  created_at: string
+}
+
+export interface GetAgentCompareRequest {
+  skill_name?: string
+}
+
+export interface GetAgentCompareResponse {
+  status: Status
+  agents: AgentMetrics[]
+  runs: CompareRunSummary[]
+}
+
+export interface SetAutonomyLevelRequest {
+  user_id?: string  // [PR-E] ignored — owner comes from the auth context
+  agent_id: string
+  level: number // 1..4
+}
+
+export interface SetAutonomyLevelResponse {
+  status: Status
+}
+
+export interface UndoActionRequest {
+  trace_id?: string   // legacy; superseded by action_id
+  step_index?: number // legacy
+  action_id: string
+}
+
+export interface UndoActionResponse {
+  status: Status
+  success: boolean
+  message: string
 }

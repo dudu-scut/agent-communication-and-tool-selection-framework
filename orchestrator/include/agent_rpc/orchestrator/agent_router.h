@@ -22,11 +22,13 @@
 #include <vector>
 
 // Forward declarations for MCP RAG types (P3 embedding routing)
+#ifdef AGENT_RPC_ENABLE_MCP
 namespace agent_rpc { namespace mcp { namespace rag {
     class EmbeddingService;
     class VectorIndex;
     class EmbeddingCache;
 }}}
+#endif
 
 // Forward declaration for P1-1 LLM-based intent classification
 class LLMClient;
@@ -314,7 +316,26 @@ public:
     double getQualityCoefficient(const std::string& agent_id, const std::string& skill_name);
 
     /**
-     * @brief Set the Redis client for feedback-driven routing
+     * @brief Owner-aware quality data source (PR-C3).
+     *
+     * Returns the approval rate in [0,1] for an agent/skill pair in the
+     * context of the current owner, or a negative value when the owner has
+     * no feedback for that pair (callers then use the neutral default).
+     * The provider is invoked on the routing thread, so implementations may
+     * read thread-local auth context to scope the lookup to the owner.
+     * Owner-less Redis feedback keys are never used as the source of truth.
+     */
+    using QualityProvider = std::function<double(const std::string& agent_id,
+                                                 const std::string& skill_name)>;
+
+    /**
+     * @brief Inject the owner-aware quality provider (PR-C3)
+     */
+    void setQualityProvider(QualityProvider provider);
+
+    /**
+     * @brief Set the Redis client (retained for compatibility; feedback
+     *        quality no longer reads owner-less Redis keys — PR-C3).
      * @param redis Pointer to RedisClient instance
      */
     void setRedisClient(agent_rpc::common::RedisClient* redis) { redis_ = redis; }
@@ -349,8 +370,11 @@ private:
     
     /**
      * @brief Select agent using current strategy
-     * @param candidates List of candidate agents
+     * @param candidates List of candidate agents (snapshot taken under lock)
      * @return Selected agent
+     *
+     * Must be called WITHOUT holding agents_mutex_: quality-based strategies
+     * consult the injected provider, which may hit PostgreSQL.
      */
     AgentInfo selectByStrategy(const std::vector<AgentInfo>& candidates);
     
@@ -409,7 +433,6 @@ private:
     std::unordered_map<std::string, AgentInfo> agents_;
     std::atomic<RoutingStrategy> strategy_{RoutingStrategy::SKILL_MATCH};
     std::atomic<size_t> round_robin_index_{0};
-    std::mt19937 random_generator_;  // 仅在持有 agents_mutex_ 的调用路径中使用，因此线程安全 (fix #24)
     bool initialized_ = false;
 
     // Inverted keyword index: keyword → list of (skill, IDF weight) entries.
@@ -425,9 +448,11 @@ private:
 
     // Embedding-based routing (P3)
     EmbeddingRouterConfig embedding_config_;
+#ifdef AGENT_RPC_ENABLE_MCP
     std::unique_ptr<agent_rpc::mcp::rag::EmbeddingService> embedding_service_;
     std::unique_ptr<agent_rpc::mcp::rag::VectorIndex> skill_index_;
     std::unique_ptr<agent_rpc::mcp::rag::EmbeddingCache> embedding_cache_;
+#endif
     mutable std::mutex embedding_mutex_;
     std::atomic<uint64_t> embedding_query_count_{0};
     std::atomic<uint64_t> embedding_hit_count_{0};
@@ -435,8 +460,16 @@ private:
     // LLM-based intent classification (P1-1)
     std::unique_ptr<LLMClient> llm_client_;
 
-    // Redis client for feedback-driven routing (Batch 2)
+    // Redis client (retained for API compatibility; quality lookups are
+    // owner-aware via quality_provider_ since PR-C3).
     agent_rpc::common::RedisClient* redis_ = nullptr;
+
+    // Owner-aware quality provider (PR-C3). Guarded by its own mutex: the
+    // provider callable is copied under this lock, then invoked OUTSIDE the
+    // lock (it may hit PostgreSQL), and neither step runs under
+    // agents_mutex_.
+    mutable std::mutex quality_provider_mutex_;
+    QualityProvider quality_provider_;
 };
 
 } // namespace orchestrator

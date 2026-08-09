@@ -75,16 +75,29 @@ TEST(BackgroundSchedulerTest, CancelStopsExecution) {
 // Property test: interval-based scheduling respects minimum spacing
 RC_GTEST_PROP(BackgroundSchedulerProp, TaskDoesNotFireBeforeInterval,
               (const uint32_t interval_ms)) {
-    uint32_t interval = 50 + (interval_ms % 200); // 50-250ms
+    constexpr uint32_t kMinIntervalMs = 10;
+    constexpr uint32_t kIntervalRangeMs = 20;
+    constexpr auto kObservationWindow = std::chrono::milliseconds(150);
+
+    uint32_t interval = kMinIntervalMs + (interval_ms % kIntervalRangeMs); // 10-29ms
     auto& sched = BackgroundScheduler::instance();
     std::atomic<int> count{0};
+    std::atomic<long long> first_fire_ms{-1};
+    const auto scheduled_at = std::chrono::steady_clock::now();
 
     (void)sched.scheduleAtFixedRate("prop_test",
-        [&]() { count.fetch_add(1); },
+        [&]() {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - scheduled_at).count();
+            if (count.fetch_add(1) == 0) {
+                first_fire_ms.store(elapsed);
+            }
+        },
         std::chrono::milliseconds(interval));
     sched.start(1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100 + interval * 5));
+    std::this_thread::sleep_for(kObservationWindow);
     sched.stop();
 
-    RC_ASSERT(count.load() >= 2); // At least 2 fires for 5x interval
+    RC_ASSERT(first_fire_ms.load() >= interval);
+    RC_ASSERT(count.load() >= 2); // At least 2 fires during the observation window
 }

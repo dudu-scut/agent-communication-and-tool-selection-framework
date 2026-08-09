@@ -2,8 +2,14 @@
  * @file observability_service.h
  * @brief ObservabilityService gRPC implementation — GetTraceDetail & GetCostReport
  *
- * Reads trace spans persisted by AIQueryServiceImpl and cost data written
- * by CostTracker to serve the frontend Dashboard / Monitor views.
+ * PostgreSQL is the durable source of truth (traces / token_usage_ledger);
+ * Redis is no longer consulted for observability reads (PR-C3).
+ *
+ * Auth-disabled semantics (M1): the owner key is ALWAYS taken from the
+ * authenticated context. When auth is disabled there is no identity, so the
+ * owner is empty and every owner-scoped read returns NOT_FOUND / empty rows.
+ * This is intentional: observability data is owner-scoped by construction and
+ * there is no fallback to owner-less views.
  */
 
 #pragma once
@@ -18,6 +24,11 @@
 #include <memory>
 #include <string>
 
+namespace agent_rpc::common {
+class AgentRuntimeRepository;
+class QueryDomainRepository;
+}  // namespace agent_rpc::common
+
 namespace agent_rpc {
 namespace server {
 
@@ -26,6 +37,11 @@ class ObservabilityServiceImpl final
 public:
     explicit ObservabilityServiceImpl(common::RedisClient* redis_client);
     ~ObservabilityServiceImpl() override = default;
+
+    // PostgreSQL repositories are injected by RpcServer; without them the
+    // RPCs report UNAVAILABLE instead of falling back to owner-less caches.
+    void setAgentRuntimeRepository(common::AgentRuntimeRepository* repository);
+    void setQueryDomainRepository(common::QueryDomainRepository* repository);
 
     grpc::Status GetTraceDetail(
         grpc::ServerContext* context,
@@ -39,6 +55,8 @@ public:
 
 private:
     common::RedisClient* redis_client_;
+    common::AgentRuntimeRepository* runtime_repository_ = nullptr;
+    common::QueryDomainRepository* query_repository_ = nullptr;
 };
 
 } // namespace server

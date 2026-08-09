@@ -15,6 +15,9 @@ export const useAuthStore = defineStore('auth', () => {
   const username = ref<string | null>(null)
   const token = ref<string | null>(null)
   const expiresAt = ref<number>(0)
+  // PR-F: role returned by Login/ValidateToken (PR-C3). Used only to hide
+  // admin entry points — the server enforces admin checks independently.
+  const role = ref<string>('USER')
 
   // Hydrate from localStorage on store init
   try {
@@ -25,6 +28,7 @@ export const useAuthStore = defineStore('auth', () => {
       username.value = data.username ?? null
       token.value = data.token ?? null
       expiresAt.value = data.expiresAt ?? 0
+      role.value = data.role ?? 'USER'
     }
   } catch {
     // ignore corrupt localStorage data
@@ -36,6 +40,8 @@ export const useAuthStore = defineStore('auth', () => {
     return true
   })
 
+  const isAdmin = computed(() => role.value === 'ADMIN')
+
   function saveToStorage() {
     try {
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
@@ -43,17 +49,19 @@ export const useAuthStore = defineStore('auth', () => {
         username: username.value,
         token: token.value,
         expiresAt: expiresAt.value,
+        role: role.value,
       }))
     } catch {
       // localStorage full or disabled — auth still works in-memory
     }
   }
 
-  function setAuth(data: { user_id: string; username: string; token: string; expires_at: number }) {
+  function setAuth(data: { user_id: string; username: string; token: string; expires_at: number; role?: string }) {
     userId.value = data.user_id
     username.value = data.username
     token.value = data.token
     expiresAt.value = data.expires_at * 1000 // server returns seconds, JS uses ms
+    role.value = data.role || 'USER'
     saveToStorage()
   }
 
@@ -62,6 +70,7 @@ export const useAuthStore = defineStore('auth', () => {
     username.value = null
     token.value = null
     expiresAt.value = 0
+    role.value = 'USER'
     localStorage.removeItem(AUTH_STORAGE_KEY)
   }
 
@@ -120,7 +129,9 @@ export const useAuthStore = defineStore('auth', () => {
     userId,
     username,
     token,
+    role,
     isAuthenticated,
+    isAdmin,
     login,
     register,
     logout,

@@ -42,6 +42,11 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
     })
 
+    startStream(text)
+  }
+
+  // Shared streaming path for fresh questions and retries.
+  function startStream(text: string) {
     const agentMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'agent',
@@ -73,6 +78,29 @@ export const useChatStore = defineStore('chat', () => {
       isStreaming.value = false
       abortController.value = null
     })
+  }
+
+  // PR-F: retry the last user question after a real failure. Drops trailing
+  // errored agent placeholders and re-runs the same durable pipeline.
+  function retryLast() {
+    if (isStreaming.value) return
+    let lastUser: ChatMessage | undefined
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') {
+        lastUser = messages.value[i]
+        break
+      }
+    }
+    if (!lastUser) return
+    while (messages.value.length) {
+      const tail = messages.value[messages.value.length - 1]
+      if (tail.role === 'agent' && tail.error) {
+        messages.value.pop()
+      } else {
+        break
+      }
+    }
+    startStream(lastUser.content)
   }
 
   function handleStreamEvent(event: AIStreamEvent, msg: ChatMessage) {
@@ -176,7 +204,10 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'error':
-        msg.error = event.content || 'Unknown error'
+        // PR-F: structured stream errors carry code semantics in content
+        // ("CODE_NAME: details"), so content is the primary source; the
+        // optional details field is only a fallback when content is empty.
+        msg.error = event.content || (event as AIStreamEvent & { details?: string }).details || 'Unknown error'
         msg.streaming = false
         isStreaming.value = false
         abortController.value = null
@@ -224,6 +255,7 @@ export const useChatStore = defineStore('chat', () => {
     traceInfo,
     activityEntries,
     sendQuestion,
+    retryLast,
     stopStreaming,
     newConversation,
     setFeedback,

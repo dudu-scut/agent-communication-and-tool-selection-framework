@@ -13,6 +13,11 @@ set(COMMON_SOURCES
     src/redis_client.cpp
     src/rpc_framework.cpp
     src/cost_tracker.cpp        # Batch 1
+    src/postgres_store.cpp
+    src/postgres_budget_repository.cpp
+    src/query_domain_repository.cpp
+    src/agent_runtime_repository.cpp
+    src/auth_repository.cpp
     src/profile_summarizer.cpp  # Batch 4 U2
 )
 
@@ -28,6 +33,8 @@ target_link_libraries(agent_rpc_common
     curl
     jsoncpp
     ${HIREDIS_LIBRARIES}
+    ${AGENT_RPC_PQXX_TARGET}
+    proto_lib
 )
 
 # 包含目录
