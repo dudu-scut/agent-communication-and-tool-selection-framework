@@ -603,16 +603,19 @@ grpc::Status AgentCommunicationServiceImpl::RealTimeCommunication(
     grpc::ServerReaderWriter<agent_communication::Message,
                              agent_communication::Message>* stream) {
 
-    if (!AuthInterceptor::isAuthenticated()) {
-        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "Valid authentication token required");
-    }
-
-    agent_communication::Message msg;
-    while (!context->IsCancelled() && stream->Read(&msg)) {
-        // Echo back for now; real implementation would route to target
-        if (!stream->Write(msg)) break;
-    }
-    return grpc::Status::OK;
+    // [PR-G] Local delivery boundary: this bidirectional channel never grew
+    // beyond an echo placeholder (it did not route messages to any agent and
+    // persisted nothing). Instead of returning a successful no-op it now
+    // reports UNIMPLEMENTED explicitly. Supported messaging paths are the
+    // unary SendMessage/ReceiveMessage/BroadcastMessage RPCs and the
+    // server-streaming ListenMessages RPC.
+    (void)context;
+    (void)stream;
+    return grpc::Status(
+        grpc::StatusCode::UNIMPLEMENTED,
+        "RealTimeCommunication is not implemented in the local delivery "
+        "boundary; use SendMessage/ReceiveMessage/BroadcastMessage or "
+        "ListenMessages instead");
 }
 
 // ========================================================================

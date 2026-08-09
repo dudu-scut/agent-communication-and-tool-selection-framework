@@ -330,8 +330,11 @@ int main(int argc, char* argv[]) {
 #endif
 
     // Batch 4 U2: Register profile extraction task (every 5 minutes)
-    // Calls ProfileSummarizer::processPending() which is a no-op placeholder
-    // until LLM-based extraction is implemented in a future iteration.
+    // Calls ProfileSummarizer::processPending(), which performs real work
+    // (reads pending users from Redis and calls the LLM when LLM_API_KEY is
+    // set). Known limitation: the extracted profiles are written back to
+    // Redis only — they are not persisted to PostgreSQL yet, so treat them
+    // as cache-tier data.
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "profile_extraction",
         []() { agent_rpc::common::ProfileSummarizer::processPending(); },

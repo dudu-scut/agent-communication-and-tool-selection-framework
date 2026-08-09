@@ -440,6 +440,12 @@ void RpcServer::initializeServiceRegistry() {
         consul->initialize(stripScheme(config_.registry_address, "consul"));
         service_registry_ = consul;
     } else if (config_.registry_address.rfind("etcd://", 0) == 0) {
+        // [PR-G] etcd is outside the local delivery boundary: this branch is
+        // only reachable when an operator explicitly points
+        // RPC_REGISTRY_ADDRESS at etcd://. The supported local path is the
+        // in-memory registry plus the PostgreSQL agent_registry table.
+        LOG_WARN("etcd service registry is not part of the supported local "
+                 "deployment; expect no maintenance for this backend");
         auto etcd = std::make_shared<registry::EtcdServiceRegistry>();
         etcd->initialize(stripScheme(config_.registry_address, "etcd"));
         service_registry_ = etcd;

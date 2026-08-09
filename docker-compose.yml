@@ -33,6 +33,10 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.rpc-server
+      args:
+        # Optional Debian apt mirror for restricted networks; empty keeps
+        # upstream sources. Example: APT_MIRROR_PREFIX=http://mirrors.aliyun.com/debian
+        APT_MIRROR_PREFIX: ${APT_MIRROR_PREFIX:-}
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"

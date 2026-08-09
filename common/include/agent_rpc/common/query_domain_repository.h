@@ -221,6 +221,12 @@ public:
     std::optional<QueryLogRecord> getQueryLogById(const std::string& owner_id,
                                                   const std::string& query_log_id);
 
+    // [PR-G] Owner-scoped lookup of the most recent query log of one
+    // conversation (ordered by creation time). Returns std::nullopt when the
+    // conversation is unknown, belongs to another owner, or has no queries.
+    std::optional<QueryLogRecord> getLatestQueryLogByConversation(
+        const std::string& owner_id, const std::string& conversation_id);
+
     // Owner-scoped terminal update of an existing query log. This is a plain
     // UPDATE and never inserts: it returns false when the row does not exist
     // or belongs to another owner. Only the persisted terminal fields are

@@ -969,47 +969,61 @@ grpc::Status AIQueryServiceImpl::GetQueryStatus(
                            "task_id or context_id is required");
     }
 
+    // [PR-G] Durable status lookup: PostgreSQL query_logs is the source of
+    // truth (the old in-memory task cache was process-local and returned
+    // success/unknown placeholders). Owner always comes from the
+    // authenticated context; missing or foreign rows are NOT_FOUND.
+    const std::string owner_id = AuthInterceptor::currentUserId();
+    if (owner_id.empty()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                           "Authenticated owner context required");
+    }
+    if (!domain_repo_) {
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                           "Durable query store not initialized");
+    }
+
     LOG_INFO("Getting query status for task: " + request->task_id());
 
-    {
-        std::lock_guard<std::mutex> lock(helpers_.task_status_mutex);
-        auto it = helpers_.task_status_cache.find(request->task_id());
-        if (it != helpers_.task_status_cache.end()) {
-            const auto& ts = it->second;
-            auto* status = response->mutable_status();
-            status->set_code(0);
-            status->set_message("OK");
-            response->set_task_state(ts.state);
-
-            if (!ts.agent_id.empty()) {
-                auto* hist = response->add_history();
-                hist->set_message_id(ts.task_id);
-                hist->set_role("agent");
-                hist->set_content(ts.agent_name);
-                hist->set_timestamp(
-                    std::chrono::duration_cast<std::chrono::seconds>(
-                        ts.updated_at.time_since_epoch()).count());
-            }
-            return grpc::Status::OK;
+    try {
+        std::optional<common::QueryLogRecord> query_log;
+        if (!request->task_id().empty()) {
+            query_log = domain_repo_->getQueryLogById(owner_id, request->task_id());
+        } else {
+            query_log = domain_repo_->getLatestQueryLogByConversation(
+                owner_id, request->context_id());
         }
-    }
-
-    if (!request->context_id().empty()) {
-        std::lock_guard<std::mutex> lock(helpers_.task_status_mutex);
-        for (const auto& [id, ts] : helpers_.task_status_cache) {
-            auto* status = response->mutable_status();
-            status->set_code(0);
-            status->set_message("OK");
-            response->set_task_state(ts.state);
-            return grpc::Status::OK;
+        if (!query_log.has_value()) {
+            return grpc::Status(
+                grpc::StatusCode::NOT_FOUND,
+                "No query record exists for the given task or context "
+                "(or it belongs to another owner)");
         }
-    }
 
-    auto* status = response->mutable_status();
-    status->set_code(0);
-    status->set_message("Task not found or expired");
-    response->set_task_state("unknown");
-    return grpc::Status::OK;
+        auto* status = response->mutable_status();
+        status->set_code(0);
+        status->set_message("OK");
+        response->set_task_state(query_log->status);
+
+        // Conversation history straight from the durable message store, in
+        // sequence order (timestamp left unset: created_at is server-side).
+        for (const auto& message :
+             domain_repo_->listMessages(owner_id, query_log->conversation_id)) {
+            auto* hist = response->add_history();
+            hist->set_message_id(message.id);
+            hist->set_role(message.role);
+            hist->set_content(message.content);
+        }
+        return grpc::Status::OK;
+    } catch (const std::exception& error) {
+        LOG_ERROR(std::string("GetQueryStatus failed: ") + error.what());
+        if (common::isPostgresError(error)) {
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                               "Query status store is unavailable");
+        }
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                           "Failed to read query status");
+    }
 }
 
 // ============================================================================

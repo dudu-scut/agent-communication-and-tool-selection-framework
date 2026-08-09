@@ -252,8 +252,11 @@ void A2AAdapter::processQueryAsync(
         return;
     }
     
-    // For now, implement as synchronous call
-    // TODO: Implement true async with thread pool
+    // [PR-G] True asynchronous A2A submission (submit now, poll/fetch the
+    // result later) is outside the local delivery boundary. This entry point
+    // stays a synchronous fallback so callers never receive a fake task id or
+    // an untracked background job; QueryStream is the supported streaming
+    // path.
     agent_communication::AIQueryResponse response;
     processQuery(request, &response);
     callback(response);

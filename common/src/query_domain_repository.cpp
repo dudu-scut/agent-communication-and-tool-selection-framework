@@ -395,6 +395,26 @@ std::optional<QueryLogRecord> QueryDomainRepository::getQueryLogById(
     return query_log;
 }
 
+std::optional<QueryLogRecord> QueryDomainRepository::getLatestQueryLogByConversation(
+    const std::string& owner_id, const std::string& conversation_id) {
+    std::optional<QueryLogRecord> query_log;
+    store_.executeTransaction([&](pqxx::work& transaction) {
+        const auto result = execParams(
+            transaction,
+            "SELECT id, owner_id, conversation_id, request_text, "
+            "route_decision::text AS route_decision, execution_plan::text AS execution_plan, "
+            "response_text, model, status, created_at::text AS created_at, "
+            "updated_at::text AS updated_at "
+            "FROM query_logs WHERE owner_id = $1 AND conversation_id = $2 "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            owner_id, conversation_id);
+        if (!result.empty()) {
+            query_log = queryLogFromRow(result.front());
+        }
+    });
+    return query_log;
+}
+
 bool QueryDomainRepository::updateQueryLog(const QueryLogRecord& query_log) {
     bool updated = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
