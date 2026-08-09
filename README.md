@@ -9,7 +9,7 @@
 [![C++](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
 [![gRPC](https://img.shields.io/badge/gRPC-1.51%2B-green)](https://grpc.io/)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-17%20suites-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-37%20suites-brightgreen)](tests/)
 [![Lines](https://img.shields.io/badge/C%2B%2B-76%2C000%2B%20lines-informational)]()
 
 </div>
@@ -42,7 +42,7 @@ For the complete containerized stack, use the root Compose file:
 docker compose up --build
 ```
 
-It starts PostgreSQL, Redis, SQL migrations, the RPC server, the Node proxy, and an Nginx-served frontend at <http://127.0.0.1:8080>. Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The browser entrypoint is local-only HTTP, so Compose does not require TLS certificates or frontend secrets. PostgreSQL data persists in the ignored `./.nexusai-data/postgres` bind mount.
+It starts PostgreSQL, Redis, the RPC server, the Node proxy, and an Nginx-served frontend at <http://127.0.0.1:8080>. There is no separate `migrate` service: the RPC server applies `db/migrations` itself at startup (`NEXUSAI_MIGRATIONS_DIR`). Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The browser entrypoint is local-only HTTP, so Compose does not require TLS certificates or frontend secrets. PostgreSQL data persists in the ignored `./.nexusai-data/postgres` bind mount.
 
 MCP/RAG is optional and disabled by default. Enable it deliberately when configuring CMake with `-DENABLE_MCP=ON`.
 
@@ -60,15 +60,15 @@ MCP/RAG is optional and disabled by default. Enable it deliberately when configu
 
 **gRPC 流式查询全链路：** gRPC Server Streaming → Node.js Proxy SSE 转码 → 前端实时渲染，端到端流式体验涵盖增量内容推送、DAG 节点状态更新、Agent 拓扑实时高亮、链路追踪摘要展示。Proxy 层自动检测客户端断连并取消后端流，释放服务端资源。
 
-**三层记忆系统：** Redis 作为运行时主存储，承载对话历史（Tier 1，按 Agent 粒度隔离，LTRIM 保留最近 50 条）、用户长期记忆（Tier 2，Agent 通过 memory_hints 上报）、跨 Agent 摘要（LLM 生成，保障 Agent 切换时上下文连贯）三层架构。查询前自动整合 user_id + user_memory + conversation_history + cross_agent_summary 注入 AI 查询。PostgreSQL schema 已定义（`sql/` 目录含 9 个迁移脚本），当前运行时全部使用 Redis。
+**三层记忆与持久化事实源：** PostgreSQL 是业务事实源（durable Query pipeline：会话/查询日志/trace/预算预留/token 台账/反馈/分享均由 `db/migrations` 13 条迁移建表并落库）；Redis 承担运行时缓存与在线状态：对话历史缓存（Tier 1，按 Agent 粒度隔离，LTRIM 保留最近 50 条）、用户长期记忆（Tier 2，Agent 通过 memory_hints 上报）、跨 Agent 摘要（LLM 生成）、会话 Token 与限流。查询前自动整合 user_id + user_memory + conversation_history + cross_agent_summary 注入 AI 查询。旧 `sql/` 目录仅为参考，不再执行。
 
 **A2A 协议与 MCP 工具调用：** 完整实现 Agent-to-Agent 协议（HTTP/JSON-RPC 2.0），支持 `message/send` 同步调用与 `message/stream` SSE 流式调用，Task 状态机覆盖 Submitted → Running → Completed / Failed / Canceled 全生命周期。MCP 工具调用支持 STDIO（本地进程管道）和 SSE（远程 HTTP）两种传输，集成 MCP Server 提供 6 个内置插件。
 
 **Agent 注册发现与消息系统：** gRPC RegisterAgent / Heartbeat / UnregisterAgent 全生命周期管理，Agent 注册时自动建立标签/技能倒排索引并同步至 AgentRouter 路由表。后台清理线程每 30s 扫描心跳超时 Agent，自动下线并同步移除路由索引与消息队列。FindAgents 支持按标签、技能、关键词多维发现与分页查询。Agent 间消息系统基于线程安全队列，支持单播、批量流式发送与广播三种模式。ServiceRegistry 维护 EMA 平滑延迟与环形缓冲区成功率，为负载均衡提供实时质量信号。
 
-**全链路可观测性：** `thread_local` TraceContext + 嵌套 Span 跨线程自动传播，Span 数据持久化 Redis 保留 7 天。Token 成本追踪按用户/日期聚合，预算中间件预扣费机制超额自动拒绝。前端 Dashboard 展示调用链路瀑布图、Token 趋势与成本分布。
+**全链路可观测性：** `thread_local` TraceContext + 嵌套 Span 跨线程自动传播，Span 数据经批量刷入 Redis 保留 7 天，trace 事实持久化 PostgreSQL（owner 隔离，GetTraceDetail/ListTraces 可查）。Token 成本追踪按用户/日期聚合，四层预算（global/user_daily/user_monthly/session，`NEXUSAI_BUDGET_*_TOKENS`）在 durable pipeline 中预扣费，超额返回 RESOURCE_EXHAUSTED 并落库 rejected。前端 Dashboard 展示调用链路瀑布图、Token 趋势与成本分布。
 
-**认证与安全：** PBKDF2 风格密码哈希（32 字节安全盐 + 10,000 次 SHA-256 迭代），UUID Token + Redis TTL 24 小时过期管理，gRPC 拦截器全接口鉴权（白名单 RPC 免认证）。预算控制与自主性级别控制，高消耗自动触发人工确认。
+**认证与安全：** PBKDF2 风格密码哈希（32 字节安全盐 + 10,000 次 SHA-256 迭代），UUID Token + Redis TTL 24 小时过期管理，gRPC 拦截器全接口鉴权（白名单 RPC 免认证）。owner 永远取自认证上下文，请求体中的 user_id 一律忽略；`NEXUSAI_ADMIN_USERNAME` 匹配的用户注册时获得 ADMIN role（RegisterAgent/UnregisterAgent 等管理面 RPC 的强制门槛）。自主性级别控制，高消耗自动触发人工确认。
 
 ---
 
@@ -145,7 +145,7 @@ agent-communication-and-tool-selection-framework/
 │   │   ├── result_aggregator.h      #   结果聚合器
 │   │   ├── feedback_aggregator.h    #   反馈聚合器
 │   │   ├── context_compressor.h     #   上下文压缩器
-│   │   ├── cron_scheduler.h         #   定时调度器
+│   │   ├── cron_scheduler.h         #   定时调度器（已移除调度，死代码保留）
 │   │   ├── export_service.h         #   导出服务
 │   │   └── replay_service.h         #   回放服务
 │   └── src/
@@ -158,7 +158,7 @@ agent-communication-and-tool-selection-framework/
 │   │   ├── load_balancer.h          #   负载均衡（6 种策略）
 │   │   ├── cost_tracker.h           #   Token 成本追踪
 │   │   ├── trace_context.h          #   链路追踪上下文
-│   │   ├── background_scheduler.h   #   后台调度器（8 个周期任务）
+│   │   ├── background_scheduler.h   #   后台调度器（周期任务：span 刷盘/反馈聚合/指标聚合/画像提取/健康评估；Cron、Canary 已移除）
 │   │   └── ...                      #   logger, metrics, serializer 等
 │   └── src/
 │
@@ -215,7 +215,7 @@ agent-communication-and-tool-selection-framework/
 ├── deploy/                          # 部署编排
 │   └── ../docker-compose.yml         #   Root container stack
 │
-├── tests/                           # 测试（17 套，GTest + RapidCheck）
+├── tests/                           # 测试（37 套，GTest + RapidCheck）
 │   ├── e2e/                         #   E2E 测试脚本
 │   └── test_*.cpp                   #   C++ 测试文件
 │
@@ -226,7 +226,7 @@ agent-communication-and-tool-selection-framework/
 │   └── orchestrator_agent.py
 │
 ├── docs/                            # 项目文档
-├── sql/                             # PostgreSQL Schema（已定义，运行时用 Redis）
+├── sql/                             # PostgreSQL 旧参考 schema（不执行；权威迁移在 db/migrations）
 ├── verify/                          # Agent 验证服务
 ├── CMakeLists.txt                   # 根 CMake（C++20，10 个子模块）
 ├── agent-integration-guide.md       # Agent 接入指南
@@ -253,10 +253,10 @@ agent-communication-and-tool-selection-framework/
 - **拓扑页面（`/topology`）**：ECharts 力导向图展示所有 Agent 关系网络，节点颜色/大小反映健康状态与负载，支持拖拽交互与详情查看。
 - **仪表板（`/dashboard`）**：Token 消耗趋势、Agent 调用排行、成本分布饼图，CountUp 数字滚动动画。
 - **监控面板（`/monitor`）**：系统健康度仪表盘、延迟分布、链路追踪信息与告警状态（绿/黄/红三级），支持自动刷新。
-- **管理后台（`/admin`）**：Agent 健康仪表盘、预算配置、按 trace_id 检索重放历史查询、灰度部署管理。
+- **管理后台（`/admin`）**：Agent 健康仪表盘、预算配置、按 trace_id 检索重放历史查询；按 ADMIN role 门控入口（服务端 requireAdmin 仍是强制边界）。Cron/Canary 入口已删除，不在本地目标内。
 - **登录页（`/login`）**：用户注册与登录，Token 持久化，过期自动登出。
 
-> **持续迭代中：** Agent 沙箱（`/sandbox`）、Agent 对比（`/compare`）、会话分享（`/share/:id`）、模板市场（`/templates`）——前端 UI 已就绪，后端接口逐步接入中。
+> **已接入后端真实闭环：** Agent 沙箱（`/sandbox`）、Agent 对比（`/compare`）、会话分享（`/share/:id`，含 TTL/撤销）、模板市场（`/templates`）均已对接真实 gRPC 后端与 PostgreSQL 持久化。
 
 ### 前端技术选型
 
@@ -277,12 +277,12 @@ agent-communication-and-tool-selection-framework/
 | **AgentTopology** | `/topology` | ✅ 已连接（ECharts 拓扑图） |
 | **Dashboard** | `/dashboard` | ✅ 已连接（Token/成本图表） |
 | **Monitor** | `/monitor` | ⚠️ 部分连接（无数据时 fallback） |
-| **AdminView** | `/admin` | ⚠️ 部分连接（Agent 列表来自 API） |
+| **AdminView** | `/admin` | ✅ 已连接（Dashboard/Budget/Replay，ADMIN role 门控） |
 | **LoginView** | `/login` | ✅ 已连接 |
-| **AgentSandbox** | `/sandbox` | 🚧 后端接入中 |
-| **CompareView** | `/compare` | 🚧 后端接入中 |
-| **ShareView** | `/share/:id` | 🚧 后端接入中 |
-| **TemplateMarket** | `/templates` | 🚧 后端接入中 |
+| **AgentSandbox** | `/sandbox` | ✅ 已连接（真实后端闭环） |
+| **CompareView** | `/compare` | ✅ 已连接（真实后端闭环） |
+| **ShareView** | `/share/:id` | ✅ 已连接（分享/TTL/撤销） |
+| **TemplateMarket** | `/templates` | ✅ 已连接（模板市场闭环） |
 
 ### 前端核心能力
 
@@ -345,7 +345,7 @@ sudo apt-get install -y \
 ### 4. 运行测试
 
 ```bash
-./run.sh test        # 运行全部 17 套测试
+./run.sh test        # 运行全部 37 套测试
 cd build && ctest --output-on-failure   # 或单独运行
 ```
 
@@ -407,12 +407,44 @@ MIT License
 ### PostgreSQL migrations (PR2.1)
 
 The compiled `db_migrate` binary applies the canonical `db/migrations/VNNN__name.sql`
-set in order and records checksums in `schema_migrations`. Compose runs it as the
-`migrate` service before `rpc-server`; the legacy `sql/` files remain reference
-inputs and are never executed by Compose.
+set in order and records checksums in `schema_migrations`. The RPC server runs
+the same migration logic itself at startup (Compose provides
+`NEXUSAI_MIGRATIONS_DIR`); there is no separate `migrate` Compose service.
+The legacy `sql/` files remain reference inputs and are never executed.
 
 On WSL2, keep the checkout on the Linux filesystem (not `/mnt/c`) and run
 `./scripts/bootstrap-wsl.sh` before configuring CMake. Ubuntu 26.04 receives
 the verified user-prefix libpqxx 8.0.1 workaround described above; Ubuntu
 24.04 continues to use its system `libpqxx-dev`. The `.env.example` password
 is local-only.
+
+### Release E2E (PR-G)
+
+`tests/e2e/e2e_pr_g_release.py` is the real-process release E2E: it starts the
+built `rpc_server` binary against the real Docker PostgreSQL/Redis plus a
+minimal real HTTP A2A agent, and verifies every assertion by querying
+PostgreSQL directly (`docker exec ... psql` or a local psql — never mocked).
+Missing prerequisites produce an explicit SKIP, not a fake green.
+
+```bash
+# WSL, from the repo root (requires: ./run.sh build, compose postgres/redis up,
+# grpcurl on PATH or GRPCURL_PATH, docker exec psql or local psql)
+python3 tests/e2e/e2e_pr_g_release.py
+```
+
+Coverage: register/login → QueryStream exactly-once complete → PG facts
+(query log/trace/messages/ledger owned by the caller); client abort →
+cancelled persisted; budget rejection → RESOURCE_EXHAUSTED + rejected;
+A/B owner isolation (trace/feedback/export/query status); feedback →
+agent_route_quality movement; share TTL/revoke refusal.
+
+### Honest capability boundaries (PR-G)
+
+- `RealTimeCommunication` (bidi streaming) returns `UNIMPLEMENTED`; use
+  SendMessage/ReceiveMessage/BroadcastMessage/ListenMessages.
+- `GetQueryStatus` reads durable PostgreSQL state (owner-scoped), no in-memory
+  task cache.
+- etcd registry and MCP are out of the supported local boundary (etcd only
+  reachable via explicit `RPC_REGISTRY_ADDRESS=etcd://`; MCP needs
+  `-DENABLE_MCP=ON`).
+- Cron/Canary/灰度 removed from scheduling, UI and docs per the local target.
