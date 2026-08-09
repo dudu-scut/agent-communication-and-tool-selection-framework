@@ -2,125 +2,254 @@
 
 <div align="center">
 
-**C++20 · gRPC · A2A Protocol · MCP · Vue 3**
+**C++20 · gRPC · A2A 协议 · MCP · Vue 3**
 
-高性能多 Agent 协作框架 — 四层渐进式智能路由 · DAG 任务编排 · 流式全链路可观测
+高性能多 Agent 协作框架 — 四级智能路由 · DAG 任务编排 · 持久化查询管线 · 全链路可观测
 
 [![C++](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
 [![gRPC](https://img.shields.io/badge/gRPC-1.51%2B-green)](https://grpc.io/)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-37%20suites-brightgreen)](tests/)
-[![Lines](https://img.shields.io/badge/C%2B%2B-76%2C000%2B%20lines-informational)]()
+[![测试](https://img.shields.io/badge/测试-37%20套-brightgreen)](tests/)
 
 </div>
 
-## Supported platform path (PR1)
+---
 
-Run the project from a WSL2 Ubuntu distribution and keep the checkout on the Linux filesystem (for example `~/src/nexusai`), not under `/mnt/c`. Bootstrap the documented WSL2 toolchain with:
+## 项目简介
 
-```bash
-./scripts/bootstrap-wsl.sh
+NexusAI 是一个基于 C++20 与 gRPC 构建的高性能多 Agent 协作与智能工具选择框架。用户以自然语言提问，后端自动将复杂问题拆解为带依赖关系的子任务 DAG 并行执行，通过四级渐进式智能路由调度最合适的 Agent，经 A2A 协议完成 Agent 间通信，全程以流式方式将执行进度推送到前端可视化。
+
+框架刚完成一轮系统性优化，核心链路已收敛为真实可验证的闭环：**登录用户发起 Query/QueryStream → 服务端从认证上下文取得数据归属者 owner（绝不采信请求体中的 user_id）→ PostgreSQL 持久化查询日志、消息、链路追踪、成本与预算 → 前端展示真实结果**。所有业务事实均以 PostgreSQL 为唯一持久事实源，Redis 仅承担缓存、心跳、限流与短锁等运行时职责。
+
+## 核心特性
+
+### Durable Query Pipeline（持久化查询管线）
+
+每一次 Query / QueryStream 请求都按六步固定顺序执行，任何一步失败即终止并落库终态：
+
+1. **认证取 owner**：owner 只从认证拦截器上下文获取，请求体中的 `user_id` 一律被无条件覆盖；未认证直接返回 UNAUTHENTICATED，不创建任何数据库行。
+2. **确保会话存在**：按 `request_id`/`context_id` 幂等创建会话，同 owner 重复请求复用，跨 owner 拒绝。
+3. **登记运行中记录**：在 `query_logs` 与 `traces` 表写入 status=running 的记录。
+4. **预算预留**：四层预算（全局 / 用户日 / 用户月 / 会话）在 PostgreSQL 中预留额度，预算不足时先将记录落库为 rejected 终态，再返回 RESOURCE_EXHAUSTED。
+5. **组装系统上下文**：从 PostgreSQL 读取会话消息与记忆摘要，组装 SystemContext 注入 AI 查询。
+6. **单次终结**：以 compare-exchange 原子操作保证 finalize 恰好执行一次，写入消息、查询日志、追踪与 Token 台账。
+
+管线以确定性主键实现幂等：消息 id 固定派生为 `msg-user-<request_id>` 与 `msg-assistant-<request_id>`，Token 台账主键为 `usage-<request_id>`。同一 `request_id` 的重试永远只产生一条预算预留与一条台账；客户端断开会持久化 cancelled 终态；预算拒绝持久化 rejected 终态。
+
+### PostgreSQL 为持久事实源
+
+- 会话、查询日志、链路追踪、预算预留、Token 台账、反馈、分享、Agent 注册表等全部业务事实落库 PostgreSQL，由 `db/migrations` 下 V001–V013 共 13 条只追加迁移建表。
+- RPC 服务端启动时自行执行迁移并记录校验和，不存在独立的 migrate 服务；迁移失败即启动中止。
+- Redis 清空后所有业务数据仍可完整读取；Redis 仅用于对话历史缓存、Agent 心跳存活标记、限流与短时锁。
+- 旧的 `sql/` 目录仅为参考 schema，不再执行。
+
+### DAG 任务编排引擎
+
+TaskPlanner 调用 LLM 分析请求，自动生成带依赖关系的子任务 DAG，经 Kahn 拓扑排序分层后，TaskExecutor 使用 `std::async` 并行执行同层无依赖子任务，前置任务的结果自动注入下游上下文，ResultAggregator 聚合多 Agent 输出为统一响应。全局超时防止无限等待，委派深度限制 5 层防止 Agent 递归失控，可配置重试策略自动处理瞬态错误。前端以 Mermaid 实时渲染 DAG 状态流转。
+
+### 四级智能路由与熔断容错
+
+路由引擎按 Embedding 向量语义匹配 → LLM 意图识别 → IDF 加权关键词匹配 → 兜底路由的顺序逐级降级，确保在各种条件下都能选出合适 Agent。用户反馈经 Beta 平滑聚合为路由质量系数并驱动加权选择；三态熔断器（Closed / Open / HalfOpen）按 Agent 粒度自动隔离故障；六种负载均衡策略含 FNV-1a 一致性哈希，支持运行时热切换。
+
+### A2A 协议与 MCP 工具调用
+
+A2A（Agent-to-Agent）协议基于 HTTP/JSON-RPC 2.0 实现，支持 `message/send` 同步调用与 `message/stream` SSE 流式调用，Task 状态机覆盖 Submitted → Running → Completed / Failed / Canceled 全生命周期。MCP 工具调用支持 STDIO 本地进程管道与 SSE 远程 HTTP 两种传输模式；集成 MCP Server 提供 6 个内置插件。MCP/RAG 为可选能力，默认关闭，需以 `-DENABLE_MCP=ON` 配置 CMake 显式启用。
+
+### 工作流控制
+
+- **Sandbox 沙箱**：隔离试运行环境，沙箱流量同样计入预算，不写入用户长期记忆。
+- **Compare 对比**：同一问题并行发给多个 Agent，认证上下文快照传播到工作线程，结果并排对比。
+- **Intervention 人工干预**：执行过程中可批准、修改或跳过指定动作，状态流转以单条 SQL 的 CAS 更新保证并发安全。
+- **Undo 撤销**：在单个数据库事务内以原子 CAS 标记撤销并执行 inverse 补偿操作，补偿失败整体回滚、撤销动作不被消耗，可安全重试。
+- **Autonomy 自主性分级**：用户可设置 Agent 自主级别，高消耗操作自动触发人工确认。
+
+### 分享与资产
+
+- **Replay 回放**：exact 模式以全新 request_id 走完整查询管线并生成新追踪，原追踪保持不变；route 模式仅对比历史路由决策与当前路由结果，不产生执行记录。
+- **Export 导出**：将会话导出为 Markdown 或结构化 HTML，HTML 输出对用户内容做完整转义。
+- **Share 分享**：生成 96 字符高熵一次性令牌，PostgreSQL 仅存储令牌的 SHA-256 哈希，支持 TTL 过期与主动撤销；公开读取接口只读且脱敏。
+- **Template 模板市场**：保存、列举、应用会话模板，应用模板会为当前用户创建真实会话与初始消息。
+
+### 全链路可观测性
+
+TraceContext 以嵌套 Span 结构实现全链路追踪并跨线程自动传播，Span 数据批量刷入 Redis 保留 7 天，追踪事实同时持久化到 PostgreSQL 并按 owner 隔离查询。Token 成本按用户与日期聚合为报表，估算成本与精确成本分桶统计。`agent_invocations` 事实表由查询管线逐请求写入，后台任务按小时聚合调用指标。用户反馈聚合为路由质量信号并即时刷新，驱动路由决策持续优化。
+
+### 三层记忆系统
+
+记忆服务在每次查询前自动整合上下文注入 AI 请求：对话历史按 Agent 粒度隔离并支持尾部裁剪；用户长期记忆基于 Hash 存储偏好特征并自动更新；跨 Agent 摘要由 LLM 生成以保障 Agent 切换时的连贯性。
+
+### 网关错误语义
+
+Node.js 网关将 gRPC 状态码映射为六种 HTTP 语义码：UNAUTHENTICATED → 401、PERMISSION_DENIED → 403、NOT_FOUND → 404、RESOURCE_EXHAUSTED → 429、CANCELLED → 499、ALREADY_EXISTS → 409。一元调用错误返回统一结构化错误体；SSE 流以 in-band 结构化 error 事件传递错误后关闭；浏览器断开经网关传播为后端 stream.cancel()，服务端据此持久化 cancelled 终态。
+
+### 认证与安全
+
+密码采用 32 字节安全盐加一万次 SHA-256 迭代的哈希策略存储，会话令牌为 UUID 并在 Redis 中按 24 小时 TTL 管理。gRPC 拦截器对全部接口鉴权，白名单内的公开 RPC 免认证。匹配 `NEXUSAI_ADMIN_USERNAME` 的用户在注册时获得 ADMIN 角色，作为 RegisterAgent / UnregisterAgent 等管理面 RPC 的强制门槛。
+
+## 架构概览
+
+```text
+                     ┌──────────────────────────────┐
+                     │  Browser（浏览器）            │
+                     │  生产: Nginx :8080            │
+                     │  开发: Vite :5173             │
+                     └──────────────┬───────────────┘
+                                    │ HTTP JSON / SSE
+                     ┌──────────────▼───────────────┐
+                     │  Node.js 网关代理 (:8081)     │
+                     │  HTTP JSON ↔ gRPC 转码        │
+                     │  六码错误映射 · 断开传播       │
+                     └──────────────┬───────────────┘
+                                    │ gRPC / Protobuf
+                     ┌──────────────▼───────────────┐
+                     │  gRPC Server (:50051)         │
+                     │  9 个 Service · 35 个 RPC     │
+                     │  认证拦截器 · 成本拦截器       │
+                     └────┬─────────┬─────────┬─────┘
+                          │         │         │
+          ┌───────────────┤         │         ├──────────────┐
+          │               │         │         │              │
+  ┌───────▼──────┐ ┌──────▼─────┐ ┌─▼───────────┐ ┌─────────▼──────┐
+  │ AgentRouter  │ │ Orchestrator│ │ A2A Adapter │ │ Durable 管线   │
+  │ 四级路由+熔断 │ │ DAG 编排    │ │ Proto↔JSON  │ │ 预算·会话·追踪 │
+  └───────┬──────┘ └──────┬─────┘ └─┬───────────┘ └─────────┬──────┘
+          │               │         │                       │
+          └───────────────┼─────────┘                       │
+                          │                                 │
+             ┌────────────▼────────────┐       ┌────────────▼──────────┐
+             │  Redis (:6379)          │       │  PostgreSQL (:5432)   │
+             │  缓存·心跳·限流·短锁     │       │  持久事实源            │
+             └────────────┬────────────┘       │  V001–V013 只追加迁移  │
+                          │                    └───────────────────────┘
+             ┌────────────▼────────────┐
+             │  外部 Agent              │
+             │  A2A HTTP / JSON-RPC    │
+             │  Orchestrator (:5000)   │
+             │  示例 Agent (:5100)      │
+             └─────────────────────────┘
 ```
 
-Ubuntu 26.04's stock `libpqxx` 7.10 package is rejected because of its
-process-exit double-free. The bootstrap detects that distribution and only
-then fetches the pinned libpqxx 8.0.1 source archive, verifies SHA-256
-`24f878a1b4249035e4b6c07d49351506bf99f88df584d36bf198d58ebf293823`, and
-installs it under the user-controlled
-`${XDG_DATA_HOME:-$HOME/.local/share}/nexusai/libpqxx-8.0.1` prefix. A marker
-and `pkg-config` version check make the install idempotent; a failed or
-mismatched archive stops bootstrap, and no apt-owned files are overwritten.
-`run.sh build` discovers that prefix automatically and passes it to CMake.
-Ubuntu 24.04 keeps using its system libpqxx package (including 6.x), and
-ordinary CMake configuration never downloads dependencies.
+**数据流**：浏览器 → Nginx :8080（生产）→ Node JSON 代理 :8081 → gRPC Server :50051 → A2A 适配器 → Orchestrator :5000 → 各 Agent。
 
-The browser path is JSON only: `Browser/Vite -> Node JSON proxy (:8081) -> gRPC RPC server (:50051)`. Vite forwards only browser RPC paths to the local Node proxy.
+**分层职责**：
 
-For the complete containerized stack, use the root Compose file:
+| 层 | 组件 | 职责 |
+| --- | --- | --- |
+| 前端层 | Vue 3 + Pinia + TypeScript SPA | 对话、DAG 可视化、Agent 拓扑、Token/成本仪表盘 |
+| 网关层 | Node.js JSON-gRPC 代理 | 协议转码、SSE 流式、错误语义映射、断开传播 |
+| 服务层 | C++20 gRPC Server | 认证鉴权、查询管线、DAG 编排、智能路由、A2A 通信 |
+| 数据层 | PostgreSQL 16 + Redis 7 | 持久事实源 + 运行时缓存/心跳/限流 |
+
+## 快速开始
+
+### 方式一：Docker Compose 一键启动（推荐）
+
+仓库根目录执行：
 
 ```bash
 docker compose up --build
 ```
 
-It starts PostgreSQL, Redis, the RPC server, the Node proxy, and an Nginx-served frontend at <http://127.0.0.1:8080>. There is no separate `migrate` service: the RPC server applies `db/migrations` itself at startup (`NEXUSAI_MIGRATIONS_DIR`). Services communicate over Compose DNS (`proxy -> rpc-server:50051`); no host IP addresses are required. The browser entrypoint is local-only HTTP, so Compose does not require TLS certificates or frontend secrets. PostgreSQL data persists in the ignored `./.nexusai-data/postgres` bind mount.
+将启动 5 个服务：PostgreSQL、Redis、RPC 服务端、Node 代理、Nginx 前端。RPC 服务端启动时自动执行 `db/migrations` 迁移，无需单独的迁移服务。服务之间通过 Compose DNS 互通（代理以 `rpc-server:50051` 连接后端），无需配置主机地址。
 
-MCP/RAG is optional and disabled by default. Enable it deliberately when configuring CMake with `-DENABLE_MCP=ON`.
+启动完成后访问 **<http://127.0.0.1:8080>** 即可使用（生产模式前端由 Nginx 托管，端口为 8080 而非 5173）。PostgreSQL 数据持久化在已加入 .gitignore 的 `./.nexusai-data/postgres` 挂载卷中。
 
----
+受限网络环境下可通过构建参数指定 Debian apt 镜像（默认为空即官方源）：
 
-## 这是什么？
-
-一个让多个 AI Agent 协同工作的 C++ 基础设施框架。用户用自然语言提问，后端自动将复杂问题拆解为子任务 DAG 并行执行，通过四层智能路由调度合适的 Agent，经 A2A 协议实现 Agent 间通信，全程流式推送进度到前端可视化。15,000+ 行核心 C++，10 个 CMake 模块，9 个 gRPC Service，35 个 RPC 端点。
-
-## 核心能力
-
-**DAG 任务编排引擎：** LLM 分析请求自动生成带依赖关系的子任务 DAG，Kahn 拓扑排序分层后 `std::async` 并行执行同层无依赖子任务，前置结果自动注入下游上下文。全局超时防止无限等待，委派深度限制 5 层防止 Agent 递归失控，可配置重试策略自动处理瞬态错误。ResultAggregator 聚合多 Agent 输出为统一响应，前端 Mermaid 实时渲染 DAG 状态流转。
-
-**四级智能路由与熔断容错：** Embedding 向量语义匹配 → LLM 意图识别 → IDF 加权关键词匹配 → 兜底路由，四级递进式降级确保各种条件下精准路由。质量系数驱动路由加权，三态熔断器（Closed / Open / HalfOpen）自动隔离故障 Agent，6 种负载均衡策略含 FNV-1a 一致性哈希，支持运行时热切换。
-
-**gRPC 流式查询全链路：** gRPC Server Streaming → Node.js Proxy SSE 转码 → 前端实时渲染，端到端流式体验涵盖增量内容推送、DAG 节点状态更新、Agent 拓扑实时高亮、链路追踪摘要展示。Proxy 层自动检测客户端断连并取消后端流，释放服务端资源。
-
-**三层记忆与持久化事实源：** PostgreSQL 是业务事实源（durable Query pipeline：会话/查询日志/trace/预算预留/token 台账/反馈/分享均由 `db/migrations` 13 条迁移建表并落库）；Redis 承担运行时缓存与在线状态：对话历史缓存（Tier 1，按 Agent 粒度隔离，LTRIM 保留最近 50 条）、用户长期记忆（Tier 2，Agent 通过 memory_hints 上报）、跨 Agent 摘要（LLM 生成）、会话 Token 与限流。查询前自动整合 user_id + user_memory + conversation_history + cross_agent_summary 注入 AI 查询。旧 `sql/` 目录仅为参考，不再执行。
-
-**A2A 协议与 MCP 工具调用：** 完整实现 Agent-to-Agent 协议（HTTP/JSON-RPC 2.0），支持 `message/send` 同步调用与 `message/stream` SSE 流式调用，Task 状态机覆盖 Submitted → Running → Completed / Failed / Canceled 全生命周期。MCP 工具调用支持 STDIO（本地进程管道）和 SSE（远程 HTTP）两种传输，集成 MCP Server 提供 6 个内置插件。
-
-**Agent 注册发现与消息系统：** gRPC RegisterAgent / Heartbeat / UnregisterAgent 全生命周期管理，Agent 注册时自动建立标签/技能倒排索引并同步至 AgentRouter 路由表。后台清理线程每 30s 扫描心跳超时 Agent，自动下线并同步移除路由索引与消息队列。FindAgents 支持按标签、技能、关键词多维发现与分页查询。Agent 间消息系统基于线程安全队列，支持单播、批量流式发送与广播三种模式。ServiceRegistry 维护 EMA 平滑延迟与环形缓冲区成功率，为负载均衡提供实时质量信号。
-
-**全链路可观测性：** `thread_local` TraceContext + 嵌套 Span 跨线程自动传播，Span 数据经批量刷入 Redis 保留 7 天，trace 事实持久化 PostgreSQL（owner 隔离，GetTraceDetail/ListTraces 可查）。Token 成本追踪按用户/日期聚合，四层预算（global/user_daily/user_monthly/session，`NEXUSAI_BUDGET_*_TOKENS`）在 durable pipeline 中预扣费，超额返回 RESOURCE_EXHAUSTED 并落库 rejected。前端 Dashboard 展示调用链路瀑布图、Token 趋势与成本分布。
-
-**认证与安全：** PBKDF2 风格密码哈希（32 字节安全盐 + 10,000 次 SHA-256 迭代），UUID Token + Redis TTL 24 小时过期管理，gRPC 拦截器全接口鉴权（白名单 RPC 免认证）。owner 永远取自认证上下文，请求体中的 user_id 一律忽略；`NEXUSAI_ADMIN_USERNAME` 匹配的用户注册时获得 ADMIN role（RegisterAgent/UnregisterAgent 等管理面 RPC 的强制门槛）。自主性级别控制，高消耗自动触发人工确认。
-
----
-
-## 架构一览
-
-```text
-                        ┌─────────────────────────┐
-                        │   Browser  (:5173)       │
-                        │   Vue 3 SPA · SSE · DAG  │
-                        └────────────┬────────────┘
-                                     │  HTTP / SSE
-                        ┌────────────▼────────────┐
-                        │   Node.js Proxy (:8081)  │
-                        │   HTTP JSON ↔ gRPC        │
-                        └────────────┬────────────┘
-                                     │  gRPC / Protobuf
-                        ┌────────────▼────────────┐
-                        │   gRPC Server (:50051)   │
-                        │   9 Services · 35 RPCs   │
-                        │   Auth + Cost Interceptor│
-                        └──────┬───────┬──────────┘
-                               │       │
-              ┌────────────────┼───────┼────────────────┐
-              │                │       │                │
-    ┌─────────▼───┐  ┌────────▼──┐ ┌──▼──────────┐    │
-    │ AgentRouter │  │Orchestrator│ │ A2A Adapter  │    │
-    │  4-tier     │  │ DAG Engine │ │ Proto↔JSON   │    │
-    └─────────┬───┘  └────────┬──┘ └──┬──────────┘    │
-              │               │       │                │
-    ┌─────────▼───┐  ┌────────▼──┐ ┌──▼──────────┐    │
-    │ MCP Client  │  │Memory Svc │ │Background   │    │
-    │ STDIO + SSE │  │ 3-tier    │ │Scheduler    │    │
-    └─────────┬───┘  └────────┬──┘ └──┬──────────┘    │
-              │               │       │                │
-              └───────────────┼───────┘                │
-                              │                        │
-                 ┌────────────▼────────────┐           │
-                 │   Redis  (:6379)        │◄──────────┘
-                 │   cache · memory · auth │
-                 └────────────┬────────────┘
-                              │
-                 ┌────────────▼────────────┐
-                 │   External Agents        │
-                 │   A2A HTTP · JSON-RPC    │
-                 │   Orchestrator (:5000)   │
-                 │   Demo Agent  (:5100)    │
-                 └─────────────────────────┘
+```bash
+APT_MIRROR_PREFIX=http://mirrors.aliyun.com/debian docker compose up --build
 ```
 
----
+停止服务：
 
-## 项目结构
+```bash
+docker compose down
+# 或
+./run.sh stop
+```
+
+### 方式二：本地开发模式（WSL2 + Windows）
+
+C++ 后端的编译、测试与运行必须在 WSL2 Ubuntu 中进行，且仓库应检出到 Linux 文件系统（不要放在 `/mnt/c` 下）；前端与网关代理在 Windows 原生运行。
+
+**1. 环境准备（WSL2 内）**
+
+```bash
+./scripts/bootstrap-wsl.sh   # 安装 WSL2 工具链
+./run.sh setup               # 检测开发环境
+```
+
+**2. 配置环境变量**
+
+```bash
+cp .env.example .env         # 填入 LLM_API_KEY 等实际值
+```
+
+**3. 编译与测试（WSL2 内）**
+
+```bash
+./run.sh build               # CMake + make 编译
+./run.sh test                # 运行全部 37 套测试
+```
+
+**4. 启动后端（WSL2 内）**
+
+```bash
+./run.sh start-all           # 启动容器化后端栈（等价于 ./run.sh gateway）
+```
+
+**5. 启动网关代理（Windows PowerShell）**
+
+```powershell
+$env:GRPC_TARGET="localhost:50051"
+node gateway/proxy/server.mjs    # 监听 :8081
+```
+
+**6. 启动前端（Windows PowerShell）**
+
+```bash
+cd frontend && npm ci        # 首次安装依赖
+cd frontend && npm run dev   # Vite 开发服务器
+```
+
+开发模式下访问 **<http://localhost:5173>**，支持热更新。Vite 仅将浏览器 RPC 路径转发到本地 Node 代理 :8081。
+
+> 注意：生产模式（docker compose）前端端口为 8080，开发模式（npm run dev）为 5173，两者不通用，访问前请确认启动方式。
+
+**7. 注册 Agent（WSL2 内，可选）**
+
+```bash
+./scripts/register_agents.sh
+```
+
+RegisterAgent 为 ADMIN 专属 RPC，登录用户须匹配 `NEXUSAI_ADMIN_USERNAME` 配置。
+
+### 环境要求
+
+| 要求 | 版本 | 说明 |
+| --- | --- | --- |
+| 操作系统 | Linux（Ubuntu 20.04+）或 WSL2 | C++ 后端编译运行 |
+| CMake | 3.20+ | 构建系统 |
+| GCC | 10+ | 支持 C++20 |
+| gRPC | 1.51.1+ | RPC 框架 |
+| PostgreSQL | 16 | 持久事实源 |
+| Redis | 6.0+ | 缓存 / 心跳 / 限流 |
+| Node.js | 18+ | 前端 + 网关代理 |
+
+### 服务端口
+
+| 端口 | 服务 | 说明 |
+| --- | --- | --- |
+| 8080 | Nginx 前端 | 生产模式浏览器入口（docker compose） |
+| 5173 | Vite 开发服务器 | 开发模式浏览器入口（npm run dev） |
+| 8081 | Node.js 网关代理 | HTTP JSON ↔ gRPC |
+| 50051 | gRPC Server | 主 RPC 服务 |
+| 5000 | Orchestrator | A2A HTTP 示例编排 Agent |
+| 5100 | 示例 Agent | A2A HTTP 端点 |
+| 5432 | PostgreSQL | 容器内通过服务名访问 |
+| 6379 | Redis | 容器内通过服务名访问 |
+
+## 目录结构
 
 ```text
 agent-communication-and-tool-selection-framework/
@@ -132,319 +261,168 @@ agent-communication-and-tool-selection-framework/
 │   ├── orchestration.proto          #   编排 — ExecutePlan / Replay / Export
 │   ├── observability.proto          #   可观测性 — Trace / CostReport
 │   ├── sharing.proto                #   会话共享 — Share / Observe / Templates
-│   ├── user_experience.proto        #   用户体验 — Intervention / Sandbox
+│   ├── user_experience.proto        #   用户体验 — Intervention / Sandbox / Compare
 │   ├── user.proto                   #   用户服务 — Login / Register
-│   └── common.proto                 #   公共消息 — ServiceInfo / Status / Enums
+│   └── common.proto                 #   公共消息 — ServiceInfo / Status / 枚举
 │
-├── server/                          # gRPC 服务端 — 9 个 Service 实现
+├── server/                          # gRPC 服务端 — 9 个 Service 实现与 durable 查询管线
 ├── orchestrator/                    # DAG 任务编排与智能路由
-│   ├── include/agent_rpc/orchestrator/
-│   │   ├── agent_router.h           #   四级路由引擎
-│   │   ├── task_planner.h           #   DAG 规划器（Kahn 拓扑排序）
-│   │   ├── task_executor.h          #   并行执行器（std::async）
-│   │   ├── result_aggregator.h      #   结果聚合器
-│   │   ├── feedback_aggregator.h    #   反馈聚合器
-│   │   ├── context_compressor.h     #   上下文压缩器
-│   │   ├── cron_scheduler.h         #   定时调度器（已移除调度，死代码保留）
-│   │   ├── export_service.h         #   导出服务
-│   │   └── replay_service.h         #   回放服务
-│   └── src/
+│   ├── task_planner                 #   DAG 规划器（Kahn 拓扑排序）
+│   ├── task_executor                #   并行执行器（std::async）
+│   ├── agent_router                 #   四级路由引擎
+│   ├── result_aggregator            #   结果聚合器
+│   ├── replay_service / export_service  # 回放与导出
+│   └── feedback_aggregator          #   反馈聚合（驱动路由质量）
 │
 ├── common/                          # 公共组件库
-│   ├── include/agent_rpc/common/
-│   │   ├── redis_client.h           #   Redis 客户端
-│   │   ├── memory_service.h         #   三层记忆系统
-│   │   ├── circuit_breaker.h        #   三态熔断器
-│   │   ├── load_balancer.h          #   负载均衡（6 种策略）
-│   │   ├── cost_tracker.h           #   Token 成本追踪
-│   │   ├── trace_context.h          #   链路追踪上下文
-│   │   ├── background_scheduler.h   #   后台调度器（周期任务：span 刷盘/反馈聚合/指标聚合/画像提取/健康评估；Cron、Canary 已移除）
-│   │   └── ...                      #   logger, metrics, serializer 等
-│   └── src/
+│   ├── query_domain_repository      #   查询域仓储（会话/消息/日志/追踪，owner 隔离）
+│   ├── agent_runtime_repository     #   Agent 运行时事实仓储（注册表/反馈/调用指标）
+│   ├── circuit_breaker              #   三态熔断器
+│   ├── load_balancer                #   负载均衡（6 种策略）
+│   ├── memory_service               #   三层记忆系统
+│   ├── cost_tracker / trace_context #   成本追踪与链路追踪
+│   └── background_scheduler         #   后台周期任务（span 刷盘/反馈聚合/指标聚合等）
 │
 ├── a2a/                             # A2A 协议核心库（HTTP/JSON-RPC 2.0）
-│   ├── include/a2a/
-│   │   ├── core/                    #   JSON-RPC 核心
-│   │   ├── models/                  #   数据模型（AgentCard / Task / Message）
-│   │   ├── client/                  #   A2A 客户端
-│   │   └── server/                  #   Task 管理器
-│   ├── src/
-│   └── third_party/json.hpp         #   nlohmann/json
-│
-├── a2a_adapter/                     # gRPC ↔ A2A 协议适配层
-│   ├── include/agent_rpc/a2a_adapter/
-│   │   ├── a2a_adapter.h            #   适配器（同步 / 异步 / 流式 / 直连）
-│   │   ├── request_adapter.h        #   Protobuf → JSON-RPC
-│   │   ├── response_adapter.h       #   JSON-RPC → Protobuf
-│   │   └── ...                      #   config, metrics, retry_policy 等
-│   └── src/
-│
-├── mcp/                             # MCP 客户端（STDIO + SSE）
-│   ├── include/agent_rpc/mcp/
-│   │   ├── mcp_client.h             #   MCP 客户端
-│   │   └── rag/                     #   RAG-MCP：Embedding + 语义检索
-│   └── src/
-│
+├── a2a_adapter/                     # gRPC ↔ A2A 协议适配层（同步/异步/流式/直连）
+├── mcp/                             # MCP 客户端（STDIO + SSE，可选模块）
 ├── mcp_server_integrated/           # 集成 MCP Server（独立构建，6 个插件）
 ├── registry/                        # Agent 注册与发现
 ├── client/                          # gRPC CLI + Agent 注册 SDK
 │
+├── db/
+│   └── migrations/                  # V001–V013 只追加迁移（权威 schema）
+│
 ├── frontend/                        # Vue 3 + TypeScript + Vite
 │   └── src/
-│       ├── views/                   #   10 个视图
-│       │   ├── ChatView.vue         #     对话界面（SSE 流式 + DAG）
-│       │   ├── AgentTopology.vue    #     Agent 拓扑（ECharts 力导向图）
-│       │   ├── Dashboard.vue        #     可观测仪表盘
-│       │   ├── Monitor.vue          #     系统健康监控
-│       │   ├── AdminView.vue        #     Agent 管理
-│       │   ├── LoginView.vue        #     登录注册
-│       │   ├── AgentSandbox.vue     #     Agent 沙箱
-│       │   ├── CompareView.vue      #     Agent 对比
-│       │   ├── ShareView.vue        #     会话分享
-│       │   └── TemplateMarket.vue   #     模板市场
+│       ├── views/                   #   10 个功能视图
 │       ├── components/              #   UI 组件
-│       ├── services/grpc-client.ts  #   gRPC 客户端（Fetch + ReadableStream）
-│       ├── stores/                  #   Pinia 状态管理
-│       └── types/proto.ts           #   TypeScript 类型定义
+│       ├── services/grpc-client.ts  #   Fetch + ReadableStream 网关客户端
+│       ├── stores/                  #   Pinia 状态管理（chat / auth / agents）
+│       └── types/proto.ts           #   与 proto/ 字段级对齐的类型定义
 │
-├── gateway/                         # API 网关
-│   ├── proxy/server.mjs             #   Node.js gRPC Proxy（主力）
-│   ├── proxy/Dockerfile              #   Node JSON proxy image
-│   └── nginx.conf                   #   Nginx 配置
-│
-├── deploy/                          # 部署编排
-│   └── ../docker-compose.yml         #   Root container stack
-│
-├── tests/                           # 测试（37 套，GTest + RapidCheck）
-│   ├── e2e/                         #   E2E 测试脚本
-│   └── test_*.cpp                   #   C++ 测试文件
-│
+├── gateway/proxy/                   # Node.js JSON-gRPC 网关代理 + 契约测试
+├── tests/                           # C++ 测试（37 套，GTest + RapidCheck）
+│   └── e2e/                         #   发布 E2E 脚本
 ├── examples/                        # Agent 接入示例（Python）
-│   ├── echo_agent.py
-│   ├── math_agent.py
-│   ├── translator_agent.py
-│   └── orchestrator_agent.py
-│
 ├── docs/                            # 项目文档
-├── sql/                             # PostgreSQL 旧参考 schema（不执行；权威迁移在 db/migrations）
-├── verify/                          # Agent 验证服务
-├── CMakeLists.txt                   # 根 CMake（C++20，10 个子模块）
-├── agent-integration-guide.md       # Agent 接入指南
+├── sql/                             # PostgreSQL 旧参考 schema（不执行）
+├── scripts/                         # 辅助脚本（bootstrap-wsl / register_agents）
+├── docker-compose.yml               # 一键容器栈（5 服务）
 ├── run.sh                           # 统一运行脚本
-├── scripts/                         # 辅助脚本
-│   ├── start_backend.sh             #   后端一键启动
-│   └── register_agents.sh           #   Agent 注册
-├── CLAUDE.md                        # Claude Code 项目指引
-├── .env                             # 环境变量
-└── .env.example                     # 环境变量示例
+├── .env.example                     # 环境变量示例
+└── CMakeLists.txt                   # 根 CMake（C++20）
 ```
 
----
+## 前端
 
-## 前端界面
+基于 Vue 3 + TypeScript + Vite 的 SPA，通过 Node.js 网关代理完成 gRPC → SSE 流式对接，7 种 SSE 事件类型（`partial` / `status` / `complete` / `error` / `plan` / `subtask_start` / `subtask_complete`）支持逐字渲染、DAG 进度更新与活动流推送。
 
-基于 Vue 3 + TypeScript + Vite 构建的 SPA，提供 10 个功能视图，通过 Node.js gRPC Proxy 实现 gRPC → SSE 流式对接。
+### 功能视图
 
-### 启动后能看到什么
-
-打开 <http://localhost:5173> 进入一个完整的多 Agent 协作可视化平台：
-
-- **对话页面（首页 `/`）**：自然语言提问，实时流式回答；复杂问题自动展示 DAG 执行计划流程图（Mermaid），子任务状态实时更新；右侧活动流面板显示 Agent 工作步骤。
-- **拓扑页面（`/topology`）**：ECharts 力导向图展示所有 Agent 关系网络，节点颜色/大小反映健康状态与负载，支持拖拽交互与详情查看。
-- **仪表板（`/dashboard`）**：Token 消耗趋势、Agent 调用排行、成本分布饼图，CountUp 数字滚动动画。
-- **监控面板（`/monitor`）**：系统健康度仪表盘、延迟分布、链路追踪信息与告警状态（绿/黄/红三级），支持自动刷新。
-- **管理后台（`/admin`）**：Agent 健康仪表盘、预算配置、按 trace_id 检索重放历史查询；按 ADMIN role 门控入口（服务端 requireAdmin 仍是强制边界）。Cron/Canary 入口已删除，不在本地目标内。
-- **登录页（`/login`）**：用户注册与登录，Token 持久化，过期自动登出。
-
-> **已接入后端真实闭环：** Agent 沙箱（`/sandbox`）、Agent 对比（`/compare`）、会话分享（`/share/:id`，含 TTL/撤销）、模板市场（`/templates`）均已对接真实 gRPC 后端与 PostgreSQL 持久化。
+| 视图 | 路由 | 说明 |
+| --- | --- | --- |
+| 对话 | `/` | 自然语言提问，SSE 流式回答，Mermaid 实时渲染 DAG 执行计划 |
+| Agent 拓扑 | `/topology` | ECharts 力导向图展示 Agent 关系网络与健康状态 |
+| 仪表板 | `/dashboard` | Token 消耗趋势、Agent 调用排行、成本分布 |
+| 监控 | `/monitor` | 系统健康度、延迟分布、链路追踪信息 |
+| 管理后台 | `/admin` | Agent 健康、预算配置、查询重放（ADMIN 角色门控） |
+| 沙箱 | `/sandbox` | Agent 隔离试运行，真实后端闭环 |
+| 对比 | `/compare` | 同一问题多 Agent 并行对比 |
+| 分享 | `/share/:id` | 会话分享（TTL + 撤销），真实后端闭环 |
+| 模板市场 | `/templates` | 模板保存与应用，真实后端闭环 |
+| 登录 | `/login` | 注册登录，Token 持久化与过期自动登出 |
 
 ### 前端技术选型
 
-| 技术 | 用途 | 选型理由 |
-| ------ | ------ | -------- |
-| Vue 3 + TypeScript | UI 框架 | Composition API，手写 Proto 类型映射 |
-| Vite | 构建工具 | 极速 HMR + ESBuild，开发代理转发 Node.js Proxy |
-| Pinia | 状态管理 | 3 个 Store 协作：chat / auth / agents |
-| ECharts | 数据可视化 | 拓扑力导向图 + Dashboard 多图表联动 |
-| Mermaid.js | DAG 渲染 | ExecutionPlan JSON 实时渲染为流程图 |
-| Tailwind CSS | 样式框架 | 原子化 CSS，统一视觉风格 |
+| 技术 | 用途 |
+| --- | --- |
+| Vue 3 + TypeScript | UI 框架，手写与 proto 字段级对齐的类型映射 |
+| Pinia | 状态管理（chat / auth / agents 三个 Store） |
+| ECharts | 拓扑力导向图与仪表盘多图表联动 |
+| Mermaid.js | ExecutionPlan JSON 实时渲染为 DAG 流程图 |
+| Tailwind CSS | 原子化样式 |
 
-### 视图连接状态
+## 测试与验证
 
-| 视图 | 路由 | 后端连接 |
-| ------ | ------ | -------- |
-| **ChatView** | `/` | ✅ 已连接（SSE 流式 + DAG + 活动流） |
-| **AgentTopology** | `/topology` | ✅ 已连接（ECharts 拓扑图） |
-| **Dashboard** | `/dashboard` | ✅ 已连接（Token/成本图表） |
-| **Monitor** | `/monitor` | ⚠️ 部分连接（无数据时 fallback） |
-| **AdminView** | `/admin` | ✅ 已连接（Dashboard/Budget/Replay，ADMIN role 门控） |
-| **LoginView** | `/login` | ✅ 已连接 |
-| **AgentSandbox** | `/sandbox` | ✅ 已连接（真实后端闭环） |
-| **CompareView** | `/compare` | ✅ 已连接（真实后端闭环） |
-| **ShareView** | `/share/:id` | ✅ 已连接（分享/TTL/撤销） |
-| **TemplateMarket** | `/templates` | ✅ 已连接（模板市场闭环） |
+### C++ 测试（WSL2 内，37 套）
 
-### 前端核心能力
-
-**gRPC → SSE 流式对接：** 手写 TypeScript 类型定义 + Fetch API + ReadableStream，经 Node.js Proxy (:8081) 完成协议转换。7 种 SSE 事件类型（`partial` / `status` / `complete` / `error` / `plan` / `subtask_start` / `subtask_complete`），支持逐字渲染、DAG 进度更新、活动流推送。Auth Token 通过 header 自动注入，401 自动登出。
-
-**Mermaid DAG 实时渲染：** `plan` 事件接收 ExecutionPlan JSON → Mermaid.js 渲染流程图 → `subtask_start` / `subtask_complete` 事件驱动节点状态更新（pending → running → completed/failed）。
-
-**ECharts Agent 拓扑力导向图：** 节点颜色/大小反映 Agent 健康状态与负载，30s 轮询刷新，活动流事件驱动节点高亮。
-
-### 启动前端
+GTest 集成测试与 RapidCheck 属性测试相结合，覆盖 durable 查询管线、查询域仓储契约、预算仓储契约、工作流控制契约、Agent 运行时仓储契约、路由属性、熔断器、任务状态机等。涉及 PostgreSQL 的用例连接真实数据库执行，缺失环境变量时按约定 SKIP 而非伪造通过。
 
 ```bash
-cd frontend && npm ci   # 首次
-cd frontend && npm run dev    # Vite :5173
+./run.sh test                       # 全部测试
+cd build && ctest --output-on-failure   # 等价方式
 ```
 
----
+### 网关契约测试（98 例）
 
-## 快速开始
-
-### 环境要求
-
-| 要求 | 版本 | 说明 |
-| ------ | ------ | ------ |
-| 操作系统 | Linux (Ubuntu 20.04+) | C++ 编译运行 |
-| CMake | 3.20+ | 构建系统 |
-| GCC | 10+（C++20） | 编译器 |
-| gRPC | 1.51.1+ | RPC 框架 |
-| Redis | 6.0+ | 缓存/存储 |
-| Node.js | 18+ | 前端 + gRPC Proxy |
-
-### 1. 安装依赖
+位于 `gateway/proxy/test/`，覆盖平台契约、gRPC→HTTP 错误映射运行时契约、proto 与前端类型定义的字段级防漂移契约、前端静态守卫：
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
-    cmake build-essential pkg-config \
-    libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-    libcurl4-openssl-dev libjsoncpp-dev uuid-dev \
-    libgtest-dev libhiredis-dev redis-server \
-    nlohmann-json3-dev
+cd gateway/proxy && npm test
 ```
 
-### 2. 配置 API Key
+### 发布 E2E（真实进程 + 真实数据库）
 
-项目根目录 `.env` 文件：
+`tests/e2e/e2e_pr_g_release.py` 启动编译产物 rpc_server 进程，连接真实 Docker PostgreSQL/Redis 与真实 HTTP A2A Agent，6 个场景共 25 个断言全部通过 psql 直查 PostgreSQL 验证，不做任何 mock：
+
+```bash
+# WSL 仓库根目录（前置：./run.sh build、compose 的 postgres/redis 已发布宿主端口、grpcurl、psql）
+python3 tests/e2e/e2e_pr_g_release.py
+```
+
+覆盖场景：注册登录 → QueryStream 恰好一次 complete → 查询日志/追踪/消息/台账归属调用者；客户端中止 → cancelled 落库；预算拒绝 → RESOURCE_EXHAUSTED + rejected；跨 owner 访问 trace/反馈/导出/查询状态全部拒绝；反馈驱动路由质量变化；分享 TTL 过期与撤销拒绝。前置条件缺失时明确 SKIP。
+
+### 前端类型检查与构建
+
+```bash
+cd frontend && npm run typecheck
+cd frontend && npm run build
+```
+
+## 环境变量
+
+复制 `.env.example` 为 `.env` 并填入实际值，`run.sh` 与服务启动时自动加载。关键项：
 
 | 变量 | 用途 | 默认值 |
-| ------ | ------ | -------- |
-| `LLM_API_KEY` | LLM API 密钥（必填） | — |
-| `LLM_MODEL` | 模型名称 | `deepseek-v4-pro` |
-| `LLM_API_URL` | API 端点 | `https://api.deepseek.com` |
+| --- | --- | --- |
+| `LLM_API_KEY` | LLM API 密钥（多 Agent 编排、意图路由、DAG 规划依赖，未设置时相关能力优雅降级） | 必填 |
+| `LLM_MODEL` | 模型名称 | `deepseek-v4-flash` |
+| `LLM_API_URL` | LLM completions 端点（OpenAI 兼容） | `https://api.deepseek.com/v1/chat/completions` |
+| `EMBEDDING_API_URL` / `EMBEDDING_MODEL` | 向量化端点与模型 | DeepSeek |
+| `NEXUSAI_POSTGRES_HOST` / `PORT` / `DATABASE` / `USER` / `PASSWORD` | PostgreSQL 连接（代码仅读取这组变量名，Compose 将其映射到服务 DNS） | `127.0.0.1:5432/nexusai` |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose postgres 容器初始化参数 | `nexusai` / `nexusai` / `nexusai-dev-password`（仅本地） |
+| `REDIS_HOST` / `REDIS_PORT` | Redis 地址 | `127.0.0.1:6379` |
+| `NEXUSAI_ADMIN_USERNAME` | 匹配该用户名的账号注册时获得 ADMIN 角色；留空则无人可执行 Agent 管理 RPC | 空 |
+| `NEXUSAI_BUDGET_GLOBAL_TOKENS` | 全局 Token 预算，0 表示不限制 | `0` |
+| `NEXUSAI_BUDGET_USER_DAILY_TOKENS` | 用户日 Token 预算 | `200000` |
+| `NEXUSAI_BUDGET_USER_MONTHLY_TOKENS` | 用户月 Token 预算 | `4000000` |
+| `NEXUSAI_BUDGET_SESSION_TOKENS` | 会话 Token 预算 | `100000` |
+| `RPC_SERVER_PORT` / `PROXY_PORT` / `GRPC_TARGET` | 服务端口与代理目标 | `50051` / `8081` / `localhost:50051` |
 
-### 3. 编译
-
-```bash
-./run.sh build
-```
-
-### 4. 运行测试
-
-```bash
-./run.sh test        # 运行全部 37 套测试
-cd build && ctest --output-on-failure   # 或单独运行
-```
-
-### 5. 启动服务
-
-```bash
-# 一键启动全部后端（Redis + Agent + Proxy + Orchestrator + gRPC Server）
-./run.sh start-all
-
-# 启动 Node.js gRPC Proxy（Windows PowerShell，新窗口）
-$env:GRPC_TARGET="localhost:50051"
-node gateway/proxy/server.mjs
-
-# 启动前端（Windows PowerShell，新窗口）
-cd frontend && npm run dev
-
-# 注册 Agent（WSL 中）
-./scripts/register_agents.sh
-```
-
-访问 **http://localhost:5173** 即可使用。
-
-### 6. 停止
-
-```bash
-./run.sh stop
-```
-
-### 服务端口
-
-| 端口 | 服务 | 协议 |
-| ------ | ------ | ------ |
-| 50051 | gRPC Server | gRPC/HTTP2 |
-| 5000 | Orchestrator | HTTP/A2A |
-| 5100 | Agent Endpoint | HTTP/A2A |
-| 8080 | Nginx browser entrypoint | HTTP |
-| 8081 | Node.js gRPC Proxy | HTTP |
-| 6379 | Redis | TCP |
-| 5173 | Vite Dev Server | HTTP |
-
----
+预算按估算 Token 数预扣（64 + 问题字符数 ÷ 4），超限的查询返回 RESOURCE_EXHAUSTED 并在 `query_logs` 落库 status=rejected。
 
 ## Agent 接入
 
-要将外部 Agent 接入框架，参考 [agent-integration-guide.md](agent-integration-guide.md)。核心步骤：
+将外部 Agent 接入框架的核心步骤（详见 [agent-integration-guide.md](agent-integration-guide.md)）：
 
-1. **实现 A2A AgentCard** — 声明 Agent 的 skill、端点、版本等元数据
-2. **实现 A2A 接口** — 支持 `message/send`（同步）或 `message/stream`（SSE 流式）
-3. **启动并注册** — 运行 Agent 服务后通过 `scripts/register_agents.sh` 注册到 gRPC Server
+1. **实现 A2A AgentCard**：声明 Agent 的技能、端点、版本等元数据。
+2. **实现 A2A 接口**：支持 `message/send`（同步）或 `message/stream`（SSE 流式）。
+3. **启动并注册**：运行 Agent 服务后，由具备 ADMIN 角色的用户通过 `scripts/register_agents.sh` 注册到 gRPC Server。
 
-示例 Agent 见 [examples/](examples/) 目录。
+Python 示例 Agent 见 [examples/](examples/) 目录（echo / math / translator / orchestrator）。
 
----
+## 能力边界说明
+
+为保证文档与实现一致，以下边界如实说明：
+
+- `RealTimeCommunication`（双向流）返回 UNIMPLEMENTED，Agent 间消息请使用 SendMessage / ReceiveMessage / BroadcastMessage / ListenMessages。
+- `GetQueryStatus` 直接读取 PostgreSQL 中的持久化状态（按 owner 隔离），不存在内存任务缓存。
+- etcd 注册中心不在本地支持边界内，仅当显式配置 `RPC_REGISTRY_ADDRESS=etcd://` 时可达。
+- MCP/RAG 为可选模块，默认关闭，需 `-DENABLE_MCP=ON` 构建。
+- Cron 定时调度与 Canary 灰度已按本地目标边界移除。
+- 用户画像摘要具备真实的 Redis + LLM 处理逻辑，但画像目前仅写入 Redis，未持久化到 PostgreSQL。
 
 ## 许可证
 
 MIT License
-
-### PostgreSQL migrations (PR2.1)
-
-The compiled `db_migrate` binary applies the canonical `db/migrations/VNNN__name.sql`
-set in order and records checksums in `schema_migrations`. The RPC server runs
-the same migration logic itself at startup (Compose provides
-`NEXUSAI_MIGRATIONS_DIR`); there is no separate `migrate` Compose service.
-The legacy `sql/` files remain reference inputs and are never executed.
-
-On WSL2, keep the checkout on the Linux filesystem (not `/mnt/c`) and run
-`./scripts/bootstrap-wsl.sh` before configuring CMake. Ubuntu 26.04 receives
-the verified user-prefix libpqxx 8.0.1 workaround described above; Ubuntu
-24.04 continues to use its system `libpqxx-dev`. The `.env.example` password
-is local-only.
-
-### Release E2E (PR-G)
-
-`tests/e2e/e2e_pr_g_release.py` is the real-process release E2E: it starts the
-built `rpc_server` binary against the real Docker PostgreSQL/Redis plus a
-minimal real HTTP A2A agent, and verifies every assertion by querying
-PostgreSQL directly (`docker exec ... psql` or a local psql — never mocked).
-Missing prerequisites produce an explicit SKIP, not a fake green.
-
-```bash
-# WSL, from the repo root (requires: ./run.sh build, compose postgres/redis up,
-# grpcurl on PATH or GRPCURL_PATH, docker exec psql or local psql)
-python3 tests/e2e/e2e_pr_g_release.py
-```
-
-Coverage: register/login → QueryStream exactly-once complete → PG facts
-(query log/trace/messages/ledger owned by the caller); client abort →
-cancelled persisted; budget rejection → RESOURCE_EXHAUSTED + rejected;
-A/B owner isolation (trace/feedback/export/query status); feedback →
-agent_route_quality movement; share TTL/revoke refusal.
-
-### Honest capability boundaries (PR-G)
-
-- `RealTimeCommunication` (bidi streaming) returns `UNIMPLEMENTED`; use
-  SendMessage/ReceiveMessage/BroadcastMessage/ListenMessages.
-- `GetQueryStatus` reads durable PostgreSQL state (owner-scoped), no in-memory
-  task cache.
-- etcd registry and MCP are out of the supported local boundary (etcd only
-  reachable via explicit `RPC_REGISTRY_ADDRESS=etcd://`; MCP needs
-  `-DENABLE_MCP=ON`).
-- Cron/Canary/灰度 removed from scheduling, UI and docs per the local target.

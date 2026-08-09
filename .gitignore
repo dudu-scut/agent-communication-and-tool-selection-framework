@@ -44,3 +44,6 @@ pid.txt
 
 # Secrets
 .env
+
+# 面试材料不入库
+docs/interview/

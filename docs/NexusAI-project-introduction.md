@@ -6,7 +6,7 @@
 
 > 市面上所有 AI Agent 框架都在做同一件事——让 LLM 决定调用哪个函数。但这有三个致命问题：**每次路由都要调一次 LLM**（600ms+ 延迟，$15/天的 API 费用），**Agent 之间只能在同一 Python 进程内通信**（无法跨语言、无法独立部署、无法跨组织协作），**所有工具一股脑塞给 LLM**（上下文溢出、模型幻觉）。
 >
-> 我花 48 次迭代从零构建了 NexusAI——一个真正在网络协议层面让 Agent 互相通信的 C++20 分布式平台。核心创新是四层渐进式路由（Embedding 向量匹配覆盖 80% 查询，P50 延迟从 600ms 降到 100ms），A2A 标准化网络协议（Agent 可跨语言独立部署，类似 SMTP 让不同邮件服务商互通），RAG 向量检索做工具智能选择（100+ 工具压缩为 Top-5），DAG 拓扑并行编排（多 Agent 协作 12s→4s）。全链路自研——从 Protobuf 协议定义到 Vue 3 前端 UI，从三态熔断器到三层记忆系统，从 Token 成本追踪到灰度部署，21 项优化、17 套测试全绿。
+> 我花 48 次迭代从零构建了 NexusAI——一个真正在网络协议层面让 Agent 互相通信的 C++20 分布式平台。核心创新是四层渐进式路由（Embedding 向量匹配覆盖 80% 查询，P50 延迟从 600ms 降到 100ms），A2A 标准化网络协议（Agent 可跨语言独立部署，类似 SMTP 让不同邮件服务商互通），RAG 向量检索做工具智能选择（100+ 工具压缩为 Top-5），DAG 拓扑并行编排（多 Agent 协作 12s→4s）。全链路自研——从 Protobuf 协议定义到 Vue 3 前端 UI，从三态熔断器到三层记忆系统，从 Token 成本追踪到以 PostgreSQL 为事实源的 Durable Query Pipeline，21 项优化、37 套 CTest 测试全绿。
 >
 > **一句话：** 别人在用 LangChain 搭积木，我在给积木设计新的连接标准。
 
@@ -14,11 +14,11 @@
 
 | 你关心的 | 我的答案 | 量化证据 |
 |----------|---------|---------|
-| 技术深度？ | C++20 自研四层路由 + A2A 协议库 + DAG 编排引擎 | 10 个 CMake 模块，35 个 RPC，全链路自研 |
+| 技术深度？ | C++20 自研四层路由 + A2A 协议库 + DAG 编排引擎 | 10 个 CMake 模块，41 个 RPC，全链路自研 |
 | 系统设计？ | 类 Spring Cloud 的 Agent 基础设施（注册/发现/路由/熔断/负载均衡） | 6 种 LB 策略，三态熔断器，8 个后台调度任务 |
 | AI 工程化？ | RAG 工具检索 + 语义缓存 + 上下文压缩 + 三层记忆 | 路由成本 80%↓，工具上下文 90%↓，长对话 Token 87%↓ |
-| 产品质量？ | 17 套测试 + 32 个 E2E 场景 + 8 批次增量迭代 | 21 项优化全覆盖，前后端全链路打通 |
-| 前端能力？ | Vue 3 + TS + Vite SPA，10 个视图，SSE 流式渲染 | 独立完成，从 Proto 类型到 UI 组件 |
+| 产品质量？ | 37 套 CTest + 98 例网关契约 + 真实 PG E2E 25 断言 | 21 项优化全覆盖，持久化链路全真实 |
+| 前端能力？ | Vue 3 + TS + Vite SPA，10 个视图，SSE 流式渲染 | 独立完成，从 Proto 类型到 UI 组件，全部视图接入真实 RPC |
 | 工程素养？ | 轻量化设计（自建替代 K8s/Prometheus/Jaeger），48 次增量提交 | 零重型外部依赖，编译即运行 |
 
 ---
@@ -53,12 +53,13 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 | 代码语言 | C++20（后端核心）+ TypeScript（前端）+ Python（辅助服务） |
 | 通信协议 | gRPC/Protobuf (内部) + A2A JSON-RPC (Agent 间) |
 | 编译模块 | 10 个 C++ CMake 模块 + Vue 3 前端 + Python 辅助服务 |
-| Proto 文件 | 9 个功能域拆分（含 9 个 gRPC Service，35 个 RPC 方法） |
-| 测试套件 | 17 套（GTest 集成 + RapidCheck 属性测试） |
-| E2E 场景 | 32 个自动化验证场景（覆盖全部 8 批次 21 项优化） |
+| Proto 文件 | 9 个功能域拆分（含 9 个 gRPC Service，41 个 RPC 方法） |
+| 测试套件 | 37 套 CTest（GTest 集成 + RapidCheck 属性测试 + 真实 PG 契约测试）+ 98 例网关契约测试 |
+| E2E 场景 | verify/ 8 批次自动化场景 + Release E2E 25 个真实断言（tests/e2e/e2e_pr_g_release.py） |
 | 前端页面 | 10 个 Vue 3 视图（ChatView, AgentTopology, Dashboard, Monitor, AdminView, AgentSandbox, CompareView, ShareView, TemplateMarket, LoginView） |
-| 迭代历史 | 48+ 次增量迭代，从基础 RPC 框架演进到全功能平台 |
-| 服务端口 | 5 个运行时服务（gRPC :50051, Orchestrator :5000, Mock Agent :5100, Proxy :8081, Redis :6379） |
+| 迭代历史 | 48+ 次增量迭代 + 7-PR PostgreSQL 持久化大优化，从基础 RPC 框架演进到全功能平台 |
+| 数据库迁移 | db/migrations V001–V013（只追加），rpc-server 启动时自动执行，失败即中止启动 |
+| 服务端口 | Docker Compose 五服务（postgres/redis/rpc-server/proxy/frontend，前端生产端口 :8080）；本地开发 gRPC :50051、Orchestrator :5000、Mock Agent :5100、Proxy :8081 |
 
 ### 1.3 技术栈全景
 
@@ -69,7 +70,7 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 │           AdminView | AgentSandbox | CompareView                 │
 │           ShareView | TemplateMarket | LoginView                 │
 ├─────────────────────────────────────────────────────────────────────┤
-│  网关层    Node.js gRPC Proxy (主力，gRPC→SSE 转换)                  │
+│  网关层    Node.js gRPC Proxy (主力，gRPC→SSE 转换，六码 HTTP 错误映射) │
 │           Nginx + Envoy (Docker 部署可选，gRPC-Web 协议转换)        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  服务层    C++ gRPC Server :50051                                    │
@@ -96,8 +97,10 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 │           BackgroundScheduler (统一后台任务调度)                      │
 │           EnvLoader | TraceContext | TokenCostTracker                │
 ├─────────────────────────────────────────────────────────────────────┤
-│  存储层    Redis (认证/缓存/指标/记忆/会话)                           │
-│           PostgreSQL (schema 已定义，sql/ 9个迁移脚本，当前运行时全用 Redis) │
+│  存储层    PostgreSQL 16 — 持久事实源：查询/消息/trace/成本/预算/    │
+│           注册表/反馈/分享/工作流；db/migrations V001–V013 只追加，  │
+│           rpc-server 启动时自动迁移（失败即中止）                    │
+│           Redis 7 — 仅缓存/心跳存活/限流/短锁，可随时清空不丢数据    │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Agent 层  任意语言 HTTP Server 实现 A2A JSON-RPC 接口即可接入       │
 │           Mock Agent (Python, :5100) | 未来: Math/Code/... Agent     │
@@ -184,7 +187,7 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 **技术落地：**
 - **SemanticCacheIndex**：复用 VectorIndex 基础设施。查询向量化 → 与缓存中历史查询做余弦相似度 → ≥ 0.92 直接返回缓存响应（含 agent_id + response + hit_count）。`cacheable` 字段让 Agent 声明"我的响应是否可被缓存"。
 - **ContextCompressor**：每轮构建 Agent 请求前估算 prompt token 数量。当对话历史占比 > 70% 模型窗口时，调用 LLM 将历史压缩为 2-3 句话的"对话脉络摘要"，替换原始历史。后续轮次在摘要基础上追加新消息。
-- **Token 预算四级限流**：全局 → 用户 → 会话 → 请求四个层级，用 Redis Lua 脚本做原子 check-and-decrement。超额后降级策略：减少历史轮数 → 压缩上下文 → 拒绝请求。
+- **Token 预算（PostgreSQL 持久化）**：全局 → 用户日 → 用户月 → 会话四个配额层级，在 PG 事务中原子 reserve（advisory lock + counter upsert），预留以 request_id 幂等；超额时先把 query_logs 落 `rejected` 终态再返回 RESOURCE_EXHAUSTED（网关映射 429）。配额经 `NEXUSAI_BUDGET_*` 环境变量配置，详见 [Durable Query Pipeline 指南](guides/durable-query-pipeline-guide.md)。
 
 **量化结果：** 语义缓存命中率约 15-20%（取决于查询模式），每次命中节省 100% Token。上下文压缩使第 20 轮 prompt 从 ~15000 tokens 降至 ~2000 tokens（**87%↓**），长对话延迟不再线性增长。
 
@@ -213,10 +216,13 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 **我的考量：** 记忆系统需要同时解决三个问题：(1) 短期记忆——当前对话的上下文；(2) 长期记忆——跨会话的用户画像；(3) 跨 Agent 传递——切换 Agent 时不让用户重复。而且 Agent 不能直接写长期记忆——安全性（恶意 Agent 注入虚假记忆）和一致性（多 Agent 并发写）都无法保证。所以我的设计是"Agent 建议 + 平台审核写入"。
 
 **技术落地：**
-- **Tier 1 对话历史**：Redis List 按 `(context_id, agent_id)` 分片存储，LTRIM 限制 50 条/片。同一会话中 Agent A 和 Agent B 的历史物理隔离，相互不可见。
-- **Tier 2 长期记忆**：PG `user_profiles` 表（JSONB 存 identity + preferences + context_snapshot） + Redis 缓存。Agent 通过 `AIQueryResponse.memory_hints` 键值对上报“建议记住的内容”——平台是唯一写入方。ProfileSummarizer 每 5 分钟从对话中异步提取用户偏好（LLM 驱动，模板化输出：“用户是{role}，偏好{style}风格。{context}”）。> **注意：** LLM 提取逻辑当前为框架占位（placeholder），`summarize()` 基于字符串模板格式化，`processPending()` 为 no-op，需要配置 `LLM_API_KEY` 后启用完整 LLM 提取。
-- **Tier 3 跨 Agent 摘要**：`handleAgentSwitch()` 检测到 Agent 变化时，将前一个 Agent 的最近 N 轮对话送 LLM 生成 < 200 token 摘要。存入 Redis `nexusai:summary:{context_id}`。新 Agent 的 SystemContext 包含此摘要。
-- **SystemContext 自动注入**：每个 AI 查询前，`buildSystemContext()` 将 Tier 1+2+3 组装为 Protobuf `SystemContext` 注入请求——Agent 无需关心记忆管理。
+- **Tier 1 对话历史**：对话历史按 Agent 粒度隔离并支持尾部裁剪——同一会话中每个 Agent 只看到自己的对话分片，相互不可见，防止多 Agent 会话中的上下文污染；过长历史从尾部裁剪，防止无限增长。
+- **Tier 2 用户长期记忆**：用户长期记忆基于 Hash 存储偏好特征并自动更新——Agent 通过 `AIQueryResponse.memory_hints` 键值对上报“建议记住的内容”，平台是唯一写入方（Agent 不可直接写入，保证安全性与一致性）。
+- **Tier 3 跨 Agent 摘要**：跨 Agent 摘要由 LLM 生成保障切换连贯性——`handleAgentSwitch()` 检测到 Agent 变化时，将前一个 Agent 的最近几轮对话送 LLM 生成短摘要，新 Agent 的 SystemContext 包含此摘要，只继承脉络而非细节。
+- **SystemContext 自动注入**：每个 AI 查询前，`buildSystemContext()` 将三层记忆组装为 Protobuf `SystemContext` 注入请求——Agent 无需关心记忆管理。Durable Query Pipeline 第 5 步直接从 PostgreSQL（会话消息 + memory summary）组装该上下文，Redis 仅作加速缓存。
+- **沙箱隔离**：沙箱/对比执行（sandbox 标记的请求）不触碰长期记忆写入——memory_hints 与跨 Agent 摘要路径被 sandbox 守卫跳过，试用不会污染真实用户画像。
+
+> **已知局限**：ProfileSummarizer 提取的用户画像当前只写回 Redis 缓存，尚未持久化到 PostgreSQL（已如实记录于代码注释，列入后续计划）。
 
 **量化结果：** 用户偏好设置一次后，所有 Agent 可见。跨 Agent 对话切换时，上下文保留率从 0%（无记忆）提升至约 70%（摘要保留脉络但丢失细节）。
 
@@ -233,7 +239,7 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 - **路由加权**：`selectWeightedByQuality()` 在相同 skill 的候选 Agent 中按质量系数加权随机选择——高好评 Agent 被选中概率更大但不绝对（保留探索空间）
 - **CompareView**：前端三列并排视图，对同一查询展示不同 Agent 响应 + 底部对比摘要（延迟/成本/长度）
 
-> **开发状态**：前端 CompareView 页面已完成，后端 `GetAgentCompare` RPC 开发中。前端当前展示“功能开发中”。
+**实现现状**：`CompareAgents` RPC 已真实落地——并行 worker 对多个候选 Agent 执行同一查询（context_id 前缀 `compare-`，全部经同一条 durable pipeline，计入预算），结果与指标写入 `compare_runs` 表；前端 CompareView 展示真实对比结果。详见[工作流控制指南](guides/workflow-control-guide.md)。
 
 **量化结果：** 反馈闭环使低质量 Agent 的流量自然下降、高质量 Agent 获得更多请求。AgentSelector 面板让用户从"盲选"变为"看数据选"。CompareView 让 Agent 优劣一目了然。
 
@@ -259,39 +265,29 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 
 **技术落地（6 项子优化）：**
 
-**U1 — 自主权梯度（Batch 3）：**
+**U1 — 自主权梯度（Batch 3 → 已持久化落地）：**
 - 三级自主权：L1 建议模式（Agent 只给建议不执行工具）、L2 确认模式（高风险操作暂停确认）、L3 自动模式（完全自主）
-- 存储在 PG `autonomy_settings` 表 + Redis 缓存，通过 HTTP header `x-autonomy-level` 注入到 Agent 请求
-- Agent 端根据 header 决定行为——L1 时即便 LLM 返回了 tool_call 也不执行
-
-> **开发状态**：后端 `UserExperienceService.InterventionResponse` 为基础框架，业务逻辑开发中。自主权级别存储和 header 注入已实现，完整的干预流程（暂停/确认/中止）待集成。
+- 设置持久化在 PG `autonomy_settings` 表（owner-scoped），`SetAutonomyLevel` RPC 可直接读写；干预决策（InterventionResponse）与撤销（UndoAction）均为 owner-scoped 单条 SQL CAS，详见[工作流控制指南](guides/workflow-control-guide.md)。
 
 **P2 — 健康度仪表盘（Batch 5）：**
 - 前端 AdminView 状态灯（绿/黄/红）基于 agent_calls 表的最近成功率
 - 数据来源：agent_calls 表聚合 + 内存 circular buffer，不引入 Prometheus
 - BackgroundScheduler 每 30s 触发 `health_evaluation` 任务 → `ServiceRegistry::evaluateAllHealth()`
 
-**P2 — Token 预算限流（Batch 5）：**
-- 四级预算：全局日预算 → 用户日预算 → 会话预算 → 单次请求上限
-- Redis Lua 脚本做原子 check-and-decrement（保证并发安全）
-- 超额降级策略链：减少历史轮数 → 压缩上下文 → 切换到更便宜的 Agent → 拒绝请求
+**P2 — Token 预算限流（Batch 5 → 已迁移到 PostgreSQL）：**
+- 四级配额：全局 → 用户日 → 用户月 → 会话（环境变量 `NEXUSAI_BUDGET_GLOBAL_TOKENS`（0=无限）/`_USER_DAILY_TOKENS`（200000）/`_USER_MONTHLY_TOKENS`（4000000）/`_SESSION_TOKENS`（100000））
+- PG 事务内原子 reserve（advisory lock 覆盖首行缺失场景 + counter upsert），预留以 request_id 幂等；超额先落 `rejected` 再返回 RESOURCE_EXHAUSTED（HTTP 429）
+- 沙箱/对比流量不豁免，与主链路共用同一预算（预算以 PG 为事实源）
 
 **P2 — 查询重放（Batch 5）：**
 - `ReplayQuery(trace_id, mode)` RPC：exact 模式完全相同复现；route 模式重新走路由管线（可能路由到不同 Agent）
 - PG `query_log` 表 JSONB 存储完整请求上下文
 - 前端 AdminView 输入 trace_id 查看完整调用链时间线
 
-**P2 — 定时任务（Batch 6）：**
-- CronScheduler 每 60s 扫描 PG `scheduled_tasks` 表，到期任务构建虚拟 `AIQueryRequest` 复用现有查询管线
-- 前端定时任务管理页：增删改查 + 手动触发 + 执行历史
-- Webhook 触发：外部系统通过 gRPC `TriggerWebhook` 方法触发任务
+**P2 — 定时任务 / 灰度部署（已移除，如实收敛）：**
+- CronScheduler 与 Canary 灰度部署在后续 PostgreSQL 大优化中已从服务端移除（对应前端 tabs 同步删除），避免维护未经充分验证的能力表面；原 `scheduled_tasks` / `canary_deployments` 迁移脚本保留于 V007/V008（只追加不删除）。
 
-**P2 — 灰度部署（Batch 6）：**
-- `deployment_stage` 字段：STABLE / CANARY / DEPRECATED
-- `std::uniform_int_distribution` 在路由层做加权随机：STABLE 90% / CANARY 10%
-- Canary 评估任务每 600s 对比两版本指标（成功率/延迟/好评率），决定推进或回滚。> **注意：** 评估逻辑当前为框架占位，完整实现需要对接 `canary_deployments` 数据库表。
-
-**量化结果：** 运维六件套使平台从"可以跑"升级为"可以上线"。健康仪表盘让运维从"用户报故障才知道"变为"主动发现"。Token 预算防止单用户失控消费。灰度发布让新版 Agent 在 10% 流量上验证后再全量。
+**量化结果：** 运维套件使平台从"可以跑"升级为"可以上线"。健康仪表盘让运维从"用户报故障才知道"变为"主动发现"。Token 预算以 PostgreSQL 为事实源，防止单用户失控消费；能力边界如实收敛（移除 Cron/Canary），不保留占位假能力。
 
 #### 痛点 11：没有试用机制 → 新用户门槛高；没有协作机制 → 价值无法传播
 
@@ -301,21 +297,18 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 
 **技术落地：**
 
-**U5 — Agent 沙箱（Batch 7）：**
-- `SandboxQuery` RPC：context_id 自动前缀 `sandbox_{user_id}_{timestamp}`，对话历史 Redis key TTL = 1h
-- Token 消耗写入 `token_usage` 表时标记 `component = "sandbox"`，BudgetMiddleware 跳过沙箱消耗
-- 前端 AgentSandbox 页面：Agent 卡片墙 + 技能标签 + 指标摘要 + “快速试用”按钮
+**U5 — Agent 沙箱：**
+- `SandboxQuery` RPC：沙箱执行经同一条 durable pipeline（context_id 前缀 `sandbox-`），预算/owner/trace/成本/finalize 全由管线统一接管，沙箱专属记账写入 `sandbox_runs` 表
+- 沙箱流量计入预算（无豁免分支），且隔离长期记忆写入（memory_hints / 跨 Agent 摘要路径被 sandbox 守卫跳过）
+- 干预机制与沙箱联动：pending 干预的 PROCEED/MODIFY 决策会触发延迟的沙箱执行，决策具有真实因果效果
+- 前端 AgentSandbox 页面：Agent 卡片墙 + 技能标签 + 指标摘要 + 快速试用，含 PROCEED/MODIFY/SKIP 干预决策按钮
 
-> **开发状态**：前端 AgentSandbox 页面已完成，后端 `SandboxQuery` RPC 基础框架已搭建，业务逻辑开发中。前端当前展示“功能开发中”。
-
-**U6 — 会话共享 + 模板市场（Batch 7）：**
-- `ShareSession(context_id, mode, expiry_days)` → 生成 share_id UUID → 返回分享 URL。mode: "view"（只读）或 "interact"（可交互）。分享链接在无痕窗口可访问。
-- `ObserveSession(trace_id)` → SSE 流式推送会话实时事件，支持多人同时围观。实现用内存 `vector<gRPC Writer*>` 广播（围观人数 < 10 的假设下够用）。
-- `SaveTemplate(name, description, dag_json)` → PG `session_templates` 表。`UseTemplate(template_id)` → 创建新会话并注入 DAG 结构。
-- 前端 TemplateMarket 页面：模板卡片展示（名称、描述、DAG 步骤数、使用次数）+ “使用模板”按钮创建新会话
-- 前端 ShareView：只读会话查看（共享链接访问）
-
-> **开发状态**：前端 TemplateMarket 和 ShareView 页面已完成，后端 `SharingService` 基础框架已搭建（ShareSession 返回占位 UUID），业务逻辑开发中。前端当前展示“功能开发中”。
+**U6 — 会话共享 + 模板市场：**
+- `ShareSession(context_id, expiry_days)` → 96 字符高熵 bearer token（每个字节直接取自 `std::random_device` 操作系统熵源），PG 仅存 SHA-256 摘要，raw token 仅创建时返回一次；`share_url` 为相对路径 `/share/<token>`（不写死主机）；TTL（`expiry_days`，0=永不过期）+ owner 侧 `RevokeShare` 撤销
+- `ReadSharedConversation` 公开只读 RPC（AuthInterceptor 白名单），固定脱敏（仅 title/messages/shared_at）；过期/撤销 → PERMISSION_DENIED，不存在 → NOT_FOUND
+- `SaveTemplate`（服务端 JSON 校验 + 64 KiB 上限）/ `ListTemplates` / `GetTemplate` / `UseTemplate`（在当前 owner 下创建真实会话与初始消息）
+- Replay/Export 异常时客户端消息固定脱敏，不回显 `error.what()`（防止 schema 泄露）
+- 前端 ShareView（按路由 token 调真实 RPC，四态展示）、TemplateMarket、AdminView Replay tab 全部接入真实后端
 
 **量化结果：** 沙箱使新用户试用零风险。模板机制使 Agent 工作流可沉淀、可复用、可传播——每多一个模板，平台对所有用户的价值就增加一分。这是 Agent Marketplace 的早期雏形。
 
@@ -344,18 +337,18 @@ NexusAI 是一个**企业级多 Agent 通信与智能工具选择框架**——�
 | 语义缓存 | ❌ | ❌ | **✅ 余弦相似度 0.92** |
 | 上下文压缩 | ❌ | ❌ | **✅ 70% 窗口触发** |
 | 记忆系统 | 单层 | ❌ | **✅ 三层隔离** |
-| Agent 对比 | ❌ | ❌ | **✅ AgentSelector + CompareView**（前端已完成，后端开发中） |
+| Agent 对比 | ❌ | ❌ | **✅ CompareAgents 并行真实执行** |
 | 活动流 | ❌ | ❌ | **✅ ActivityPanel 实时** |
-| 用户干预 | ❌ | ❌ | **✅ 三级自主权 + 暂停确认**（基础框架已搭建，完整流程开发中） |
+| 用户干预 | ❌ | ❌ | **✅ 单条 SQL CAS 决策 + Undo 原子回滚** |
 | DAG 编排 | 有 (LangGraph) | 有 | **✅ 拓扑并行 + 用户可调** |
 | 反馈闭环 | ❌ | ❌ | **✅ 评分 → 聚合 → 路由加权** |
 | 健康仪表盘 | ❌ | ❌ | **✅ AdminView 状态灯** |
-| Token 预算 | ❌ | ❌ | **✅ 四级限流** |
-| 查询重放 | ❌ | ❌ | **✅ exact + route 双模式** |
-| 灰度发布 | ❌ | ❌ | **✅ STABLE/CANARY/DEPRECATED** |
-| 沙箱试用 | ❌ | ❌ | **✅ context_id 隔离 + TTL**（前端已完成，后端开发中） |
-| 会话共享 | ❌ | ❌ | **✅ 只读链接 + 实时围观**（前端已完成，后端开发中） |
-| 模板市场 | ❌ | ❌ | **✅ DAG 模板 + 一键复用**（前端已完成，后端开发中） |
+| Token 预算 | ❌ | ❌ | **✅ PG 四级配额 + 拒绝落库** |
+| 查询重放 | ❌ | ❌ | **✅ exact + route 双模式（owner-scoped）** |
+| 灰度发布 | ❌ | ❌ | ⚠️ 已如实移除（能力边界收敛） |
+| 沙箱试用 | ❌ | ❌ | **✅ durable pipeline + 长期记忆隔离** |
+| 会话共享 | ❌ | ❌ | **✅ 熵源 token + 哈希存储 + TTL/撤销** |
+| 模板市场 | ❌ | ❌ | **✅ UseTemplate 创建真实会话** |
 | 版本协商 | ❌ | ❌ | **✅ v1.0/v1.1 + dual-parse fallback** |
 | 全链路追踪 | ❌ | ❌ | **✅ TraceContext + Span + Cost** |
 | 前端 UI | ❌ | ❌ | **✅ 10 视图 Vue 3 SPA** |
@@ -382,30 +375,33 @@ orchestrator/   → AgentRouter (四层路由) + TaskPlanner (DAG 分解)
 mcp/            → MCPClient (STDIO+SSE) + RAG-MCP (Embedding+向量检索)
                   + SemanticCacheIndex (语义缓存)
 server/         → gRPC Server (9 个 Service 注册, Auth/Cost 拦截器)
-                    已实现: AIQueryService, AgentCommunicationService,
-                    AgentLifecycleService, OrchestrationService,
-                    ObservabilityService, UserExperienceService,
-                    SharingService, HealthService, UserService
+                    全部实现: AIQueryService (含 durable pipeline),
+                    AgentCommunicationService, AgentLifecycleService,
+                    OrchestrationService, ObservabilityService,
+                    UserExperienceService, SharingService,
+                    HealthService, UserService
 client/         → gRPC 客户端 (交互式终端, /stream /context /status)
 frontend/       → Vue 3 + TypeScript + Vite SPA (10 个视图)
 gateway/        → Node.js gRPC Proxy (主力) + Nginx + Envoy (Docker 可选)
+db/             → PostgreSQL 迁移与数据访问 (db/migrations V001–V013
+                  只追加; rpc-server 启动时自动迁移，失败即中止)
 ```
 
-### 3.1.1 gRPC Service 与 RPC 方法清单（35 个）
+### 3.1.1 gRPC Service 与 RPC 方法清单（41 个）
 
 | Service | RPC 方法 | 类型 |
 |---------|---------|------|
 | **AIQueryService** | Query, QueryStream, GetQueryStatus, GetAgentMetrics | Unary + Server Streaming |
 | **AgentCommunicationService** | SendMessage, ReceiveMessage, BroadcastMessage, GetAgents, FindAgents, RegisterAgent, UnregisterAgent, Heartbeat, ListenMessages, BatchSendMessages, RealTimeCommunication | Unary + Stream |
-| **AgentLifecycleService** | SubmitFeedback, GetAgentCompare, SetAutonomyLevel, UndoAction | Unary |
+| **AgentLifecycleService** | SubmitFeedback, GetAgentCompare, SetAutonomyLevel, UndoAction, CompareAgents | Unary |
 | **ObservabilityService** | GetTraceDetail, GetCostReport | Unary |
 | **OrchestrationService** | ExecutePlan, ReplayQuery, ExportConversation | Unary |
 | **UserExperienceService** | InterventionResponse, SandboxQuery | Unary |
-| SharingService | ShareSession, ObserveSession, SaveTemplate, UseTemplate | Unary + Server Streaming |
+| SharingService | ShareSession, ObserveSession, SaveTemplate, UseTemplate, ReadSharedConversation, ListShares, RevokeShare, ListTemplates, GetTemplate | Unary + Server Streaming |
 | **UserService** | Register, Login, ValidateToken | Unary |
 | HealthService | Check, Watch | Unary + Server Streaming |
 
-> **注**：SharingService、UserExperienceService 的 SandboxQuery、AgentLifecycleService 的 GetAgentCompare 当前为基础框架已搭建，业务逻辑开发中。后端返回占位响应，前端展示“功能开发中”。
+> **注**：以上 RPC 均已接入真实实现（`RealTimeCommunication` 返回 UNIMPLEMENTED 并说明替代方案，为如实的能力边界）。所有业务的 owner 身份一律取自认证上下文（AuthInterceptor），绝不采信请求体中的 user_id；`RegisterAgent`/`UnregisterAgent` 为 ADMIN-only（登录用户须匹配 `NEXUSAI_ADMIN_USERNAME`）。
 
 ### 3.2 三条数据流路径
 
@@ -444,12 +440,13 @@ Browser (Vite HMR :5173)
 | 端口 | 服务 | 协议 | 说明 |
 |------|------|------|------|
 | 50051 | RPC Server | gRPC/2 | C++ 核心服务，对外统一入口 |
+| 5432 | PostgreSQL 16 | TCP | 持久事实源（Compose 默认不发布宿主端口，本地测试可发布） |
 | 5000 | Orchestrator | HTTP/A2A | Python A2A 路由代理 |
 | 5100 | Mock Agent | HTTP/A2A | 开发/测试用模拟 Agent |
-| 8080 | Nginx | HTTP/1.1 | 浏览器入口 (Docker 部署可选) |
+| 8080 | 前端 (Docker nginx) | HTTP/1.1 | 浏览器入口（Docker 部署生产端口，`/health` 可探活） |
 | 8081 | Node.js Proxy / Envoy | HTTP/1.1 → gRPC/2 | gRPC→SSE 转换(主力) / gRPC-Web 转换(Docker) |
 | 8082 | Nginx | gRPC/2 | 后端 gRPC 直连入口 (Docker 部署可选) |
-| 6379 | Redis | TCP | 缓存/会话/指标/认证 |
+| 6379 | Redis 7 | TCP | 仅缓存/心跳存活/限流/短锁（可随时清空，不丢持久数据） |
 
 ---
 
@@ -804,17 +801,34 @@ ExecutionPlan:
 
 用户对 Agent 回答的点赞/点踩不仅记录在 UI 上，还通过 `AgentLifecycleService.SubmitFeedback` 写回后端，`FeedbackAggregator` 每小时重算质量系数，`AgentRouter` 在下一轮路由中使用 weighted random selection 偏向高好评 Agent。形成闭环。
 
-### 5.6 全链路可观测性
+### 5.6 全链路可观测性（PostgreSQL 为事实源）
 
 不依赖 Prometheus/Jaeger 等外部系统，内置：
 - **TraceContext**（thread_local）：零侵入的 tracing，任意调用栈深度获取 trace_id
-- **TokenCostTracker**：每个 LLM 调用的 Token 消耗记录到 PG `token_usage` 表
-- **TraceSpan**：分布式追踪 Span（router → planner → agent_call → executor → aggregator）
-- **GetTraceDetail RPC**：前端可查询任意 trace_id 的完整调用链时间线
-- **GetCostReport RPC**：多维度 Token 消耗与成本报表（按 user/agent/component 聚合）
-- **ObservabilityService** 已实现，提供 GetTraceDetail 和 GetCostReport 两个 RPC
+- **TokenCostTracker**：每个 LLM 调用的 Token 消耗记录到 PG `token_usage_ledger` 表（estimated 标记透传，不假装精确）
+- **TraceSpan**：分布式追踪 Span（router → planner → agent_call → executor → aggregator），持久化于 PG `traces` 表
+- **agent_invocations 事实表**：生产写者为 Query/QueryStream 管线（单 agent A2A 路径与 orchestrator 多 Agent 路径均按真实调用记录），小时聚合产出 Agent 指标
+- **GetTraceDetail / GetCostReport RPC**：直接读 PG（trace_payload 解析 spans；成本来自 token_usage_ledger 日聚合，estimated 与精确分桶分离），Redis 清空后仍可完整查询
+- **反馈聚合**：SubmitFeedback 校验闭合键空间（≤128 且仅 `[A-Za-z0-9._:-]`）与 trace 归属，owner-scoped 写入 `feedback` + 即时聚合 `agent_route_quality`（Beta(2,2) 平滑）
 
-### 5.7 轻量化设计哲学 — 零重型外部依赖
+### 5.7 Durable Query Pipeline — 六步持久化管线（本次大优化的核心）
+
+登录用户的每次 Query/QueryStream 都固定走六步，PostgreSQL 是持久事实源，Redis 仅缓存/心跳/限流/短锁：
+
+1. **auth owner**：owner 只取 `AuthInterceptor::currentUserId()`，为空即 UNAUTHENTICATED，不建任何库行；请求体中的 user_id 被无条件覆盖（防伪造）
+2. **ensureConversation**：首次创建/同 owner 幂等/跨 owner 拒绝（INSERT + subtransaction 捕获唯一冲突，无 upsert）
+3. **running 行**：`query_logs` + `traces` 落 `running` 状态，query_log id = request_id（与预算预留共用同一幂等键）
+4. **预算 reserve**：PG 事务内预留估算 token，拒绝时先落 `rejected` 终态再返回 RESOURCE_EXHAUSTED
+5. **SystemContext**：从 PG 会话消息 + memory summary 组装，Redis 仅加速
+6. **finalize CAS**：`compare_exchange_strong` 保护恰好一次终态持久化（消息/query log/trace/token ledger）
+
+确定性幂等主键：`msg-user-<request_id>` / `msg-assistant-<request_id>` / `usage-<request_id>` —— 同 request_id 重试永不重复写行；“拒绝后重试成功”也会被完整记录且恰好计费一次。流式终态由 AIQueryServiceImpl 唯一发射（原子标志），客户端断开 → stream.cancel() → 服务端落 `cancelled`。详见 [Durable Query Pipeline 指南](guides/durable-query-pipeline-guide.md)。
+
+### 5.8 单条 SQL CAS 的工作流控制
+
+Sandbox/Compare/Intervention/Undo/Autonomy 五件套全部 owner-scoped 且基于 PostgreSQL 单条 SQL CAS：干预决策 `UPDATE interventions ... WHERE state='pending'`（并发决策者以 affected_rows 定胜负，重复/越权映射真实 ALREADY_EXISTS/NOT_FOUND）；Undo 在单事务内先 CAS `undone_at` 再执行 inverse 补偿，失败整体回滚、动作不被消耗可重试。详见[工作流控制指南](guides/workflow-control-guide.md)。
+
+### 5.9 轻量化设计哲学 — 零重型外部依赖
 
 区别于企业级方案动辄引入 K8s + Istio + Prometheus + Jaeger + Temporal 等技术栈，本项目坚持**个人项目轻量化**原则：
 
@@ -829,7 +843,7 @@ ExecutionPlan:
 
 **设计收益：** 零新增外部服务依赖，编译即运行，单机可承载全功能。这体现了系统设计中的关键判断力——什么时候需要引入重量级基础设施，什么时候可以用几十行代码解决同样的问题。
 
-### 5.8 A2A 网络化 Agent 架构
+### 5.10 A2A 网络化 Agent 架构
 
 区别于 LangChain/AutoGen 的进程内函数调用，本项目 Agent 之间通过标准 HTTP/JSON-RPC 协议通信。这意味着：
 
@@ -890,7 +904,7 @@ ExecutionPlan:
 | 优化项 | 交付物 | 技术要点 |
 |--------|--------|---------|
 | P2 健康度仪表盘 | AdminView 状态灯 | agent_calls 聚合 + 内存 circular buffer |
-| P2 Token 预算 | BudgetMiddleware (四级限流) | 全局/用户/会话/请求; Redis Lua 原子 check-and-decrement |
+| P2 Token 预算 | PG Budget Reserve | 全局/用户日/用户月/会话；PG 事务 advisory lock + counter upsert；request_id 幂等（后续大优化中从 Redis Lua 迁入 PG） |
 | P2 查询重放 | ReplayQuery RPC | exact=完全相同 / route=重新路由（可能不同 Agent） |
 
 **量化结果：** 运维从"用户报故障才知道"→"主动发现"；Token 预算防止单用户失控消费；查询重放将排查时间从 20 分钟降至 5 秒。
@@ -899,20 +913,20 @@ ExecutionPlan:
 
 | 优化项 | 交付物 | 技术要点 |
 |--------|--------|---------|
-| P2 定时任务 | CronScheduler + PG scheduled_tasks 表 | 60s tick 扫描 → 构建虚拟 AIQueryRequest → 复用查询管线; 支持 Webhook 触发 |
-| P2 灰度发布 | Canary Deployment | weighted random: STABLE 90% / CANARY 10%; deployment_stage 字段 |
+| P2 定时任务 | CronScheduler（后续已移除） | 曾复用查询管线；能力边界收敛时从服务端删除 |
+| P2 灰度发布 | Canary Deployment（后续已移除） | 曾以 weighted random 分流；能力边界收敛时从服务端删除 |
 | P2 对话导出 | ExportConversation RPC | Markdown + HTML 格式; ~150 行纯字符串拼接 |
 
-**量化结果：** 灰度发布让新版 Agent 在 10% 流量上安全验证；定时任务复用现有管线零额外开销；对话导出使会话可存档/分享/审计。
+**量化结果：** 对话导出使会话可存档/分享/审计；定时任务与灰度发布在后续优化中如实移除，不保留占位能力。
 
 ### Batch 7 — 增长与留存
 
 | 优化项 | 交付物 | 技术要点 |
 |--------|--------|--------|
-| U5 沙箱试用 | AgentSandbox + SandboxQuery RPC | context_id 前缀 `sandbox_`; Redis TTL 1h; 预算豁免 |
-| U6 协作共享 | ShareSession + Templates | ShareView 只读会话; TemplateMarket 可复用工作流模板 |
+| U5 沙箱试用 | AgentSandbox + SandboxQuery RPC | context_id 前缀 `sandbox-`；经 durable pipeline，计入预算；隔离长期记忆写入 |
+| U6 协作共享 | ShareSession + Templates | 熵源 token + SHA-256 哈希存储 + TTL/撤销；UseTemplate 创建真实会话 |
 
-> **开发状态**：Batch 7 的前端页面已完成（AgentSandbox、CompareView、ShareView、TemplateMarket），后端 Service 基础框架已搭建（SharingService、UserExperienceService 已注册），但业务逻辑尚在开发中，后端当前返回占位响应。前端展示“功能开发中”提示。
+**实现现状**：Batch 7 全部前后端已真实打通（SandboxQuery/CompareAgents/SharingService 均非占位），前端 AgentSandbox、CompareView、ShareView、TemplateMarket 展示真实数据；详见[工作流控制指南](guides/workflow-control-guide.md)与[分享与资产指南](guides/sharing-and-assets-guide.md)。
 
 **量化结果：** 沙箱使新用户试用零风险；模板机制使 Agent 工作流可沉淀、可复用、可传播——每多一个模板，平台价值对所有用户 +1。这是 Agent Marketplace 的早期雏形。
 
