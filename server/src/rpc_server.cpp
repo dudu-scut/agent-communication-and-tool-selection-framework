@@ -203,6 +203,12 @@ bool RpcServer::initialize(const common::RpcConfig& config) {
         return false;
     }
 
+    // agent_invocations producer wiring (final wrap-up): Query/QueryStream
+    // become the table's production writer. Facts are owner-scoped via the
+    // authenticated session; write failures are logged only and never
+    // affect the query outcome (observability data, not the source of truth).
+    ai_query_service_impl_->setInvocationRepository(runtime_repository_.get());
+
     // PR-D (minimal DI addition, declared in the task report): wire the
     // durable Replay/Export/Share services to the PostgreSQL source of
     // truth. SharingServiceImpl gets the store + domain repository; the

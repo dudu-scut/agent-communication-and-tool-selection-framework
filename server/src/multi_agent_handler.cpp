@@ -10,6 +10,8 @@
 
 #include "agent_rpc/server/multi_agent_handler.h"
 #include "agent_rpc/server/query_helpers.h"
+#include "agent_rpc/server/auth_interceptor.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
 #include "agent_rpc/common/logger.h"
 #include "agent_rpc/common/env_loader.h"
 #include "agent_rpc/common/trace_context.h"
@@ -70,6 +72,43 @@ MultiAgentHandler::MultiAgentHandler(
 void MultiAgentHandler::setCallbacks(StatusUpdateFn status_fn, MetricsRecordFn metrics_fn) {
     update_status_ = std::move(status_fn);
     record_metrics_ = std::move(metrics_fn);
+}
+
+void MultiAgentHandler::setInvocationRepository(
+    common::AgentRuntimeRepository* repository) {
+    invocation_repository_ = repository;
+}
+
+// agent_invocations producer for the orchestrator path. The owner is read
+// from the thread-local auth context (this runs synchronously on the RPC
+// serving thread), never from the request body. Write failures are logged
+// and swallowed: invocation facts are observability data, not the source
+// of truth for the query outcome.
+void MultiAgentHandler::recordInvocationFact(
+    const std::string& query_log_id, const std::string& agent_id,
+    const std::string& skill_name, const std::string& status,
+    std::int64_t latency_ms) {
+    if (!invocation_repository_) {
+        return;
+    }
+    try {
+        common::AgentInvocationRecord record;
+        record.id = "invocation-" + QueryHelpers::generateRequestId();
+        record.owner_id = AuthInterceptor::currentUserId();
+        record.query_log_id = query_log_id;
+        record.agent_id = agent_id.empty() ? "default" : agent_id;
+        record.skill_name = skill_name;
+        record.status = status;
+        record.latency_ms = latency_ms;
+        if (!invocation_repository_->recordInvocation(record)) {
+            LOG_WARN("agent_invocations write skipped for query " + query_log_id);
+        }
+    } catch (const std::exception& error) {
+        LOG_WARN(std::string("agent_invocations write failed for query ") +
+                 query_log_id + ": " + error.what());
+    } catch (...) {
+        LOG_WARN("agent_invocations write failed for query " + query_log_id);
+    }
 }
 
 // ============================================================================
@@ -194,6 +233,9 @@ grpc::Status MultiAgentHandler::handleQuery(
             end_time - start_time);
         response->set_processing_time_ms(duration.count());
         record_metrics_("Query", duration.count(), success);
+        recordInvocationFact(request_id, plan.single_agent_id,
+                             plan.single_agent_skill,
+                             success ? "success" : "failed", duration.count());
         return success ? grpc::Status::OK
                        : grpc::Status(grpc::StatusCode::INTERNAL,
                                       QueryHelpers::sanitizeErrorMessage(response->status().message()));
@@ -210,6 +252,23 @@ grpc::Status MultiAgentHandler::handleQuery(
     try {
         auto results = task_executor_->execute(plan, call_agent);
         auto aggregated = result_aggregator_->aggregate(plan, results);
+
+        // One invocation fact per executed subtask (owner from auth context).
+        for (const auto& entry : results) {
+            const auto& result = entry.second;
+            std::string agent_id;
+            std::string skill_name;
+            for (const auto& task : plan.tasks) {
+                if (task.id == entry.first) {
+                    agent_id = task.preferred_agent_id;
+                    skill_name = task.required_skill;
+                    break;
+                }
+            }
+            recordInvocationFact(request_id, agent_id, skill_name,
+                                 result.success ? "success" : "failed",
+                                 result.duration_ms);
+        }
 
         response->set_request_id(request_id);
         response->set_task_id(request_id);
@@ -241,6 +300,8 @@ grpc::Status MultiAgentHandler::handleQuery(
         LOG_ERROR("Multi-agent query failed: " + request_id + " - " + e.what());
         update_status_(request_id, "failed", "", "", e.what());
         record_metrics_("Query", duration.count(), false);
+        recordInvocationFact(request_id, "multi-agent", "", "failed",
+                             duration.count());
         return grpc::Status(grpc::StatusCode::INTERNAL,
                            QueryHelpers::sanitizeErrorMessage(
                                std::string("Multi-agent orchestration failed: ") + e.what()));
@@ -342,6 +403,9 @@ grpc::Status MultiAgentHandler::handleQueryStream(
                 end_time - start_time);
             update_status_(request_id, "failed", "", "", e.what());
             record_metrics_("QueryStream", duration.count(), false);
+            recordInvocationFact(request_id, plan.single_agent_id,
+                                 plan.single_agent_skill, "failed",
+                                 duration.count());
             return grpc::Status(grpc::StatusCode::INTERNAL,
                                QueryHelpers::sanitizeErrorMessage(
                                    std::string("Agent streaming failed: ") + e.what()));
@@ -349,17 +413,29 @@ grpc::Status MultiAgentHandler::handleQueryStream(
 
         if (cancelled) {
             update_status_(request_id, "cancelled", "", "", "");
+            recordInvocationFact(request_id, plan.single_agent_id,
+                                 plan.single_agent_skill, "cancelled",
+                                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - start_time).count());
             return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
         }
         if (!lower_error.empty()) {
             tls_stream_result.error = lower_error;
             update_status_(request_id, "failed", "", "", lower_error);
+            recordInvocationFact(request_id, plan.single_agent_id,
+                                 plan.single_agent_skill, "failed",
+                                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - start_time).count());
             return grpc::Status(grpc::StatusCode::INTERNAL,
                                QueryHelpers::sanitizeErrorMessage(lower_error));
         }
         if (write_failed) {
             tls_stream_result.error = "Failed to write stream event";
             update_status_(request_id, "failed", "", "", "Failed to write stream event");
+            recordInvocationFact(request_id, plan.single_agent_id,
+                                 plan.single_agent_skill, "failed",
+                                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - start_time).count());
             return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to write stream event");
         }
 
@@ -369,6 +445,9 @@ grpc::Status MultiAgentHandler::handleQueryStream(
         update_status_(request_id, "completed",
                       plan.single_agent_id, plan.single_agent_name, "");
         record_metrics_("QueryStream", duration.count(), true);
+        recordInvocationFact(request_id, plan.single_agent_id,
+                             plan.single_agent_skill, "success",
+                             duration.count());
         return grpc::Status::OK;
     }
 
@@ -423,6 +502,23 @@ grpc::Status MultiAgentHandler::handleQueryStream(
         auto results = task_executor_->execute(plan, call_agent, progress_cb);
         auto aggregated = result_aggregator_->aggregate(plan, results);
 
+        // One invocation fact per executed subtask (owner from auth context).
+        for (const auto& entry : results) {
+            const auto& result = entry.second;
+            std::string agent_id;
+            std::string skill_name;
+            for (const auto& task : plan.tasks) {
+                if (task.id == entry.first) {
+                    agent_id = task.preferred_agent_id;
+                    skill_name = task.required_skill;
+                    break;
+                }
+            }
+            recordInvocationFact(request_id, agent_id, skill_name,
+                                 result.success ? "success" : "failed",
+                                 result.duration_ms);
+        }
+
         agent_communication::AIStreamEvent answer_event;
         answer_event.set_event_type("partial");
         answer_event.set_content(aggregated.final_answer);
@@ -452,6 +548,8 @@ grpc::Status MultiAgentHandler::handleQueryStream(
         LOG_ERROR("Multi-agent stream failed: " + request_id + " - " + e.what());
         update_status_(request_id, "failed", "", "", e.what());
         record_metrics_("QueryStream", duration.count(), false);
+        recordInvocationFact(request_id, "multi-agent", "", "failed",
+                             duration.count());
 
         // Hand the failure to the service layer; it owns the terminal event.
         tls_stream_result.error =

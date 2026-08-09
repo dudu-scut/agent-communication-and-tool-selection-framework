@@ -488,6 +488,48 @@ static void persistTraceSpansToRedis(common::RedisClient* redis_client) {
 }
 
 // ============================================================================
+// agent_invocations producer (final wrap-up wiring)
+// ============================================================================
+
+void AIQueryServiceImpl::setInvocationRepository(
+    common::AgentRuntimeRepository* repository) {
+    invocation_repository_ = repository;
+    if (multi_agent_handler_) {
+        multi_agent_handler_->setInvocationRepository(repository);
+    }
+}
+
+// Owner-scoped observability fact. agent_invocations is derived metrics
+// data, never the source of truth for a query outcome: any write failure is
+// logged and swallowed so it cannot flip a successful query into an error.
+void AIQueryServiceImpl::recordInvocationFact(
+    const std::string& owner_id, const std::string& query_log_id,
+    const std::string& agent_id, const std::string& skill_name,
+    const std::string& status, std::int64_t latency_ms) {
+    if (!invocation_repository_) {
+        return;
+    }
+    try {
+        common::AgentInvocationRecord record;
+        record.id = "invocation-" + QueryHelpers::generateRequestId();
+        record.owner_id = owner_id;
+        record.query_log_id = query_log_id;
+        record.agent_id = agent_id.empty() ? "default" : agent_id;
+        record.skill_name = skill_name;
+        record.status = status;
+        record.latency_ms = latency_ms;
+        if (!invocation_repository_->recordInvocation(record)) {
+            LOG_WARN("agent_invocations write skipped for query " + query_log_id);
+        }
+    } catch (const std::exception& error) {
+        LOG_WARN(std::string("agent_invocations write failed for query ") +
+                 query_log_id + ": " + error.what());
+    } catch (...) {
+        LOG_WARN("agent_invocations write failed for query " + query_log_id);
+    }
+}
+
+// ============================================================================
 // Query — synchronous AI query
 // ============================================================================
 
@@ -624,6 +666,15 @@ grpc::Status AIQueryServiceImpl::Query(
         end_time - start_time);
 
     QueryHelpers::recordMetrics("Query", duration.count(), success);
+
+    // agent_invocations producer: the single-agent A2A path records one
+    // owner-scoped fact per query here; the multi-agent orchestrator path
+    // records per-call facts inside MultiAgentHandler.
+    if (!orchestrator_enabled_) {
+        recordInvocationFact(run.owner_id, request_id, response->agent_id(),
+                             "", success ? "success" : "failed",
+                             duration.count());
+    }
 
     // Memory cache (Redis only; PostgreSQL remains the source of truth).
     // Cache-only: a Redis fault here must not convert a successful query
@@ -886,6 +937,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         // Client/gRPC cancellation: persist the cancelled terminal state.
         finalizeDurableQuery(run, "cancelled", streamed_content, "Request cancelled");
         helpers_.updateTaskStatus(request_id, "cancelled");
+        recordInvocationFact(run.owner_id, request_id, "", "", "cancelled",
+                             duration.count());
         a2a_adapter_->cancelTask(request_id);
         runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return grpc::Status(grpc::StatusCode::CANCELLED, "Request cancelled");
@@ -895,6 +948,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
         emitTerminal("error", sanitizeErrorMessage(lower_error));
         finalizeDurableQuery(run, "failed", streamed_content, lower_error);
         helpers_.updateTaskStatus(request_id, "failed", "", "", lower_error);
+        recordInvocationFact(run.owner_id, request_id, "", "", "failed",
+                             duration.count());
         LOG_ERROR("Streaming AI query failed: " + request_id + " - " + lower_error);
         runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return grpc::Status(grpc::StatusCode::INTERNAL, sanitizeErrorMessage(lower_error));
@@ -905,6 +960,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
                              "Failed to write stream event");
         helpers_.updateTaskStatus(request_id, "failed", "", "",
                                   "Failed to write stream event");
+        recordInvocationFact(run.owner_id, request_id, "", "", "failed",
+                             duration.count());
         runCacheOnly([&] { persistTraceSpansToRedis(redis_client_); }, "trace span cache");
         return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to write stream event");
     }
@@ -921,6 +978,8 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     emitTerminal("complete", "");
     finalizeDurableQuery(run, "completed", streamed_content, "");
     helpers_.updateTaskStatus(request_id, "completed");
+    recordInvocationFact(run.owner_id, request_id, "", "", "success",
+                         duration.count());
     auto* tc = common::TraceContext::current();
     common::CostTracker::instance().recordLLMCall(
         tc ? tc->traceId() : "", owner_id, context_id, "", "server_stream",

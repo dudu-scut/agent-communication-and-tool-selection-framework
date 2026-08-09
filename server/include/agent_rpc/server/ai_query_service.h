@@ -20,6 +20,7 @@
 #include "agent_rpc/common/memory_service.h"
 #include "agent_rpc/common/query_domain_repository.h"
 #include "agent_rpc/common/postgres_budget_repository.h"
+#include "agent_rpc/common/agent_runtime_repository.h"
 #include "agent_rpc/a2a_adapter/a2a_adapter.h"
 #include "agent_rpc/a2a_adapter/a2a_config.h"
 #include "agent_rpc/orchestrator/agent_router.h"
@@ -83,6 +84,17 @@ public:
                    common::PostgresStore& store,
                    common::QueryDomainRepository& domain,
                    common::PostgresBudgetRepository& budget);
+
+    /**
+     * @brief Wire the agent_invocations producer repository (non-owning).
+     *
+     * Query/QueryStream become the production writer of agent_invocations.
+     * Facts are owner-scoped via the authenticated session; write failures
+     * are logged only and never affect the query outcome (observability
+     * data, not the source of truth). Forwarded to MultiAgentHandler when
+     * the orchestrator path is enabled.
+     */
+    void setInvocationRepository(common::AgentRuntimeRepository* repository);
     
     /**
      * @brief Shutdown the service
@@ -203,6 +215,18 @@ private:
     void abortDurableRun(DurableQueryRun& run, const std::string& reason);
     static std::int64_t estimateTokens(const std::string& question);
     static common::BudgetLimits budgetLimitsFromEnvironment();
+
+    // agent_invocations producer: best-effort owner-scoped fact write; a
+    // failure here is logged and swallowed, never propagated to the caller.
+    void recordInvocationFact(const std::string& owner_id,
+                              const std::string& query_log_id,
+                              const std::string& agent_id,
+                              const std::string& skill_name,
+                              const std::string& status,
+                              std::int64_t latency_ms);
+
+    // Non-owning; RpcServer owns the repository.
+    common::AgentRuntimeRepository* invocation_repository_ = nullptr;
 
     // ========================================================================
     // Multi-Agent Orchestration (P4-4)

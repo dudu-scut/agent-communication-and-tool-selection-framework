@@ -26,7 +26,7 @@ class AIStreamEvent;
 }
 
 namespace agent_rpc {
-namespace common { class RedisClient; }
+namespace common { class RedisClient; class AgentRuntimeRepository; }
 namespace server {
 
 /**
@@ -55,6 +55,16 @@ public:
         common::RpcConfig* config);
 
     void setCallbacks(StatusUpdateFn status_fn, MetricsRecordFn metrics_fn);
+
+    /**
+     * @brief Wire the agent_invocations producer repository (non-owning).
+     *
+     * The orchestrator path records one owner-scoped fact per real agent
+     * call (single-agent fast path: one fact; multi-agent DAG: one fact per
+     * subtask). Owner always comes from the thread-local auth context, never
+     * from the request body; write failures are logged only.
+     */
+    void setInvocationRepository(common::AgentRuntimeRepository* repository);
 
     /**
      * @brief Static factory: create and initialize orchestrator components
@@ -98,6 +108,14 @@ private:
 
     StatusUpdateFn update_status_;
     MetricsRecordFn record_metrics_;
+
+    // agent_invocations producer (observability facts, best-effort).
+    common::AgentRuntimeRepository* invocation_repository_ = nullptr;
+    void recordInvocationFact(const std::string& query_log_id,
+                              const std::string& agent_id,
+                              const std::string& skill_name,
+                              const std::string& status,
+                              std::int64_t latency_ms);
 
     orchestrator::ExecutionPlan planQuery(const std::string& question);
     std::function<std::string(const std::string&, const std::string&)>

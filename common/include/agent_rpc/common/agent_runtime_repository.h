@@ -133,10 +133,10 @@ public:
 
     // --- invocation facts ----------------------------------------------------
 
-    // NOTE: agent_invocations currently has NO production writer — wiring the
-    // query pipeline as its producer belongs to the final wrap-up task, not to
-    // PR-C3. The hourly metrics aggregation therefore runs against an empty
-    // table until then (see main.cpp).
+    // NOTE: production writer is the Query/QueryStream pipeline —
+    // AIQueryServiceImpl records one owner-scoped fact per request on the
+    // single-agent A2A path, MultiAgentHandler records per-call facts on
+    // the orchestrator path (wired in RpcServer::initialize, final wrap-up).
     bool recordInvocation(const AgentInvocationRecord& invocation);
     std::vector<AgentInvocationRecord> listInvocationsByOwner(const std::string& owner_id);
     std::vector<InvocationMetricsRecord> aggregateInvocationMetrics();

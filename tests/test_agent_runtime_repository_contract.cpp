@@ -1211,4 +1211,68 @@ TEST_F(AgentRuntimeE2ETest, BulkFeedbackSubmissionsAllSucceed) {
     }
 }
 
+// M3 (PR-C3 deferred): feedback dimensions are a closed key space. Arbitrary
+// or oversized agent_id/skill_name values are rejected before any write.
+TEST_F(AgentRuntimeE2ETest, SubmitFeedbackRejectsArbitraryKeyspace) {
+    startServer();
+    const auto owner = registerUser("c3-keys-" + uniqueSuffix());
+    const std::string request_id = seedTrace(owner.id);
+
+    auto submit = [&](const std::string& agent_id,
+                      const std::string& skill_name) {
+        agent_communication::SubmitFeedbackRequest request;
+        request.set_trace_id(request_id);
+        request.set_agent_id(agent_id);
+        request.set_skill_name(skill_name);
+        request.set_rating(5);
+        agent_communication::SubmitFeedbackResponse response;
+        grpc::ClientContext context;
+        applyAuth(context, owner);
+        return lifecycle_stub_->SubmitFeedback(&context, request, &response);
+    };
+
+    // Hostile character sets and oversized keys are refused up front.
+    EXPECT_EQ(submit("bad agent!", "echo").error_code(),
+              grpc::StatusCode::INVALID_ARGUMENT);
+    EXPECT_EQ(submit("agent\tid", "echo").error_code(),
+              grpc::StatusCode::INVALID_ARGUMENT);
+    EXPECT_EQ(submit(std::string(200, 'a'), "echo").error_code(),
+              grpc::StatusCode::INVALID_ARGUMENT);
+    EXPECT_EQ(submit("good-agent", "skill; DROP TABLE feedback;").error_code(),
+              grpc::StatusCode::INVALID_ARGUMENT);
+    EXPECT_EQ(countRows("feedback", "owner_id", owner.id), 0);
+
+    // The known key space stays writable.
+    ASSERT_TRUE(submit("good-agent", "echo").ok());
+    EXPECT_EQ(countRows("feedback", "owner_id", owner.id), 1);
+}
+
+// I3 (final wire-up): the real Query path produces agent_invocations facts.
+// The owner comes from the auth context only — a spoofed request-body
+// user_id must never become the invocation owner.
+TEST_F(AgentRuntimeE2ETest, QueryProducesOwnerScopedInvocationFacts) {
+    startServer();
+    const auto owner = registerUser("c3-inv-e2e-" + uniqueSuffix());
+    auto query_stub = agent_communication::AIQueryService::NewStub(channel_);
+
+    const std::string request_id = "c3-inv-req-" + uniqueSuffix();
+    agent_communication::AIQueryRequest request;
+    request.set_request_id(request_id);
+    request.set_question("runtime facts invocation probe");
+    request.set_user_id("spoofed-owner");  // must be ignored
+    agent_communication::AIQueryResponse response;
+    grpc::ClientContext context;
+    applyAuth(context, owner);
+    const auto status = query_stub->Query(&context, request, &response);
+    ASSERT_TRUE(status.ok()) << status.error_message();
+
+    const auto invocations = handles_->runtime->listInvocationsByOwner(owner.id);
+    ASSERT_EQ(invocations.size(), 1u);
+    EXPECT_EQ(invocations[0].owner_id, owner.id);
+    EXPECT_EQ(invocations[0].query_log_id, request_id);
+    EXPECT_EQ(invocations[0].status, "success");
+    EXPECT_GE(invocations[0].latency_ms, 0);
+    EXPECT_EQ(countRows("agent_invocations", "owner_id", "spoofed-owner"), 0);
+}
+
 }  // namespace
