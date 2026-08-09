@@ -174,95 +174,7 @@
         </div>
       </div>
 
-      <!-- === Cron Tab === -->
-      <div v-if="activeTab === 'cron'" class="tab-content">
-        <div class="section">
-          <div class="section-header">
-            <h3>Scheduled Tasks</h3>
-            <button class="btn-sm" @click="showCronForm = !showCronForm">
-              {{ showCronForm ? 'Cancel' : '+ New Task' }}
-            </button>
-          </div>
-
-          <div v-if="showCronForm" class="cron-form">
-            <div class="input-row">
-              <input v-model="cronForm.name" placeholder="Task name" class="text-input" />
-              <input v-model="cronForm.expr" placeholder="Cron expression (e.g. 0 * * * *)" class="text-input mono" />
-            </div>
-            <div class="input-row">
-              <input v-model="cronForm.query" placeholder="Query template" class="text-input flex-1" />
-              <button class="btn-primary" @click="addCronTask" :disabled="!cronForm.name">Create</button>
-            </div>
-          </div>
-
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>Name</th><th>Schedule</th><th>Status</th><th>Runs</th><th>Last Run</th><th>Next Run</th><th>Actions</th></tr></thead>
-              <tbody>
-                <tr v-for="task in cronTasks" :key="task.id">
-                  <td class="fw-600">{{ task.name }}</td>
-                  <td><code>{{ task.cron_expr }}</code></td>
-                  <td><span class="status-light" :class="task.enabled ? 'healthy' : 'unhealthy'"></span> {{ task.enabled ? 'Enabled' : 'Disabled' }}</td>
-                  <td>{{ task.execution_count }}</td>
-                  <td class="time-cell">{{ formatTimeAgo(task.last_run_at) }}</td>
-                  <td class="time-cell">{{ formatTimeAgo(task.next_run_at) }}</td>
-                  <td>
-                    <button class="btn-xs" @click="triggerCronTask(task.id)">Trigger</button>
-                    <button class="btn-xs danger" @click="deleteCronTask(task.id)">Delete</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- === Canary Tab === -->
-      <div v-if="activeTab === 'canary'" class="tab-content">
-        <div class="section">
-          <h3>Canary Deployment</h3>
-          <div v-if="canaryConfig" class="canary-panel">
-            <div class="canary-header">
-              <div>
-                <span class="canary-label">Stable</span>
-                <span class="canary-agent">{{ canaryConfig.agent_id_stable }}</span>
-              </div>
-              <div class="canary-split">
-                <div class="split-bar">
-                  <div class="split-stable" :style="{ width: (100 - canaryConfig.traffic_split_pct) + '%' }">{{ 100 - canaryConfig.traffic_split_pct }}%</div>
-                  <div class="split-canary" :style="{ width: canaryConfig.traffic_split_pct + '%' }">{{ canaryConfig.traffic_split_pct }}%</div>
-                </div>
-              </div>
-              <div>
-                <span class="canary-label">Canary</span>
-                <span class="canary-agent">{{ canaryConfig.agent_id_canary }}</span>
-              </div>
-            </div>
-            <div class="canary-metrics">
-              <div class="compare-metric">
-                <span class="compare-label">Success Rate</span>
-                <span>{{ (canaryConfig.stable_metrics.success_rate * 100).toFixed(1) }}%</span>
-                <span class="vs">vs</span>
-                <span>{{ (canaryConfig.canary_metrics.success_rate * 100).toFixed(1) }}%</span>
-              </div>
-              <div class="compare-metric">
-                <span class="compare-label">Latency</span>
-                <span>{{ canaryConfig.stable_metrics.avg_latency_ms }}ms</span>
-                <span class="vs">vs</span>
-                <span>{{ canaryConfig.canary_metrics.avg_latency_ms }}ms</span>
-              </div>
-            </div>
-            <div class="canary-actions">
-              <button class="btn-success" @click="promoteCanary">🚀 Promote (100%)</button>
-              <button class="btn-danger" @click="rollbackCanary">⏪ Rollback</button>
-            </div>
-          </div>
-          <div v-else class="empty-state">
-            <p>No active canary deployment</p>
-            <p class="hint">Register STABLE + CANARY agents to enable the canary control panel</p>
-          </div>
-        </div>
-      </div>
+      <!-- PR-F: Cron/Canary tabs removed — backend capabilities were deleted in PR-C3. -->
     </div>
   </div>
 </template>
@@ -271,7 +183,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAgentsStore } from '../stores/agents'
 import { replayQuery as replayQueryRpc } from '../services/grpc-client'
-import type { AgentDisplayInfo, ScheduledTask, CanaryConfig } from '../types/proto'
+import type { AgentDisplayInfo } from '../types/proto'
 
 const agentsStore = useAgentsStore()
 const loading = ref(false)
@@ -281,8 +193,6 @@ const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'budget', label: 'Budget', icon: '💰' },
   { id: 'replay', label: 'Replay', icon: '🔁' },
-  { id: 'cron', label: 'Cron Jobs', icon: '⏰' },
-  { id: 'canary', label: 'Canary', icon: '🚦' },
 ]
 
 const agents = computed(() => agentsStore.agents)
@@ -375,52 +285,8 @@ async function replayQuery() {
   }
 }
 
-// Cron
-const showCronForm = ref(false)
-const cronForm = ref({ name: '', expr: '0 * * * *', query: '' })
-const cronTasks = ref<ScheduledTask[]>([])
-
-function addCronTask() {
-  cronTasks.value.push({
-    id: crypto.randomUUID().slice(0, 8),
-    name: cronForm.value.name,
-    cron_expr: cronForm.value.expr,
-    query_template: cronForm.value.query,
-    enabled: true,
-    execution_count: 0,
-  })
-  cronForm.value = { name: '', expr: '0 * * * *', query: '' }
-  showCronForm.value = false
-}
-
-function triggerCronTask(id: string) {
-  const t = cronTasks.value.find(c => c.id === id)
-  if (t) {
-    t.last_run_at = Date.now()
-    t.execution_count++
-  }
-}
-
-function deleteCronTask(id: string) {
-  cronTasks.value = cronTasks.value.filter(c => c.id !== id)
-}
-
-// Canary
-const canaryConfig = ref<CanaryConfig | null>(null)
-
-function promoteCanary() {
-  if (canaryConfig.value) {
-    canaryConfig.value.traffic_split_pct = 100
-    canaryConfig.value.status = 'completed'
-  }
-}
-
-function rollbackCanary() {
-  if (canaryConfig.value) {
-    canaryConfig.value.traffic_split_pct = 0
-    canaryConfig.value.status = 'rolling_back'
-  }
-}
+// PR-F: Cron/Canary state and handlers removed — the backend capabilities
+// were deleted in PR-C3, so no local demo arrays may remain.
 
 async function refreshAll() {
   loading.value = true
@@ -606,15 +472,6 @@ onUnmounted(() => {
   margin: 0 0 16px;
 }
 
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.section-header h3 { margin: 0; }
-
 /* Tables */
 .table-wrap { overflow-x: auto; }
 
@@ -680,38 +537,6 @@ onUnmounted(() => {
 .replay-header { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
 .replay-json { padding: 12px; background: var(--bg-primary); color: var(--text-primary); border-radius: var(--radius-sm); font-size: 13px; overflow-x: auto; white-space: pre-wrap; border: 1px solid var(--border-default); }
 
-/* Cron */
-.cron-form { margin-bottom: 16px; padding: 16px; background: var(--bg-surface); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border-subtle); }
-.input-row { display: flex; gap: 10px; }
-.btn-sm { padding: 6px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer; }
-.btn-sm:hover { background: var(--glass-bg-hover); color: var(--text-primary); }
-.btn-xs { padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--bg-elevated); color: var(--text-secondary); font-size: 11px; cursor: pointer; margin-right: 4px; }
-.btn-xs.danger { color: var(--color-error); border-color: rgba(239,68,68,0.3); }
-.btn-xs:hover { background: var(--glass-bg-hover); color: var(--text-primary); }
-code { background: var(--bg-surface); padding: 1px 5px; border-radius: 3px; font-size: 12px; color: var(--text-secondary); }
-
-/* Canary */
-.canary-panel { background: var(--bg-surface); border-radius: var(--radius-md); padding: 20px; border: 1px solid var(--border-subtle); }
-.canary-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
-.canary-label { font-size: 11px; color: var(--text-secondary); display: block; }
-.canary-agent { font-weight: 600; font-family: monospace; font-size: 13px; color: var(--text-primary); }
-.canary-split { flex: 1; }
-.split-bar { display: flex; height: 28px; border-radius: 14px; overflow: hidden; font-size: 12px; font-weight: 600; }
-.split-stable { background: rgba(99,102,241,0.2); color: var(--brand-primary); display: flex; align-items: center; justify-content: center; }
-.split-canary { background: rgba(245,158,11,0.2); color: var(--color-warning); display: flex; align-items: center; justify-content: center; }
-.canary-metrics { display: flex; gap: 24px; margin-bottom: 16px; }
-.compare-metric { display: flex; align-items: center; gap: 8px; font-size: 13px; font-family: monospace; color: var(--text-secondary); }
-.compare-label { font-family: inherit; color: var(--text-tertiary); font-size: 12px; }
-.vs { color: var(--text-muted); font-size: 11px; }
-.canary-actions { display: flex; gap: 10px; }
-.btn-success { padding: 8px 16px; border: none; border-radius: var(--radius-sm); background: var(--color-success); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
-.btn-danger { padding: 8px 16px; border: none; border-radius: var(--radius-sm); background: var(--color-error); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
-.btn-success:hover { opacity: 0.9; }
-.btn-danger:hover { opacity: 0.9; }
-
-.empty-state { text-align: center; padding: 48px; color: var(--text-secondary); }
-.empty-state .hint { font-size: 12px; color: var(--text-tertiary); margin-top: 6px; }
-
 /* Responsive */
 @media (max-width: 1024px) {
   .stats-grid {
@@ -771,15 +596,6 @@ code { background: var(--bg-surface); padding: 1px 5px; border-radius: 3px; font
   .replay-form {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .input-row {
-    flex-direction: column;
-  }
-
-  .canary-metrics {
-    flex-direction: column;
-    gap: 10px;
   }
 }
 

@@ -68,7 +68,24 @@
                       <p class="intervention-id">Intervention: <code>{{ pendingInterventionId }}</code></p>
                       <div class="intervention-actions">
                         <button class="decision-btn proceed" :disabled="deciding" @click="resolveIntervention('PROCEED')">Proceed</button>
+                        <button class="decision-btn modify" :disabled="deciding" @click="toggleModifyInput">Modify</button>
+                        <button class="decision-btn skip" :disabled="deciding" @click="resolveIntervention('SKIP')">Skip</button>
                         <button class="decision-btn abort" :disabled="deciding" @click="resolveIntervention('ABORT')">Abort</button>
+                      </div>
+                      <div v-if="modifyInputVisible" class="modify-box">
+                        <textarea
+                          v-model="modificationText"
+                          class="sandbox-input"
+                          rows="3"
+                          placeholder="Replacement query text to execute instead…"
+                        ></textarea>
+                        <button
+                          class="decision-btn modify"
+                          :disabled="deciding || !modificationText.trim()"
+                          @click="resolveIntervention('MODIFY')"
+                        >
+                          Apply Modification
+                        </button>
                       </div>
                       <div v-if="decisionInfo" class="decision-info">{{ decisionInfo }}</div>
                     </div>
@@ -117,6 +134,10 @@ const sandboxRequestId = ref('')
 const pendingInterventionId = ref('')
 const deciding = ref(false)
 const decisionInfo = ref('')
+// PR-F: MODIFY decision carries replacement text; backend supports all four
+// decisions (PROCEED / MODIFY / SKIP / ABORT).
+const modifyInputVisible = ref(false)
+const modificationText = ref('')
 
 onMounted(async () => {
   try {
@@ -143,6 +164,8 @@ function showSandboxModal(agent: SandboxAgent) {
   sandboxRequestId.value = ''
   pendingInterventionId.value = ''
   decisionInfo.value = ''
+  modifyInputVisible.value = false
+  modificationText.value = ''
   sandboxModalOpen.value = true
 }
 
@@ -169,12 +192,17 @@ async function runSandbox() {
   }
 }
 
-async function resolveIntervention(decision: 'PROCEED' | 'ABORT') {
+async function resolveIntervention(decision: 'PROCEED' | 'MODIFY' | 'SKIP' | 'ABORT') {
   if (!pendingInterventionId.value) return
+  if (decision === 'MODIFY' && !modificationText.value.trim()) return
   deciding.value = true
   decisionInfo.value = ''
   try {
-    const resp = await interventionResponse(pendingInterventionId.value, decision)
+    const resp = await interventionResponse(
+      pendingInterventionId.value,
+      decision,
+      decision === 'MODIFY' ? modificationText.value.trim() : undefined,
+    )
     if (resp.executed_request_id) {
       // Deferred execution ran: fetch the result via a fresh sandbox view state.
       pendingInterventionId.value = ''
@@ -190,6 +218,10 @@ async function resolveIntervention(decision: 'PROCEED' | 'ABORT') {
   } finally {
     deciding.value = false
   }
+}
+
+function toggleModifyInput() {
+  modifyInputVisible.value = !modifyInputVisible.value
 }
 </script>
 
@@ -366,9 +398,12 @@ async function resolveIntervention(decision: 'PROCEED' | 'ABORT') {
   background: var(--bg-surface); color: var(--text-primary); font-size: 13px; cursor: pointer;
 }
 .decision-btn.proceed { border-color: var(--brand-primary); color: var(--brand-primary); }
+.decision-btn.modify { border-color: var(--color-warning, #f59e0b); color: var(--color-warning, #f59e0b); }
+.decision-btn.skip { border-color: var(--text-secondary); color: var(--text-secondary); }
 .decision-btn.abort { border-color: var(--status-error, #ef4444); color: var(--status-error, #ef4444); }
 .decision-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .decision-info { margin-top: 8px; color: var(--status-error, #ef4444); }
+.modify-box { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .sandbox-result .result-meta { font-size: 11px; color: var(--text-tertiary); margin-bottom: 6px; }
 .sandbox-result .result-text {
   margin: 0; white-space: pre-wrap; word-break: break-word;

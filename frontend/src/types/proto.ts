@@ -353,31 +353,6 @@ export interface ExportConversationResponse {
   mime_type: string
 }
 
-// === Cron / Scheduled Tasks ===
-
-export interface ScheduledTask {
-  id: string
-  name: string
-  cron_expr: string
-  query_template: string
-  enabled: boolean
-  last_run_at?: number
-  next_run_at?: number
-  execution_count: number
-  last_result?: string
-}
-
-// === Canary Deployment ===
-
-export interface CanaryConfig {
-  agent_id_stable: string
-  agent_id_canary: string
-  traffic_split_pct: number  // % to canary
-  stable_metrics: AgentMetrics
-  canary_metrics: AgentMetrics
-  status: 'running' | 'promoting' | 'rolling_back' | 'completed'
-}
-
 // === Frontend internal types ===
 
 export interface ChatMessage {

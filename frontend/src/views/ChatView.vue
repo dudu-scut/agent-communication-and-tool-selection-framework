@@ -27,8 +27,13 @@
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </button>
+          <button class="btn-icon" @click="handleShare" :disabled="sharing" title="Share Conversation">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+          </button>
           <button class="btn-text" @click="chatStore.newConversation()">New Chat</button>
-          <router-link to="/admin" class="btn-text">Admin</router-link>
+          <router-link v-if="authStore.isAdmin" to="/admin" class="btn-text">Admin</router-link>
           <button class="btn-text btn-logout" @click="handleLogout">Logout</button>
         </div>
       </div>
@@ -114,6 +119,12 @@
         />
       </div>
 
+      <!-- PR-F: failure banner with retry — error reason stays visible -->
+      <div v-if="lastErrorMessage && !chatStore.isStreaming" class="retry-bar">
+        <span class="retry-reason">请求失败：{{ lastErrorMessage }}</span>
+        <button class="btn-text retry-btn" @click="chatStore.retryLast()">重试</button>
+      </div>
+
       <div class="chat-input-area">
         <div class="input-wrapper glass" :class="{ 'input-focused': isFocused }">
           <textarea
@@ -161,10 +172,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, inject } from 'vue'
+import { ref, computed, nextTick, watch, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
+import { shareSession } from '../services/grpc-client'
 import MessageBubble from '../components/MessageBubble.vue'
 import ActivityPanel from '../components/ActivityPanel.vue'
 import AgentSelector from '../components/AgentSelector.vue'
@@ -180,6 +192,41 @@ const messagesRef = ref<HTMLElement>()
 const textareaRef = ref<HTMLTextAreaElement>()
 const showActivityPanel = ref(false)
 const isFocused = ref(false)
+const sharing = ref(false)
+
+// Last stream/unary failure shown with a retry entry (chat store retryLast).
+const lastErrorMessage = computed(() => {
+  const tail = chatStore.messages[chatStore.messages.length - 1]
+  return tail?.role === 'agent' && tail.error ? tail.error : ''
+})
+
+// PR-F: one-time share link via SharingService.ShareSession (PR-D backend).
+// The raw token is returned exactly once by the server — surface it to the
+// user immediately; failures are shown as real errors, never faked.
+async function handleShare() {
+  if (sharing.value) return
+  if (!chatStore.messages.length) {
+    toast?.addToast({ type: 'error', message: '当前会话没有可分享的消息' })
+    return
+  }
+  sharing.value = true
+  try {
+    const resp = await shareSession(chatStore.contextId)
+    if (resp.status.code !== 0) {
+      toast?.addToast({ type: 'error', message: resp.status.message || '分享创建失败' })
+      return
+    }
+    const url = resp.share_url ? window.location.origin + resp.share_url : ''
+    toast?.addToast({
+      type: 'success',
+      message: `分享已创建：${url || resp.share_id}（token 仅显示一次，请妥善保存）`,
+    })
+  } catch (e) {
+    toast?.addToast({ type: 'error', message: e instanceof Error ? e.message : String(e) })
+  } finally {
+    sharing.value = false
+  }
+}
 
 // Agent selector state
 const showAgentSelector = ref(false)
@@ -672,6 +719,32 @@ function scrollToBottom() {
 .chat-input-area {
   padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-subtle);
+}
+
+/* PR-F: failure banner */
+.retry-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 var(--space-6);
+  padding: 8px 14px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.08);
+  font-size: 13px;
+  color: var(--color-error);
+}
+
+.retry-reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retry-btn {
+  color: var(--color-error);
+  flex-shrink: 0;
 }
 
 .input-wrapper {
