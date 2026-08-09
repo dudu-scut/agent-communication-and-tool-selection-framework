@@ -50,6 +50,14 @@ const protoMessages = {
   ...parseProtoMessages('common.proto'),
 };
 
+// Minor #5 defensive assertion: if the regex parser silently degrades
+// (proto syntax change, encoding drift), the whole suite would otherwise
+// compare nothing against nothing and stay green.
+assert.ok(
+  Object.keys(protoMessages).length >= 25,
+  `proto regex parser produced only ${Object.keys(protoMessages).length} messages — parser drift`,
+);
+
 // ── proto.ts parsing ──────────────────────────────────────────────────────
 
 const tsSource = fs.readFileSync(PROTO_TS, 'utf8');
@@ -151,8 +159,19 @@ for (const name of CORE_MESSAGES) {
   test(`proto.ts interface ${name} matches proto/ fields`, () => {
     const protoFields = protoMessages[name];
     assert.ok(protoFields, `proto/ must define message ${name}`);
+    // Minor #5 defensive assertion: a message parsed to zero fields means the
+    // field regex no longer matches the wire source — fail loudly instead of
+    // vacuously passing the field loop.
+    assert.ok(
+      protoFields.length > 0,
+      `proto/ message ${name} parsed with zero fields — parser drift`,
+    );
     const tsFields = parseTsInterface(name);
     assert.ok(tsFields, `proto.ts must declare interface ${name}`);
+    assert.ok(
+      Object.keys(tsFields).length > 0,
+      `proto.ts interface ${name} parsed with zero fields — parser drift`,
+    );
 
     for (const pf of protoFields) {
       const tsType = tsFields[pf.name];

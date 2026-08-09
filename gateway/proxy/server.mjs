@@ -117,12 +117,9 @@ const GRPC_HTTP_STATUS = {
   [grpc.status.RESOURCE_EXHAUSTED]: 429,
   [grpc.status.UNAUTHENTICATED]: 401,
 };
-// Reference table keyed by canonical gRPC names (contract-tested).
-// UNAUTHENTICATED: 401
-// PERMISSION_DENIED: 403
-// NOT_FOUND: 404
-// RESOURCE_EXHAUSTED: 429
-// CANCELLED: 499
+// NOTE: the mapping table above is the single source of truth — the
+// error-mapping contract test's static guard asserts on these computed
+// entries, not on any prose comment (PR-F Minor #1).
 
 const GRPC_STATUS_NAME = Object.fromEntries(
   Object.entries(grpc.status)

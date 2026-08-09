@@ -306,7 +306,29 @@ protected:
 
     static int nextPort() {
         static std::atomic<int> port{53160};
-        return port.fetch_add(1);
+        // PR-F Minor #3 analogue: a deterministic counter can collide with a
+        // socket still in TIME_WAIT (or another listener) from a previous
+        // run, so probe each candidate with a real bind and skip busy ones.
+        for (;;) {
+            const int candidate = port.fetch_add(1);
+            const int probe = ::socket(AF_INET, SOCK_STREAM, 0);
+            if (probe < 0) {
+                return candidate;
+            }
+            int reuse = 1;
+            ::setsockopt(probe, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+            sockaddr_in address{};
+            address.sin_family = AF_INET;
+            address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            address.sin_port = htons(static_cast<uint16_t>(candidate));
+            const bool is_free =
+                ::bind(probe, reinterpret_cast<sockaddr*>(&address),
+                       sizeof(address)) == 0;
+            ::close(probe);
+            if (is_free) {
+                return candidate;
+            }
+        }
     }
 
     void SetUp() override {

@@ -27,57 +27,22 @@ namespace server {
 // Task Status Tracking
 // ============================================================================
 
+// [PR-G observation, final wrap-up] The in-memory task-status cache was
+// write-only: GetQueryStatus reads the durable PostgreSQL query_logs row
+// and nothing else ever consumed the cache, so the cache itself was
+// deleted. The entry points keep their signatures (the Query pipeline
+// still calls them as state-transition hooks) but are now no-ops.
 void QueryHelpers::updateTaskStatus(
-    const std::string& task_id,
-    const std::string& state,
-    const std::string& agent_id,
-    const std::string& agent_name,
-    const std::string& error_msg) {
-
-    auto now = std::chrono::steady_clock::now();
-
-    std::lock_guard<std::mutex> lock(task_status_mutex);
-
-    auto it = task_status_cache.find(task_id);
-    if (it != task_status_cache.end()) {
-        it->second.state = state;
-        it->second.updated_at = now;
-        if (!agent_id.empty()) it->second.agent_id = agent_id;
-        if (!agent_name.empty()) it->second.agent_name = agent_name;
-        if (!error_msg.empty()) it->second.error_message = error_msg;
-    } else {
-        task_status_cache[task_id] = TaskStatus{
-            task_id, state, now, now, agent_id, agent_name, error_msg
-        };
-    }
-
-    // Periodic cleanup every 100 status updates
-    uint64_t count = status_query_count.fetch_add(1);
-    if (count % 100 == 0 && count > 0) {
-        auto cutoff = now - std::chrono::minutes(5);
-        for (auto entry = task_status_cache.begin();
-             entry != task_status_cache.end(); ) {
-            if (entry->second.updated_at < cutoff) {
-                entry = task_status_cache.erase(entry);
-            } else {
-                ++entry;
-            }
-        }
-    }
+    const std::string& /*task_id*/,
+    const std::string& /*state*/,
+    const std::string& /*agent_id*/,
+    const std::string& /*agent_name*/,
+    const std::string& /*error_msg*/) {
+    // Intentionally empty: durable status lives in PostgreSQL query_logs.
 }
 
 void QueryHelpers::cleanupExpiredTasks() {
-    auto now = std::chrono::steady_clock::now();
-    auto cutoff = now - std::chrono::minutes(5);
-
-    std::lock_guard<std::mutex> lock(task_status_mutex);
-    for (auto it = task_status_cache.begin(); it != task_status_cache.end(); ) {
-        if (it->second.updated_at < cutoff) {
-            it = task_status_cache.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    // Intentionally empty: nothing to clean up anymore (see updateTaskStatus).
 }
 
 // ============================================================================

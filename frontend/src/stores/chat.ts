@@ -205,7 +205,8 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'error':
         // PR-F: structured stream errors carry code semantics in content
-        // ("CODE_NAME: details"); prefer details when present.
+        // ("CODE_NAME: details"), so content is the primary source; the
+        // optional details field is only a fallback when content is empty.
         msg.error = event.content || (event as AIStreamEvent & { details?: string }).details || 'Unknown error'
         msg.streaming = false
         isStreaming.value = false

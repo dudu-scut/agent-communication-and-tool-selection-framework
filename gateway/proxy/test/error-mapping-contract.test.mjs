@@ -26,15 +26,35 @@ const loaderOptions = {
   includeDirs: [PROTO_DIR],
 };
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
-      const port = srv.address().port;
-      srv.close(() => resolve(port));
+async function freePort() {
+  // Minor #3 hardening: listen(0) → close leaves a port-reclaim window in
+  // which another process can grab the same port, making the suite flaky.
+  // Probe the returned port by re-binding it immediately (SO_REUSEADDR-style
+  // check) and retry with a fresh port when the probe fails.
+  const takePort = () =>
+    new Promise((resolve, reject) => {
+      const srv = net.createServer();
+      srv.listen(0, '127.0.0.1', () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+      srv.on('error', reject);
     });
-    srv.on('error', reject);
-  });
+  const reusable = (port) =>
+    new Promise((resolve) => {
+      const probe = net.createServer();
+      probe.once('error', () => resolve(false));
+      probe.listen(port, '127.0.0.1', () => {
+        probe.close(() => resolve(true));
+      });
+    });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const port = await takePort();
+    if (await reusable(port)) {
+      return port;
+    }
+  }
+  throw new Error('no reusable free port found');
 }
 
 // ── gRPC status codes under test (PR-F requirement) ──────────────────────
@@ -42,6 +62,9 @@ const CASES = [
   { username: 'err-unauth', code: grpc.status.UNAUTHENTICATED, name: 'UNAUTHENTICATED', http: 401 },
   { username: 'err-perm', code: grpc.status.PERMISSION_DENIED, name: 'PERMISSION_DENIED', http: 403 },
   { username: 'err-notfound', code: grpc.status.NOT_FOUND, name: 'NOT_FOUND', http: 404 },
+  // Minor #2: ALREADY_EXISTS → 409 runtime contract (already in the mapping
+  // table; this case pins it through the real HTTP surface).
+  { username: 'err-exists', code: grpc.status.ALREADY_EXISTS, name: 'ALREADY_EXISTS', http: 409 },
   { username: 'err-exhausted', code: grpc.status.RESOURCE_EXHAUSTED, name: 'RESOURCE_EXHAUSTED', http: 429 },
   { username: 'err-cancelled', code: grpc.status.CANCELLED, name: 'CANCELLED', http: 499 },
 ];
@@ -114,9 +137,6 @@ function watchHandler(call) {
 }
 
 // ── Boot mock backend + real proxy ────────────────────────────────────────
-const grpcPort = await freePort();
-const proxyPort = await freePort();
-
 const grpcServer = new grpc.Server();
 grpcServer.addService(userProto.agent_communication.auth.UserService.service, {
   register: (call, cb) => cb(null, {
@@ -133,11 +153,19 @@ grpcServer.addService(agentProto.agent_communication.HealthService.service, {
   check: (call, cb) => cb(null, { status: 'SERVING' }),
   watch: watchHandler,
 });
-await new Promise((resolve, reject) => {
-  grpcServer.bindAsync(`127.0.0.1:${grpcPort}`, grpc.ServerCredentials.createInsecure(), (err) => {
-    if (err) reject(err); else resolve();
+// Minor #3 hardening: retry the bind with a fresh port instead of failing
+// the whole suite on the rare reclaim race.
+let grpcPort;
+for (let attempt = 0; attempt < 5; attempt++) {
+  grpcPort = await freePort();
+  const bound = await new Promise((resolve) => {
+    grpcServer.bindAsync(`127.0.0.1:${grpcPort}`, grpc.ServerCredentials.createInsecure(),
+      (err) => resolve(!err));
   });
-});
+  if (bound) break;
+  if (attempt === 4) throw new Error('grpc mock server could not bind a port');
+}
+const proxyPort = await freePort();
 
 process.env.GRPC_TARGET = `127.0.0.1:${grpcPort}`;
 process.env.PROXY_PORT = String(proxyPort);
@@ -249,14 +277,17 @@ test('client abort cancels the upstream gRPC stream', async () => {
 
 // ── 5. Static guards on the mapping table ─────────────────────────────────
 
-test('proxy source pins the five required status mappings', () => {
+test('proxy source pins the six required status mappings', () => {
   const server = fs.readFileSync(path.join(root, 'gateway/proxy/server.mjs'), 'utf8');
 
-  assert.match(server, /UNAUTHENTICATED:\s*401/);
-  assert.match(server, /PERMISSION_DENIED:\s*403/);
-  assert.match(server, /NOT_FOUND:\s*404/);
-  assert.match(server, /RESOURCE_EXHAUSTED:\s*429/);
-  assert.match(server, /CANCELLED:\s*499/);
+  // Minor #1: the guards pin the GRPC_HTTP_STATUS mapping CODE, not a
+  // free-text comment that can drift from the table.
+  assert.match(server, /\[grpc\.status\.UNAUTHENTICATED\]:\s*401/);
+  assert.match(server, /\[grpc\.status\.PERMISSION_DENIED\]:\s*403/);
+  assert.match(server, /\[grpc\.status\.NOT_FOUND\]:\s*404/);
+  assert.match(server, /\[grpc\.status\.ALREADY_EXISTS\]:\s*409/);
+  assert.match(server, /\[grpc\.status\.RESOURCE_EXHAUSTED\]:\s*429/);
+  assert.match(server, /\[grpc\.status\.CANCELLED\]:\s*499/);
   // Abort propagation must exist for the single streaming code path.
   assert.match(server, /stream\.cancel\(\)/);
 });

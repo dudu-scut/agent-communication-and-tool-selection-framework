@@ -30,28 +30,20 @@ namespace server {
 /**
  * @brief Stateless and stateful helpers extracted from AIQueryServiceImpl
  *
- * Stateless methods are static; stateful methods operate on the task-status cache
- * and summary-generation tracking owned by this struct.
+ * Stateless methods are static; stateful methods operate on the
+ * summary-generation tracking owned by this struct.
  */
 struct QueryHelpers {
 
     // ========================================================================
     // Task Status Tracking (P2-1)
     // ========================================================================
-
-    struct TaskStatus {
-        std::string task_id;
-        std::string state;       // submitted | working | completed | failed | cancelled
-        std::chrono::steady_clock::time_point created_at;
-        std::chrono::steady_clock::time_point updated_at;
-        std::string agent_id;
-        std::string agent_name;
-        std::string error_message;
-    };
-
-    std::mutex task_status_mutex;
-    std::unordered_map<std::string, TaskStatus> task_status_cache;
-    std::atomic<uint64_t> status_query_count{0};
+    //
+    // [PR-G observation, final wrap-up] The in-memory task-status cache was
+    // deleted: it was write-only (GetQueryStatus reads the durable
+    // PostgreSQL query_logs row; nothing ever consumed the cache). The
+    // entry points below keep their signatures as no-op state-transition
+    // hooks so the Query pipeline call sites stay unchanged.
 
     void updateTaskStatus(const std::string& task_id, const std::string& state,
                           const std::string& agent_id = "",
