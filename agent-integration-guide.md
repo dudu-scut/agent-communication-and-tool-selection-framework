@@ -2,7 +2,9 @@
 
 本文档面向需要将自有 Agent 接入 NexusAI 平台的开发者。接入后，平台的路由引擎会自动发现你的 Agent，并根据用户请求的技能匹配将其分派给你的 Agent 处理。
 
-整体接入分两步理解：**对外暴露 A2A HTTP 接口**（平台调用你的 Agent），**通过 gRPC 向平台注册**（平台发现你的 Agent）。
+整体接入分三步理解：**对外暴露 A2A HTTP 接口**（平台调用你的 Agent），**登录平台取得管理员令牌**（注册是 ADMIN-only 能力），**通过 gRPC 向平台注册**（平台发现你的 Agent）。
+
+> 本文与 7-PR 大优化后的现状一致：注册信息持久化在 PostgreSQL 的 `agent_registry` 表，Redis 仅承担短时存活缓存（`agent:liveness:<agent_id>`）；平台事实源是 PostgreSQL，而非内存或 Redis。
 
 ---
 
@@ -23,9 +25,23 @@
 你的 Agent 需要承担两个角色：
 
 1. **A2A HTTP Server**：监听一个 HTTP 端口，接受平台发来的 JSON-RPC 请求（`message/send` 和 `message/stream`），执行任务并返回结果。
-2. **gRPC Client**：主动连接 NexusAI 的 gRPC Server，完成注册、心跳维持和注销。
+2. **gRPC Client**：主动连接 NexusAI 的 gRPC Server（默认端口 50051），携带管理员令牌完成注册、心跳维持和注销。
 
 注册成功后，AgentRouter 会将你的 Agent 的 skills 纳入路由匹配范围。当用户请求命中你的 Agent 的技能时，平台通过 A2A 协议调用你。
+
+### 认证要求（重要变化）
+
+`RegisterAgent` 与 `UnregisterAgent` 是 **ADMIN-only** 能力：服务端通过 `AuthInterceptor::requireAdmin()` 拦截，调用方必须携带角色为 `ADMIN` 的登录令牌，否则返回 `UNAUTHENTICATED`（未登录）或 `PERMISSION_DENIED`（角色不足）。ADMIN 身份由服务端环境变量 `NEXUSAI_ADMIN_USERNAME` 指定——注册用户名与之匹配时，`agent_communication.auth.UserService/Register` 会颁发 `ADMIN` 角色。
+
+因此接入流程先要经过认证服务：
+
+| RPC（服务 `agent_communication.auth.UserService`） | 用途 |
+|------|------|
+| `Register` | 注册平台账号（用户名匹配 `NEXUSAI_ADMIN_USERNAME` 时获得 ADMIN 角色） |
+| `Login` | 登录换取 token |
+| `ValidateToken` | 校验 token 有效性 |
+
+取得 token 后，将其放入 gRPC metadata：`authorization: Bearer <token>`（经 HTTP 网关调用时则是请求头 `Authorization: Bearer <token>`）。仓库中的 `scripts/register_agents.sh` 就是这套流程的参考实现：先调 `agent_communication.auth.UserService/Login` 取 token，再带 `Authorization: Bearer` 调 `RegisterAgent`。
 
 ---
 
@@ -35,6 +51,7 @@
 
 - 你的 Agent 能被 NexusAI 平台通过 HTTP 访问到（平台 → Agent 方向）。
 - 你的 Agent 能访问 NexusAI 的 gRPC Server（Agent → 平台方向，默认端口 50051）。
+- 你持有匹配 `NEXUSAI_ADMIN_USERNAME` 的平台账号（注册/注销为 ADMIN-only）。
 
 ### Proto 文件
 
@@ -178,16 +195,20 @@ AgentRouter 使用四级路由策略，你的 Agent 能否被选中取决于 ski
 
 因此，**skills 的 name 和 description 写得越精确，路由命中率越高**。避免使用过于宽泛的描述（如"处理各种任务"），应当具体到实际能力域。
 
-**反馈驱动路由（Batch 2）：** 在上述四级路由基础上，当同一 skill 有多个候选 Agent 时，平台会根据历史用户反馈（点赞/点踩）计算质量系数，对 Agent 做加权随机选择。质量系数范围 [0.5, 1.0]，点赞率越高的 Agent 被选中概率越大。这意味着：
+**反馈驱动路由（Batch 2，已随 7-PR 优化迁入 PostgreSQL）：** 在上述四级路由基础上，当同一 skill 有多个候选 Agent 时，平台会根据历史用户反馈（点赞/点踩）计算质量系数，对 Agent 做加权随机选择。质量系数范围 [0.5, 1.0]，点赞率越高的 Agent 被选中概率越大。这意味着：
 - 持续提供高质量响应的 Agent 会获得更多流量
 - 点踩率高的 Agent 会被自动降权
 - 你可以在 `AgentMetrics.approval_rate` 中查看自己的质量评分
+
+优化后的两个关键事实：
+- **质量数据按用户维度隔离**：反馈聚合写入 PostgreSQL 的 `agent_route_quality` 表，唯一键为 `(owner_id, agent_id, skill_name)`——即每个用户对每个 Agent 每个技能都有独立的质量画像，不同用户的路由加权互不干扰。
+- **小样本保护**：样本量不足时采用 Beta(2,2) 先验平滑（好评率按 `(positive + 2) / (total + 4)` 估计），避免低样本 Agent 被推到 0 或 1 的极端权重。
 
 ---
 
 ## 第三步：通过 gRPC 注册
 
-注册使用 `AgentCommunicationService.RegisterAgent` RPC。注册成功后，你的 Agent 会出现在 AgentRouter 的候选列表中。
+注册使用 `AgentCommunicationService.RegisterAgent` RPC，调用必须携带 ADMIN 令牌（见上文“认证要求”）。注册成功后，你的 Agent 会出现在 AgentRouter 的候选列表中，同时平台会把注册信息持久化到 PostgreSQL 的 `agent_registry` 表（注册表行在注销时不删除，仅标记 offline，历史与指标保持可查询）。
 
 ### RegisterAgent RPC
 
@@ -227,13 +248,18 @@ message RegisterAgentResponse {
 }
 ```
 
-注册成功后请保存 `agent_id`，后续心跳和注销都需要用到它。
+注册成功后请保存 `agent_id`，后续心跳和注销都需要用到它。`agent_id` 的生成规则是 `<service_name>-<host>-<port>` 拼接，因此同一三元组的重复注册会更新已有记录而非报错。
 
 ---
 
 ## 第四步：维持心跳
 
-注册成功后，你需要每隔 `heartbeat_interval` 秒向平台发送一次心跳，告知平台你的 Agent 仍然存活。超过 60 秒未收到心跳，平台会将你的 Agent 标记为不健康，路由将不再分发请求给你。
+注册成功后，你需要每隔 `heartbeat_interval` 秒向平台发送一次心跳，告知平台你的 Agent 仍然存活。平台按 `max(3 × heartbeat_interval, 300秒)` 计算存活窗口（即至少容忍连续 3 次心跳丢失，且下限 5 分钟）；窗口内未收到心跳，你的 Agent 会被移出路由候选。
+
+心跳在服务端做两件事：
+
+1. **刷新 PostgreSQL 的 `agent_registry` 记录**（upsert 语义）：如果注册时恰逢 PostgreSQL 短暂不可用导致注册表行丢失，心跳会自愈补写；
+2. **刷新 Redis 存活缓存**（`SETEx agent:liveness:<agent_id>`）：仅作为短 TTL 的存活判断，不承担事实存储。
 
 ### Heartbeat RPC
 
@@ -249,13 +275,13 @@ message HeartbeatResponse {
 }
 ```
 
-**实现建议：** 用一个独立的后台线程/协程执行心跳循环，避免阻塞业务逻辑。心跳间隔建议 15 秒，给网络抖动留余量（60 秒超时 / 15 秒间隔 = 4 次容错机会）。心跳时可以附带 `agent_info` 字段来动态更新运行时指标（成功率、延迟等），让平台路由引擎获取最新数据。
+**实现建议：** 用一个独立的后台线程/协程执行心跳循环，避免阻塞业务逻辑。心跳间隔建议 15 秒（存活窗口 = max(45, 300) = 300 秒，容错余量充足）。心跳时可以附带 `agent_info` 字段来动态更新运行时指标（成功率、延迟等），让平台路由引擎获取最新数据。
 
 ---
 
 ## 第五步：优雅注销
 
-Agent 下线前应主动调用 `UnregisterAgent`，让平台及时更新路由表，避免将请求分发到已下线的 Agent。
+Agent 下线前应主动调用 `UnregisterAgent`（同样需要 ADMIN 令牌），让平台及时更新路由表，避免将请求分发到已下线的 Agent。注销时平台会将 `agent_registry` 行标记为 offline（保留历史），并删除 Redis 存活缓存。
 
 ### UnregisterAgent RPC
 
@@ -280,7 +306,7 @@ message UnregisterAgentResponse {
 ### 安装依赖
 
 ```bash
-pip install grpcio grpcio-tools flask
+pip install grpcio grpcio-tools flask requests
 ```
 
 ### 生成 Proto 桩代码
@@ -329,7 +355,12 @@ AGENT_VERSION = "1.0.0"
 AGENT_HOST = "192.168.1.100"       # 你的 Agent IP，平台通过此地址访问你
 AGENT_PORT = 8080                   # HTTP 监听端口
 GRPC_SERVER = "nexusai-platform:50051"  # NexusAI 平台 gRPC 地址
+HTTP_GATEWAY = "http://nexusai-platform:8081"  # HTTP 网关（用于登录取 token）
 HEARTBEAT_INTERVAL = 15             # 心跳间隔（秒）
+
+# 管理员账号（用户名须与服务端 NEXUSAI_ADMIN_USERNAME 一致，注册/注销是 ADMIN-only）
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "change-me"
 
 AGENT_CARD = {
     "name": AGENT_NAME,
@@ -455,6 +486,21 @@ def process_query(text):
     return f"收到请求: {text}（此处替换为你的实际处理逻辑）"
 
 # ============================================================================
+# 登录取 ADMIN 令牌（经 HTTP 网关调 agent_communication.auth.UserService/Login）
+# ============================================================================
+
+def get_admin_token():
+    """登录平台获取 token；RegisterAgent/UnregisterAgent 为 ADMIN-only"""
+    import requests
+    resp = requests.post(
+        f"{HTTP_GATEWAY}/agent_communication.auth.UserService/Login",
+        json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["token"]
+
+# ============================================================================
 # gRPC 注册 / 心跳 / 注销
 # ============================================================================
 
@@ -469,9 +515,12 @@ class PlatformRegistrar:
         self._agent_id = None
         self._running = False
         self._heartbeat_thread = None
+        self._metadata = None        # authorization: Bearer <token>
 
     def register(self):
-        """向平台注册 Agent"""
+        """向平台注册 Agent（需 ADMIN 令牌）"""
+        token = get_admin_token()
+        self._metadata = (("authorization", f"Bearer {token}"),)
         self._channel = grpc.insecure_channel(self._server_address)
         self._stub = agent_service_pb2_grpc.AgentCommunicationServiceStub(self._channel)
 
@@ -490,7 +539,7 @@ class PlatformRegistrar:
         )
 
         try:
-            response = self._stub.RegisterAgent(request, timeout=10)
+            response = self._stub.RegisterAgent(request, timeout=10, metadata=self._metadata)
             if response.status.code != 0:
                 print(f"注册失败: {response.status.message}")
                 return False
@@ -536,6 +585,7 @@ class PlatformRegistrar:
                         agent_id=self._agent_id, reason="shutdown"
                     ),
                     timeout=5,
+                    metadata=self._metadata,
                 )
                 print("已注销")
             except grpc.RpcError as e:
@@ -647,6 +697,9 @@ service AgentLifecycleService {
     // 获取同类 Agent 的指标对比
     rpc GetAgentCompare(GetAgentCompareRequest) returns (GetAgentCompareResponse);
 
+    // 多维度对比 Agent（成功率/延迟/好评率，7-PR 优化新增）
+    rpc CompareAgents(CompareAgentsRequest) returns (CompareAgentsResponse);
+
     // 设置用户对 Agent 的自主程度偏好
     rpc SetAutonomyLevel(SetAutonomyLevelRequest) returns (SetAutonomyLevelResponse);
 
@@ -692,13 +745,20 @@ service AgentCommunicationService {
 - `host:port` 是否是平台能访问到的地址？`127.0.0.1` 只在同一台机器上有效。
 - 心跳是否正常？调用 `GetAgents` 或 `FindAgents` 确认你的 Agent 状态是健康的。
 
+### 注册被拒绝：Administrator role required
+
+说明你携带的 token 角色不是 ADMIN。确认两点：
+
+- 注册账号的用户名是否与服务端环境变量 `NEXUSAI_ADMIN_USERNAME` 一致？只有匹配的用户才会被颁发 ADMIN 角色。
+- token 是否过期？重新调用 `agent_communication.auth.UserService/Login` 获取新 token。未携带 token 时会收到 `Valid authentication token required`（UNAUTHENTICATED）。
+
 ### 心跳失败但 Agent 仍在运行
 
-单次心跳失败不会导致立即下线，平台有 60 秒超时窗口。连续 4 次（15 秒间隔）失败后才会标记为不健康。建议在心跳失败时打印日志并排查网络连通性。
+单次心跳失败不会导致立即下线，平台存活窗口为 `max(3 × heartbeat_interval, 300秒)`。以 15 秒间隔为例，窗口 300 秒内可容忍多次失败；连续超过窗口未收到心跳后才会移出路由候选。建议在心跳失败时打印日志并排查网络连通性；由于心跳具备 upsert 自愈语义，短暂中断后恢复心跳即可重新进入路由。
 
 ### Agent 被重复注册
 
-`RegisterAgent` 以 `service_name + host + port` 作为唯一标识。如果这三项相同，重复注册会更新已有记录而非报错。确保不同 Agent 实例的 service_name 或 host:port 不冲突。
+`agent_id` 由 `service_name + host + port` 拼接生成。如果这三项相同，重复注册会更新已有记录而非报错。确保不同 Agent 实例的 service_name 或 host:port 不冲突。
 
 ### 如何实现长时任务
 
