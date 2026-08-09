@@ -308,10 +308,12 @@ int main(int argc, char* argv[]) {
         "feedback_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculate(); },
         std::chrono::seconds(3600));
-    // NOTE: agent_invocations has no production writer yet (wiring the query
-    // pipeline is part of the final wrap-up task), so this hourly task
-    // currently aggregates over an empty table and only refreshes the Redis
-    // agent_metrics cache when rows exist.
+    // NOTE: the production writer for agent_invocations is the
+    // Query/QueryStream pipeline (AIQueryServiceImpl for the single-agent
+    // A2A path, MultiAgentHandler for the orchestrator path — wired in
+    // RpcServer::initialize, final wrap-up). This hourly task therefore
+    // aggregates real invocation facts and refreshes the Redis
+    // agent_metrics cache whenever rows exist.
     agent_rpc::common::BackgroundScheduler::instance().scheduleAtFixedRate(
         "agent_metrics_aggregation",
         []() { agent_rpc::orchestrator::FeedbackAggregator::recalculateMetrics(); },

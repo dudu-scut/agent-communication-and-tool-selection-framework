@@ -117,6 +117,33 @@ TEST(DurablePipelineContractTest, QueryServicePersistsThroughDurableRepositories
     EXPECT_GE(countOccurrences(service, "abortDurableRun(run, error.what())"), 2u);
 }
 
+TEST(DurablePipelineContractTest, QueryCrashGuardsReturnFixedSanitizedMessages) {
+    // Final review M-2 (aligned with PR-D M1): the Query/QueryStream crash
+    // guards return fixed, sanitized status messages. Raw exception detail
+    // (pqxx::sql_error::what() embeds the failing SQL statement) stays in
+    // the server log and never rides the response.
+    const std::string service = readFileOrEmpty(rootPath() + "/server/src/ai_query_service.cpp");
+    ASSERT_FALSE(service.empty());
+
+    // The old echo paths (prefix + error.what()) are gone.
+    EXPECT_EQ(service.find("PostgreSQL persistence error: "), std::string::npos);
+    EXPECT_EQ(service.find("Unexpected query pipeline error: "), std::string::npos);
+    EXPECT_EQ(service.find("sanitizeErrorMessage(std::string(persistence_fault"),
+              std::string::npos);
+
+    // Fixed sanitized texts cover both crash guards (Query + QueryStream).
+    EXPECT_EQ(countOccurrences(
+                  service,
+                  "persistence_fault ? \"Query unavailable: persistence layer error\""),
+              2u);
+    EXPECT_EQ(countOccurrences(service, "\"Query failed unexpectedly\""), 2u);
+    // error.what() survives only in the crash-guard log lines.
+    EXPECT_EQ(countOccurrences(
+                  service,
+                  "LOG_ERROR(std::string(\"Query pipeline crashed: \") + error.what());"),
+              2u);
+}
+
 TEST(DurablePipelineContractTest, QueryServiceReadsExplicitTokenBudgetQuotas) {
     const std::string service = readFileOrEmpty(rootPath() + "/server/src/ai_query_service.cpp");
     ASSERT_FALSE(service.empty());

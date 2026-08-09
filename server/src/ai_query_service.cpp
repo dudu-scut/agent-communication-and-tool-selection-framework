@@ -727,12 +727,16 @@ grpc::Status AIQueryServiceImpl::Query(
     } catch (const std::exception& error) {
         abortDurableRun(run, error.what());
         const bool persistence_fault = common::isPostgresError(error);
+        // Final review M-2 (aligned with PR-D M1): the client-facing status
+        // message is fixed, sanitized text. pqxx::sql_error::what() embeds
+        // the failing SQL statement, so raw exception detail stays in the
+        // server log only and never rides the response.
+        LOG_ERROR(std::string("Query pipeline crashed: ") + error.what());
         return grpc::Status(
-            persistence_fault ? grpc::StatusCode::UNAVAILABLE : grpc::StatusCode::INTERNAL,
-            sanitizeErrorMessage(std::string(persistence_fault
-                                                 ? "PostgreSQL persistence error: "
-                                                 : "Unexpected query pipeline error: ") +
-                                 error.what()));
+            persistence_fault ? grpc::StatusCode::UNAVAILABLE
+                              : grpc::StatusCode::INTERNAL,
+            persistence_fault ? "Query unavailable: persistence layer error"
+                              : "Query failed unexpectedly");
     }
 }
 
@@ -993,12 +997,16 @@ grpc::Status AIQueryServiceImpl::QueryStream(
     } catch (const std::exception& error) {
         abortDurableRun(run, error.what());
         const bool persistence_fault = common::isPostgresError(error);
+        // Final review M-2 (aligned with PR-D M1): the client-facing status
+        // message is fixed, sanitized text. pqxx::sql_error::what() embeds
+        // the failing SQL statement, so raw exception detail stays in the
+        // server log only and never rides the response.
+        LOG_ERROR(std::string("Query pipeline crashed: ") + error.what());
         return grpc::Status(
-            persistence_fault ? grpc::StatusCode::UNAVAILABLE : grpc::StatusCode::INTERNAL,
-            sanitizeErrorMessage(std::string(persistence_fault
-                                                 ? "PostgreSQL persistence error: "
-                                                 : "Unexpected query pipeline error: ") +
-                                 error.what()));
+            persistence_fault ? grpc::StatusCode::UNAVAILABLE
+                              : grpc::StatusCode::INTERNAL,
+            persistence_fault ? "Query unavailable: persistence layer error"
+                              : "Query failed unexpectedly");
     }
 }
 
