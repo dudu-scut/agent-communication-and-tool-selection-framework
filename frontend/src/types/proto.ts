@@ -51,6 +51,8 @@ export interface AIQueryRequest {
   preference?: AgentPreference
   user_id?: string
   system_context?: SystemContext
+  // [PR-E] 沙箱执行标志（proto field 10）
+  sandbox?: boolean
 }
 
 export interface AIQueryResponse {
@@ -69,7 +71,8 @@ export interface AIQueryResponse {
 export interface Artifact {
   name: string
   mime_type: string
-  content: string
+  data: string                    // bytes → base64 (proxy sanitizeBuffers)
+  metadata?: Record<string, string>
 }
 
 export interface AIStreamEvent {
@@ -78,8 +81,10 @@ export interface AIStreamEvent {
   content: string
   task_state: string
   context_id: string
-  timestamp: number
-  trace_id?: string
+  timestamp: number | string
+  trace_summary?: string          // field 8: trace summary on 'complete' events
+  activity_json?: string          // field 9: JSON activity record for feed
+  intervention_required?: boolean // field 10: true when user action needed
 }
 
 // === agent_service.proto ===
@@ -205,6 +210,7 @@ export interface RegisterResponse {
   status: Status
   user_id: string
   username: string
+  role: string                    // USER | ADMIN（PR-C3）
 }
 
 export interface LoginRequest {
@@ -218,6 +224,19 @@ export interface LoginResponse {
   username: string
   token: string
   expires_at: number
+  role: string                    // USER | ADMIN（PR-C3）
+}
+
+export interface ValidateTokenRequest {
+  token: string
+}
+
+export interface ValidateTokenResponse {
+  status: Status
+  user_id: string
+  username: string
+  valid: boolean
+  role: string                    // USER | ADMIN（PR-C3）
 }
 
 // === Sharing & Templates (sharing.proto, PR-D) ===
@@ -425,6 +444,7 @@ export interface CostRecord {
   total_prompt_tokens: number
   total_completion_tokens: number
   total_requests: number
+  estimated: boolean     // true when provider usage was unavailable (PR-C3)
 }
 
 export interface GetTraceDetailResponse {
@@ -511,6 +531,7 @@ export interface GetAgentCompareResponse {
 }
 
 export interface SetAutonomyLevelRequest {
+  user_id?: string  // [PR-E] ignored — owner comes from the auth context
   agent_id: string
   level: number // 1..4
 }
@@ -520,6 +541,8 @@ export interface SetAutonomyLevelResponse {
 }
 
 export interface UndoActionRequest {
+  trace_id?: string   // legacy; superseded by action_id
+  step_index?: number // legacy
   action_id: string
 }
 
