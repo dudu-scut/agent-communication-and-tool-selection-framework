@@ -139,7 +139,12 @@ public:
     ResponseAdapter& getResponseAdapter() { return *response_adapter_; }
 
     /**
-     * @brief Attach a shared Redis client for autonomy-level lookups.
+     * @brief Attach a shared Redis client (trace activity streams).
+     *
+     * The former autonomy-level lookups (Redis key autonomy:<user>:<agent>)
+     * were removed with PR-E: autonomy levels now live in PostgreSQL
+     * (autonomy_settings) and are enforced by the durable services, not by
+     * this adapter.
      */
     void setRedisClient(std::shared_ptr<common::RedisClient> redis);
 
@@ -167,12 +172,6 @@ private:
     A2AConfig config_;
     std::atomic<bool> initialized_{false};
     std::shared_ptr<common::RedisClient> redis_;
-
-    /// Inject autonomy level header from Redis into the current A2A client (Batch 3).
-    void injectAutonomyHeader(
-        const agent_communication::AIQueryRequest& request,
-        const std::string& agent_id,
-        a2a::A2AClient* client = nullptr);
 };
 
 } // namespace a2a_adapter

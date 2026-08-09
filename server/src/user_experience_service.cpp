@@ -77,7 +77,12 @@ bool runSandboxExecution(const UserExperienceServiceImpl::PipelineExecutor& exec
     const bool ok = executor(request_id, context_id, question, answer, error);
     run.status = ok ? "completed" : "failed";
     run.response_text = ok ? answer : error;
-    repository->updateSandboxRun(run);
+    if (!repository->updateSandboxRun(run)) {
+        // The execution already happened; a failed finalization must not
+        // masquerade as a failed run, but it must stay visible in the logs.
+        LOG_WARN("Sandbox run finalization failed: run=" + run.id +
+                 " request=" + request_id);
+    }
     return ok;
 }
 

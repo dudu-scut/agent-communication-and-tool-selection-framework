@@ -259,11 +259,12 @@ grpc::Status AIQueryServiceImpl::reserveBudgetOrReject(DurableQueryRun& run) {
 
     // Step 4: estimated-token reservation keyed by request_id (idempotent on
     // same-owner retries; cross-owner reuse is refused).
-    // Semantic note (PR-C2): sandbox traffic (context_id with a "sandbox_"
-    // prefix) intentionally counts against the same PostgreSQL budget. The
-    // old Redis micro-dollar path granted sandbox contexts an exemption; that
-    // exemption was removed on purpose because the PG budget is now the
-    // source of truth and PR-E's sandbox will reuse this exact pipeline.
+    // Semantic note (PR-C2/PR-E): sandbox and compare traffic (context_id
+    // with a "sandbox-" or "compare-" prefix) intentionally counts against
+    // the same PostgreSQL budget. There is NO exemption branch here: the old
+    // Redis micro-dollar sandbox exemption was removed on purpose because the
+    // PG budget is the source of truth and PR-E's sandbox/compare paths
+    // reuse this exact pipeline.
     run.estimated_tokens = estimateTokens(run.question);
     auto result = budget_repo_->reserve(run.owner_id, run.conversation_id,
                                         run.request_id, run.estimated_tokens,

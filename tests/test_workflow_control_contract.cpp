@@ -113,9 +113,10 @@ TEST(WorkflowControlContractTest, SetAutonomyLevelIgnoresRequestBodyUserId) {
     EXPECT_EQ(source.find("request->user_id()"), std::string::npos);
     EXPECT_EQ(source.find("\"autonomy:\""), std::string::npos);
     // Real behavior: autonomy levels live in PostgreSQL (owner-scoped
-    // upsert), undo is a single CAS, compare reads persisted runs.
+    // upsert), undo is an atomic single-transaction CAS + inverse, compare
+    // reads persisted runs.
     EXPECT_NE(source.find("upsertAutonomySetting"), std::string::npos);
-    EXPECT_NE(source.find("markUndoActionUndone"), std::string::npos);
+    EXPECT_NE(source.find("undoRestoreIntervention"), std::string::npos);
     EXPECT_NE(source.find("listCompareRunsByOwner"), std::string::npos);
     EXPECT_NE(source.find("currentUserId()"), std::string::npos);
 }
@@ -279,9 +280,9 @@ protected:
     };
 
     static int nextPort() {
-        // Per-process base (ephemeral-ish range) avoids bind collisions with
-        // TIME_WAIT sockets left behind by earlier test runs.
-        static std::atomic<int> port{40000 + (static_cast<int>(::getpid()) % 20000)};
+        // Per-process base ABOVE the Linux ephemeral range (32768-60999) so
+        // outbound client sockets never collide with the test server binds.
+        static std::atomic<int> port{61000 + (static_cast<int>(::getpid()) % 3000)};
         return port.fetch_add(1);
     }
 
@@ -1004,8 +1005,69 @@ TEST_F(WorkflowControlE2ETest, ExpiredUndoActionIsRefused) {
     EXPECT_TRUE(scalarByColumn("undo_actions", "undone_at", "id", expired_id).empty());
 }
 
-// ============================================================================
-// Compare
+TEST_F(WorkflowControlE2ETest, UndoInverseFailureKeepsActionRetryable) {
+    startServer();
+    const auto user = registerUser("undo-atomic");
+    // The intervention is still pending, so the inverse (restore-to-pending)
+    // cannot apply. That failure must NOT consume undone_at: the CAS and the
+    // inverse commit or roll back in one transaction.
+    const std::string intervention_id = seedIntervention(user.id, "atomic target");
+    const std::string payload =
+        "{\"operation\":\"restore_intervention\",\"intervention_id\":\"" +
+        intervention_id + "\"}";
+    const std::string action_id = seedUndoAction(user.id, payload, /*expired=*/false);
+
+    {
+        agent_communication::UndoActionRequest first;
+        first.set_action_id(action_id);
+        agent_communication::UndoActionResponse first_response;
+        grpc::ClientContext first_context;
+        applyAuth(first_context, user);
+        const auto first_status =
+            lifecycle_stub_->UndoAction(&first_context, first, &first_response);
+        EXPECT_EQ(first_status.error_code(), grpc::StatusCode::INTERNAL);
+    }
+    // undone_at not consumed: the owner can retry.
+    EXPECT_TRUE(scalarByColumn("undo_actions", "undone_at", "id", action_id).empty());
+    EXPECT_EQ(scalarByColumn("interventions", "state", "id", intervention_id),
+              "pending");
+
+    // Make the intervention restorable (another producer resolves it), then
+    // the retry succeeds exactly once.
+    handles_->store->executeTransaction([&](pqxx::work& transaction) {
+        transaction.exec_params(
+            "UPDATE interventions SET state = 'PROCEED', decision = 'PROCEED' "
+            "WHERE id = $1",
+            intervention_id);
+    });
+    {
+        agent_communication::UndoActionRequest retry;
+        retry.set_action_id(action_id);
+        agent_communication::UndoActionResponse retry_response;
+        grpc::ClientContext retry_context;
+        applyAuth(retry_context, user);
+        const auto retry_status =
+            lifecycle_stub_->UndoAction(&retry_context, retry, &retry_response);
+        ASSERT_TRUE(retry_status.ok()) << retry_status.error_message();
+        EXPECT_TRUE(retry_response.success());
+    }
+    EXPECT_FALSE(scalarByColumn("undo_actions", "undone_at", "id", action_id).empty());
+    EXPECT_EQ(scalarByColumn("interventions", "state", "id", intervention_id),
+              "pending");
+
+    // Still exactly-once after a successful retry: duplicate undo conflicts.
+    {
+        agent_communication::UndoActionRequest repeat;
+        repeat.set_action_id(action_id);
+        agent_communication::UndoActionResponse repeat_response;
+        grpc::ClientContext repeat_context;
+        applyAuth(repeat_context, user);
+        const auto repeat_status =
+            lifecycle_stub_->UndoAction(&repeat_context, repeat, &repeat_response);
+        EXPECT_EQ(repeat_status.error_code(), grpc::StatusCode::ALREADY_EXISTS);
+    }
+}
+
 // ============================================================================
 
 TEST_F(WorkflowControlE2ETest, ComparePersistsIndependentPerAgentResults) {

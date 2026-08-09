@@ -162,6 +162,15 @@ enum class InterventionResolveOutcome {
     kAlreadyResolved // the record exists for the owner but is not pending
 };
 
+// [PR-E] Outcome of the atomic undo (CAS on undone_at + inverse restore in
+// ONE transaction: a failed inverse never consumes the undo action).
+enum class UndoOutcome {
+    kApplied,       // undone_at set and the inverse committed together
+    kNotFound,      // unknown action id or foreign owner
+    kAlreadyUndone, // the action exists but was already consumed
+    kInverseFailed  // rolled back: undone_at NOT consumed, caller may retry
+};
+
 // Names mirror the durable-domain tables while keeping all persistence behind
 // one synchronous, tenant-scoped PostgreSQL repository.
 class QueryDomainRepository final {
@@ -277,18 +286,17 @@ public:
                                                    const std::string& intervention_id,
                                                    const std::string& decision,
                                                    const std::string& edited_request);
-    // Inverse operation used by undo: any resolved state back to pending.
-    // Returns false for unknown/foreign rows or rows already pending.
-    bool restoreInterventionToPending(const std::string& owner_id,
-                                      const std::string& intervention_id);
-
     // The expiry window (24 hours) is assigned by SQL at insert time.
     bool createUndoAction(const UndoActionRecord& action);
     std::optional<UndoActionRecord> getUndoActionById(const std::string& owner_id,
                                                       const std::string& action_id);
-    // Single-statement CAS: sets undone_at only while it is still NULL.
-    // Returns false when another caller already won the CAS.
-    bool markUndoActionUndone(const std::string& owner_id, const std::string& action_id);
+    // Atomic undo: single transaction that (1) CAS-sets undone_at while it is
+    // still NULL and (2) restores the intervention to pending. Both commit or
+    // roll back together, so a failed inverse never burns the action and the
+    // owner can retry. kInverseFailed also covers transient PG errors.
+    UndoOutcome undoRestoreIntervention(const std::string& owner_id,
+                                        const std::string& action_id,
+                                        const std::string& intervention_id);
 
     // PostgreSQL upsert keyed on (owner_id, agent_id); a repeated set updates
     // the same row in place and never duplicates it.

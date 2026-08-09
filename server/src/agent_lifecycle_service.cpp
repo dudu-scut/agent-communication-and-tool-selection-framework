@@ -247,14 +247,9 @@ grpc::Status AgentLifecycleServiceImpl::UndoAction(
             return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
                                 "Undo action has expired");
         }
-        // Atomic CAS: only the first caller marks undone_at, so the inverse
-        // payload below can never run twice.
-        if (!query_repository_->markUndoActionUndone(owner, request->action_id())) {
-            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS, "Action already undone");
-        }
 
-        // Execute the inverse payload. Currently the only registered inverse
-        // is restore_intervention (written by InterventionResponse).
+        // Validate the inverse payload BEFORE consuming the action: a
+        // malformed/unknown payload must never burn undone_at.
         Json::Value payload;
         Json::CharReaderBuilder payload_reader_builder;
         std::string payload_errors;
@@ -265,16 +260,32 @@ grpc::Status AgentLifecycleServiceImpl::UndoAction(
             return grpc::Status(grpc::StatusCode::INTERNAL, "Malformed undo payload");
         }
         const std::string operation = payload["operation"].asString();
-        if (operation == "restore_intervention") {
-            const std::string intervention_id = payload["intervention_id"].asString();
-            if (intervention_id.empty() ||
-                !query_repository_->restoreInterventionToPending(owner, intervention_id)) {
-                return grpc::Status(grpc::StatusCode::INTERNAL,
-                                    "Inverse operation failed: intervention not restorable");
-            }
-        } else {
+        if (operation != "restore_intervention") {
             return grpc::Status(grpc::StatusCode::INTERNAL,
                                 "Unknown undo operation: " + operation);
+        }
+        const std::string intervention_id = payload["intervention_id"].asString();
+        if (intervention_id.empty()) {
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                                "Undo payload misses intervention_id");
+        }
+
+        // Atomic: the undone_at CAS and the inverse restore commit or roll
+        // back in ONE transaction, so a failed inverse never consumes the
+        // action and the owner can retry. Currently the only registered
+        // inverse is restore_intervention (written by InterventionResponse).
+        const auto outcome = query_repository_->undoRestoreIntervention(
+            owner, request->action_id(), intervention_id);
+        if (outcome == common::UndoOutcome::kNotFound) {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                                "Undo action not found for current user");
+        }
+        if (outcome == common::UndoOutcome::kAlreadyUndone) {
+            return grpc::Status(grpc::StatusCode::ALREADY_EXISTS, "Action already undone");
+        }
+        if (outcome == common::UndoOutcome::kInverseFailed) {
+            return grpc::Status(grpc::StatusCode::INTERNAL,
+                                "Inverse operation failed; undo not consumed, retryable");
         }
 
         response->set_success(true);
@@ -330,9 +341,10 @@ grpc::Status AgentLifecycleServiceImpl::CompareAgents(
         bool executed = false;
     };
 
+    common::CompareRunRecord run;
+    bool run_created = false;
     try {
         const std::string run_id = generateRowId("cmp");
-        common::CompareRunRecord run;
         run.id = run_id;
         run.owner_id = owner;
         run.query_log_id = run_id;
@@ -341,6 +353,7 @@ grpc::Status AgentLifecycleServiceImpl::CompareAgents(
         if (!query_repository_->createCompareRun(run)) {
             return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to persist compare run");
         }
+        run_created = true;
 
         // Worker threads never see the AuthInterceptor, so propagate the
         // already-validated owner context snapshot before spawning them.
@@ -436,6 +449,15 @@ grpc::Status AgentLifecycleServiceImpl::CompareAgents(
         run.results = results_text;
         run.status = run_status;
         if (!query_repository_->updateCompareRun(run)) {
+            // Finalization failed: make one best-effort attempt to persist a
+            // terminal state so the row never stays "running" forever; a
+            // failed attempt is logged, not thrown.
+            common::CompareRunRecord failed_run = run;
+            failed_run.status = "failed";
+            if (!query_repository_->updateCompareRun(failed_run)) {
+                LOG_WARN("CompareAgents: could not persist terminal state for run " +
+                         run_id);
+            }
             return grpc::Status(grpc::StatusCode::INTERNAL,
                                 "Failed to finalize compare run");
         }
@@ -451,6 +473,20 @@ grpc::Status AgentLifecycleServiceImpl::CompareAgents(
         return grpc::Status::OK;
     } catch (const std::exception& error) {
         LOG_ERROR(std::string{"CompareAgents failed: "} + error.what());
+        // The run row must never stay "running" forever: best-effort terminal
+        // write, failures only logged.
+        if (run_created) {
+            try {
+                run.status = "failed";
+                if (!query_repository_->updateCompareRun(run)) {
+                    LOG_WARN("CompareAgents: could not persist terminal state for run " +
+                             run.id);
+                }
+            } catch (const std::exception& finalize_error) {
+                LOG_WARN(std::string{"CompareAgents terminal-state write failed: "} +
+                         finalize_error.what());
+            }
+        }
         return grpc::Status(grpc::StatusCode::INTERNAL, "Compare execution failed");
     }
 }

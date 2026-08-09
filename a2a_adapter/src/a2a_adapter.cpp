@@ -137,8 +137,11 @@ bool A2AAdapter::processQuery(
             a2a_client_->add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] Inject autonomy-level header
-        injectAutonomyHeader(request, "orchestrator");
+        // [Batch 3] autonomy-level header removed (PR-E): the old Redis key
+        // autonomy:<user>:<agent> was replaced by PostgreSQL autonomy_settings;
+        // this header had no consumer anywhere and its owner came from the
+        // request body. To restore it, read via QueryDomainRepository::
+        // getAutonomySetting(owner, agent_id) with the authenticated owner.
 
         // Send message via A2A client with retry for transient network errors
         int max_retries = config_.max_retries > 0 ? config_.max_retries : 1;
@@ -309,8 +312,7 @@ void A2AAdapter::processQueryStreaming(
             a2a_client_->add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] Inject autonomy-level header for streaming call
-        injectAutonomyHeader(request, "orchestrator");
+        // [Batch 3] autonomy-level header removed (PR-E, see processQuery).
 
         a2a_client_->send_message_streaming(params,
             [this, &callback, &context_id, trace_id](const std::string& event_line) {
@@ -476,29 +478,6 @@ void A2AAdapter::setRedisClient(std::shared_ptr<common::RedisClient> redis) {
     redis_ = std::move(redis);
 }
 
-void A2AAdapter::injectAutonomyHeader(
-    const agent_communication::AIQueryRequest& request,
-    const std::string& agent_id,
-    a2a::A2AClient* client) {
-    if (!redis_) return;
-    std::string user_id = request.user_id();
-    if (user_id.empty()) return;
-
-    // Use provided client, or fall back to the shared a2a_client_
-    a2a::A2AClient* target = client ? client : a2a_client_.get();
-    if (!target) return;
-
-    std::string autonomy_key = "autonomy:" + user_id + ":" + agent_id;
-    std::string level_str;
-    int level = 1;
-    if (redis_->get(autonomy_key, level_str)) {
-        try { level = std::stoi(level_str); } catch (...) { level = 1; }
-    }
-    if (level > 1) {
-        target->add_header("x-autonomy-level", std::to_string(level));
-    }
-}
-
 bool A2AAdapter::cancelTask(const std::string& task_id) {
     if (!initialized_ || !a2a_client_ || task_id.empty()) {
         return false;
@@ -601,8 +580,7 @@ bool A2AAdapter::processQueryDirect(
             client.add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] Inject autonomy-level header for direct call
-        injectAutonomyHeader(request, "direct_agent", &client);
+        // [Batch 3] autonomy-level header removed (PR-E, see processQuery).
 
         a2a::A2AResponse a2a_response = client.send_message(params);
 
@@ -710,8 +688,7 @@ void A2AAdapter::processQueryStreamingDirect(
             client.add_header("x-delegation-depth", std::to_string(depth + 1));
         }
 
-        // [Batch 3] Inject autonomy-level header for streaming direct call
-        injectAutonomyHeader(request, "direct_agent", &client);
+        // [Batch 3] autonomy-level header removed (PR-E, see processQuery).
 
         client.send_message_streaming(params,
             [this, &callback, &context_id, trace_id](const std::string& event_line) {

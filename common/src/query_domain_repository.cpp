@@ -1,20 +1,27 @@
 ﻿#include "agent_rpc/common/query_domain_repository.h"
 
+#include "agent_rpc/common/logger.h"
+
 #include <pqxx/except>
 #include <pqxx/version>
 
 #include <cstdint>
 #include <cstdlib>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
-// Compatibility shim: the prebuilt libpqxx in the dependency prefix was
-// compiled without <source_location> support, so it only exports the
-// single-argument exception constructors. The public headers detect
-// source_location support for the current compiler and declare two-argument
-// overloads; provide the missing definitions once here so error paths
-// (e.g. conversion failures surfaced from cold sections) link cleanly.
+// Compatibility shim (verified REQUIRED, not dead code): the prebuilt libpqxx
+// in the dependency prefix was compiled without <source_location> support, so
+// it only exports the single-argument exception constructors (checked via
+// `nm -D libpqxx.so`). The public headers pull pqxx/internal/cxx-features.hxx,
+// which defines pqxx_have_source_location=1 for this compiler and declares the
+// two-argument overloads; removing this block reproducibly breaks the link of
+// test_workflow_control_contract with
+//   undefined reference to pqxx::conversion_overrun::conversion_overrun(
+//       std::string const&, std::source_location)
+// emitted from cold sections of this TU. Keep it.
 #if pqxx_have_source_location
 namespace pqxx {
 conversion_error::conversion_error(const std::string& message, std::source_location loc)
@@ -830,20 +837,6 @@ InterventionResolveOutcome QueryDomainRepository::resolveIntervention(
     return outcome;
 }
 
-bool QueryDomainRepository::restoreInterventionToPending(const std::string& owner_id,
-                                                         const std::string& intervention_id) {
-    bool restored = false;
-    store_.executeTransaction([&](pqxx::work& transaction) {
-        const auto result = execParams(
-            transaction,
-            "UPDATE interventions SET state = 'pending', decision = '', updated_at = NOW() "
-            "WHERE id = $2 AND owner_id = $1 AND state <> 'pending' RETURNING id",
-            owner_id, intervention_id);
-        restored = !result.empty();
-    });
-    return restored;
-}
-
 bool QueryDomainRepository::createUndoAction(const UndoActionRecord& action) {
     bool inserted = false;
     store_.executeTransaction([&](pqxx::work& transaction) {
@@ -880,20 +873,51 @@ std::optional<UndoActionRecord> QueryDomainRepository::getUndoActionById(
     return action;
 }
 
-bool QueryDomainRepository::markUndoActionUndone(const std::string& owner_id,
-                                                 const std::string& action_id) {
-    bool marked = false;
-    store_.executeTransaction([&](pqxx::work& transaction) {
-        // CAS: only the first caller flips undone_at; every retry observes
-        // undone_at IS NOT NULL and gets zero rows back.
-        const auto result = execParams(
-            transaction,
-            "UPDATE undo_actions SET undone_at = NOW(), updated_at = NOW() "
-            "WHERE id = $2 AND owner_id = $1 AND undone_at IS NULL RETURNING id",
-            owner_id, action_id);
-        marked = !result.empty();
-    });
-    return marked;
+UndoOutcome QueryDomainRepository::undoRestoreIntervention(const std::string& owner_id,
+                                                           const std::string& action_id,
+                                                           const std::string& intervention_id) {
+    UndoOutcome outcome = UndoOutcome::kNotFound;
+    try {
+        // The CAS on undone_at and the inverse restore commit (or roll back)
+        // in ONE transaction: a failed inverse never consumes the undo
+        // action, so the owner can always retry.
+        store_.executeTransaction([&](pqxx::work& transaction) {
+            const auto marked = execParams(
+                transaction,
+                "UPDATE undo_actions SET undone_at = NOW(), updated_at = NOW() "
+                "WHERE id = $2 AND owner_id = $1 AND undone_at IS NULL RETURNING id",
+                owner_id, action_id);
+            if (marked.empty()) {
+                // Distinguish NOT_FOUND from ALREADY_EXISTS in the same
+                // transaction; nothing was modified either way.
+                const auto existing = execParams(
+                    transaction,
+                    "SELECT id FROM undo_actions WHERE id = $2 AND owner_id = $1",
+                    owner_id, action_id);
+                outcome = existing.empty() ? UndoOutcome::kNotFound
+                                           : UndoOutcome::kAlreadyUndone;
+                return;
+            }
+            const auto restored = execParams(
+                transaction,
+                "UPDATE interventions SET state = 'pending', decision = '', updated_at = NOW() "
+                "WHERE id = $2 AND owner_id = $1 AND state <> 'pending' RETURNING id",
+                owner_id, intervention_id);
+            if (restored.empty()) {
+                // Inverse target missing/foreign/already pending: throw so
+                // pqxx rolls back the undone_at write as well.
+                throw std::runtime_error(
+                    "undo inverse failed: intervention not restorable");
+            }
+            outcome = UndoOutcome::kApplied;
+        });
+    } catch (const std::exception& error) {
+        // Transaction rolled back (inverse failure or transient PostgreSQL
+        // error): undone_at was never committed, the action stays retryable.
+        LOG_ERROR(std::string{"undoRestoreIntervention rolled back: "} + error.what());
+        return UndoOutcome::kInverseFailed;
+    }
+    return outcome;
 }
 
 bool QueryDomainRepository::upsertAutonomySetting(const std::string& owner_id,
